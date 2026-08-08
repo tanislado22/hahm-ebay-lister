@@ -100,13 +100,18 @@ export function ListingsView({
           type="button"
           className="btn btn-ghost"
           disabled={done === 0}
-          onClick={() =>
-            downloadFile(
-              "ebay-listings.csv",
-              listingsToCsv(groups),
-              "text/csv"
-            )
-          }
+         onClick={async () => {
+try {
+if (!ebayConnected) {
+alert(“Connect eBay first so the photos can be uploaded.”);
+return;
+}
+
+const pictureUrlsBySku: Record<string, string[]> = {}; for (const group of groups.filter((g) => g.listing)) { const photos = group.photoIds .map((id) => photoById(id)) .filter((p): p is Photo => Boolean(p)); const urls: string[] = []; for (let i = 0; i < photos.length; i += 4) { const batch = photos.slice(i, i + 4); const response = await fetch("/api/ebay/upload-photos", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sku: group.sku, images: batch.map((p) => ({ mediaType: p.mediaType, data: p.data, })), startIndex: i, }), }); const result = (await response.json()) as { ok: boolean; urls?: string[]; error?: string; }; if (!response.ok || !result.ok) { throw new Error(result.error || `Photo upload failed for ${group.sku}`); } urls.push(...(result.urls ?? [])); } pictureUrlsBySku[group.sku] = urls; } downloadFile( "ebay-listings.csv", listingsToCsv(groups, pictureUrlsBySku), "text/csv" );
+} catch (error) {
+alert(error instanceof Error ? error.message : “Could not create the eBay CSV.”);
+}
+}}
         >
           ⬇️ Download spreadsheet (CSV)
         </button>
