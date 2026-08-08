@@ -772,8 +772,19 @@ async function uploadPhoto(
     body: form,
   });
   const text = await resp.text();
-  const m = text.match(/<FullURL>([^<]+)<\/FullURL>/);
-  return m ? m[1] : null;
+
+if (!resp.ok || /<Ack>(Failure|PartialFailure)<\/Ack>/i.test(text)) {
+  console.error("[eBay/uploadPhoto] eBay response:", text);
+  throw new Error(`eBay photo upload failed: ${text}`);
+}
+
+const m = text.match(/<FullURL>([^<]+)<\/FullURL>/);
+if (!m) {
+  console.error("[eBay/uploadPhoto] No FullURL returned:", text);
+  throw new Error(`eBay did not return a photo URL: ${text}`);
+}
+
+return m[1];
 }
 
 // ── Policies & location ──────────────────────────────────────────────────────
