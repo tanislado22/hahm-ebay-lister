@@ -34,20 +34,63 @@ const CSV_COLUMNS: { header: string; get: (l: ListingResult) => string }[] = [
 // A general-purpose spreadsheet of all finished listings. Not eBay File
 // Exchange format (that's category-specific) — a clean starting point you can
 // open in Numbers/Excel or adapt.
-export function listingsToCsv(groups: ItemGroup[]): string {
+export function listingsToCsv(
+  groups: ItemGroup[],
+  pictureUrlsBySku: Record<string, string[]> = {},
+): string {
   const done = groups.filter((g) => g.listing);
-  const headerRow = ["SKU", "Item Name", ...CSV_COLUMNS.map((c) => c.header)]
-    .map(csvCell)
-    .join(",");
+
+  const infoRow = "Info,Version=1.0.0,Template=fx_category_template_EBAY_US";
+
+  const headers = [
+    "*Action(SiteID=US|Country=US|Currency=USD|Version=1193|CC=UTF-8)",
+    "CustomLabel",
+    "*Category",
+    "*Title",
+    "*ConditionID",
+    "*C:Brand",
+    "*C:Style",
+    "*C:Color",
+    "*C:Department",
+    "*C:Size Type",
+    "*C:Size",
+    "C:Material",
+    "PicURL",
+    "*Description",
+    "*Format",
+    "*Duration",
+    "*StartPrice",
+    "*Quantity",
+  ];
+
   const rows = done.map((g) => {
     const l = g.listing as ListingResult;
+    const colors = Array.isArray(l.color) ? l.color.join(", ") : l.color ?? "";
+    const photoUrls = pictureUrlsBySku[g.sku] ?? [];
+
     return [
+      csvCell("Add"),
       csvCell(g.sku),
-      csvCell(g.name),
-      ...CSV_COLUMNS.map((c) => csvCell(c.get(l))),
+      csvCell("11555"),
+      csvCell(l.title ?? ""),
+      csvCell("3000"),
+      csvCell(l.brand ?? "Unbranded"),
+      csvCell(l.item_type ?? "Shorts"),
+      csvCell(colors),
+      csvCell("Women"),
+      csvCell("Regular"),
+      csvCell(l.size ?? ""),
+      csvCell(l.material ?? ""),
+      csvCell(photoUrls.join("|")),
+      csvCell(l.description ?? ""),
+      csvCell("FixedPrice"),
+      csvCell("GTC"),
+      csvCell(priceNumber(l.suggested_price)),
+      csvCell("1"),
     ].join(",");
   });
-  return [headerRow, ...rows].join("\r\n");
+
+  return [infoRow, headers.join(","), ...rows].join("\r\n");
 }
 
 export function listingsToJson(groups: ItemGroup[]): string {
