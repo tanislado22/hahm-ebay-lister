@@ -7,7 +7,52 @@ import {
   listingsToJson,
 } from "@/lib/export";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
+import { chunkImagesForUpload } from "@/lib/uploadBatches";
+async function uploadPhotosToEbay(sku: string, photos: Photo[]) {
 
+  const batches = chunkImagesForUpload(photos);
+
+  const urls: string[] = [];
+
+  let startIndex = 0;
+
+  for (const images of batches) {
+
+    const response = await fetch("/api/ebay/upload-photos", {
+
+      method: "POST",
+
+      headers: { "Content-Type": "application/json" },
+
+      body: JSON.stringify({
+
+        sku,
+
+        images,
+
+        startIndex,
+
+      }),
+
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.ok) {
+
+      throw new Error(result.error || "Failed to upload photos to eBay.");
+
+    }
+
+    urls.push(...(result.urls ?? []));
+
+    startIndex += images.length;
+
+  }
+
+  return { urls };
+
+}
 interface ListingsViewProps {
   groups: ItemGroup[];
   photoById: (id: string) => Photo | undefined;
