@@ -122,7 +122,7 @@ export function ListingsView({
 
         .filter((p): p is Photo => Boolean(p));
 
-      const result = await uploadPhotosToEbay(photos);
+      const result = await uploadPhotosToEbay(group.sku, photos);
 
       pictureUrlsBySku[group.sku] = result.urls ?? [];
 
