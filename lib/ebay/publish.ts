@@ -876,12 +876,30 @@ async function fetchAccountSetupUncached(accessToken: string): Promise<AccountSe
 async function fetchOrCreateLocation(accessToken: string): Promise<string> {
   const list = await ebayRequest(accessToken, "GET", `${EBAY_INV_BASE}/location`);
   if (list.ok) {
-    for (const loc of list.json?.locations || []) {
-      if (loc.merchantLocationStatus === "ENABLED" && loc.merchantLocationKey) {
-        return loc.merchantLocationKey;
-      }
+
+  const targetPostalCode = process.env.EBAY_LOCATION_POSTAL_CODE;
+
+  for (const loc of list.json?.locations || []) {
+
+    const postalCode = loc.location?.address?.postalCode;
+
+    if (
+
+      loc.merchantLocationStatus === "ENABLED" &&
+
+      loc.merchantLocationKey &&
+
+      postalCode === targetPostalCode
+
+    ) {
+
+      return loc.merchantLocationKey;
+
     }
+
   }
+
+}
   const key = "HOME_OFFICE";
   const payload = {
     name: "Home Office",
