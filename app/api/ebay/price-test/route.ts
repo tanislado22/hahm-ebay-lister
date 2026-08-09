@@ -146,7 +146,7 @@ export async function GET(request: NextRequest) {
 
       : [];
 
-    const prices = items
+    const prices: number[] = items
 
       .map((item: any) => Number(item?.price?.value))
 
