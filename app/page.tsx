@@ -257,7 +257,7 @@ export default function Home() {
 
       const nextGroups: ItemGroup[] = merged.map((g, i) => ({
         id: newId(),
-        sku: buildSku(binPrefix, skuOffset + i),
+        sku: binPrefix.trim(),
         name: g.name,
         photoIds: g.photoIds,
         status: "idle",
