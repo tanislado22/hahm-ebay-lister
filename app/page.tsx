@@ -348,7 +348,7 @@ export default function Home() {
       ...prev,
       {
         id: newId(),
-        sku: buildSku(binPrefix, skuStart + prev.length),
+        sku: binPrefix.trim(),
         name: `new-item-${prev.length + 1}`,
         photoIds: [],
         status: "idle",
