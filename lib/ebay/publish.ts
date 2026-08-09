@@ -1152,6 +1152,17 @@ export async function publishListing(
   // Real product identifiers (validated UPC/EAN/ISBN/MPN) ride along so eBay
   // can catalog-match commodity items; one-off vintage pieces have none.
   const identifiers = extractProductIdentifiers(listing);
+  for (const key of Object.keys(aspects)) {
+
+  const normalized = key.toLowerCase();
+
+  if (normalized === "upc" || normalized === "barcode") {
+
+    delete aspects[key];
+
+  }
+
+}
   const brand = realBrand(listing);
   const inventoryItem: any = {
     product: {
