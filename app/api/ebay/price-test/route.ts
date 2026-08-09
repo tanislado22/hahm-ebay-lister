@@ -1,5 +1,71 @@
 import { NextRequest, NextResponse } from "next/server";
 
+async function getApplicationToken() {
+
+  const clientId = process.env.EBAY_CLIENT_ID;
+
+  const clientSecret = process.env.EBAY_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+
+    throw new Error("Missing EBAY_CLIENT_ID or EBAY_CLIENT_SECRET");
+
+  }
+
+  const credentials = Buffer.from(
+
+    `${clientId}:${clientSecret}`
+
+  ).toString("base64");
+
+  const body = new URLSearchParams({
+
+    grant_type: "client_credentials",
+
+    scope: "https://api.ebay.com/oauth/api_scope",
+
+  });
+
+  const response = await fetch(
+
+    "https://api.ebay.com/identity/v1/oauth2/token",
+
+    {
+
+      method: "POST",
+
+      headers: {
+
+        Authorization: `Basic ${credentials}`,
+
+        "Content-Type": "application/x-www-form-urlencoded",
+
+      },
+
+      body: body.toString(),
+
+    }
+
+  );
+
+  const text = await response.text();
+
+  if (!response.ok) {
+
+    throw new Error(
+
+      `Token error (${response.status}): ${text}`
+
+    );
+
+  }
+
+  const data = JSON.parse(text);
+
+  return data.access_token as string;
+
+}
+
 export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
@@ -16,8 +82,6 @@ export async function GET(request: NextRequest) {
 
         error: "Escribe un artículo para buscar.",
 
-        example: "/api/ebay/price-test?q=Levis+550+mens+jeans",
-
       },
 
       { status: 400 }
@@ -28,29 +92,91 @@ export async function GET(request: NextRequest) {
 
   try {
 
-    /*
+    const token = await getApplicationToken();
 
-      PRIMERA PRUEBA DEL COMPARADOR DE PRECIOS.
+    const url =
 
-      Esta ruta comprueba que el buscador recibe correctamente
+      "https://api.ebay.com/buy/browse/v1/item_summary/search" +
 
-      el nombre del artículo.
+      `?q=${encodeURIComponent(q)}` +
 
-      Después conectaremos aquí la búsqueda de eBay para obtener:
+      "&limit=50";
 
-      - artículos activos
+    const response = await fetch(url, {
 
-      - artículos vendidos
+      headers: {
 
-      - precio promedio
+        Authorization: `Bearer ${token}`,
 
-      - precio mediano
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
 
-      - sell-through rate
+      },
 
-      - precio recomendado
+    });
 
-    */
+    const text = await response.text();
+
+    if (!response.ok) {
+
+      return NextResponse.json(
+
+        {
+
+          ok: false,
+
+          stage: "browse-api",
+
+          status: response.status,
+
+          ebayResponse: text,
+
+        },
+
+        { status: response.status }
+
+      );
+
+    }
+
+    const data = JSON.parse(text);
+
+    const items = Array.isArray(data.itemSummaries)
+
+      ? data.itemSummaries
+
+      : [];
+
+    const prices = items
+
+      .map((item: any) => Number(item?.price?.value))
+
+      .filter((price: number) => Number.isFinite(price));
+
+    const sorted = [...prices].sort((a, b) => a - b);
+
+    const average =
+
+      prices.length > 0
+
+        ? prices.reduce((a, b) => a + b, 0) / prices.length
+
+        : null;
+
+    let median: number | null = null;
+
+    if (sorted.length > 0) {
+
+      const middle = Math.floor(sorted.length / 2);
+
+      median =
+
+        sorted.length % 2 === 0
+
+          ? (sorted[middle - 1] + sorted[middle]) / 2
+
+          : sorted[middle];
+
+    }
 
     return NextResponse.json({
 
@@ -58,9 +184,49 @@ export async function GET(request: NextRequest) {
 
       search: q,
 
-      message: "Price test route is working.",
+      active: {
 
-      nextStep: "Connect eBay active and sold comparables.",
+        totalReportedByEbay: data.total ?? null,
+
+        sampleSize: prices.length,
+
+        lowestPrice: sorted[0] ?? null,
+
+        highestPrice:
+
+          sorted.length > 0
+
+            ? sorted[sorted.length - 1]
+
+            : null,
+
+        average:
+
+          average !== null
+
+            ? Number(average.toFixed(2))
+
+            : null,
+
+        median:
+
+          median !== null
+
+            ? Number(median.toFixed(2))
+
+            : null,
+
+      },
+
+      sold: {
+
+        tested: false,
+
+        message:
+
+          "Sold-history access will be tested next.",
+
+      },
 
     });
 
@@ -74,7 +240,13 @@ export async function GET(request: NextRequest) {
 
         ok: false,
 
-        error: "Price test failed.",
+        error:
+
+          error instanceof Error
+
+            ? error.message
+
+            : "Unknown error",
 
       },
 
