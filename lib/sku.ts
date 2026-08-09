@@ -25,10 +25,10 @@ export function nextSuffix(index: number): string {
 
 // Build the full item SKU for the Nth item in a bin. With no prefix, fall back
 // to a plain letter so items still have a stable, unique reference.
-export function buildSku(prefix: string, index: number): string {
-  const clean = sanitizeSku(prefix);
-  const suffix = nextSuffix(index);
-  return clean ? `${clean}-${suffix}` : suffix;
+export function buildSku(prefix: string, _index: number): string {
+
+  return sanitizeSku(prefix);
+
 }
 
 // Inverse of nextSuffix: "A"→0, "Z"→25, "AA"→26. Returns -1 for non-letters.
