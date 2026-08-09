@@ -744,49 +744,88 @@ function updateOfferBody(offer: Record<string, unknown>): Record<string, unknown
 // ── Photo upload to eBay Picture Services (Trading API, XML) ──────────────────
 
 async function uploadPhoto(
+
   accessToken: string,
+
   base64: string,
+
   mediaType: string,
+
   name: string
+
 ): Promise<string | null> {
-  const xml = `<?xml version="1.0" encoding="utf-8"?>
-<UploadSiteHostedPicturesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <PictureName>${name.slice(0, 50)}</PictureName>
-  <PictureUploadPolicy>ClearAndNew</PictureUploadPolicy>
-</UploadSiteHostedPicturesRequest>`;
 
   const data = base64.includes(",") ? base64.split(",")[1] : base64;
-  const bytes = Buffer.from(data, "base64");
-  const form = new FormData();
-  form.append("XML Payload", new Blob([xml], { type: "text/xml;charset=utf-8" }), "payload.xml");
-  form.append("image", new Blob([new Uint8Array(bytes)], { type: mediaType }), name);
 
-  const resp = await fetch(EBAY_TRADING, {
-    method: "POST",
-    headers: {
-      "X-EBAY-API-SITEID": "0",
-      "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
-      "X-EBAY-API-CALL-NAME": "UploadSiteHostedPictures",
-      "X-EBAY-API-IAF-TOKEN": accessToken,
-    },
-    body: form,
-  });
+  const bytes = Buffer.from(data, "base64");
+
+  const form = new FormData();
+
+  form.append(
+
+    "image",
+
+    new Blob([new Uint8Array(bytes)], { type: mediaType }),
+
+    name
+
+  );
+
+  const resp = await fetch(
+
+    "https://apim.ebay.com/commerce/media/v1_beta/image/create_image_from_file",
+
+    {
+
+      method: "POST",
+
+      headers: {
+
+        Authorization: `Bearer ${accessToken}`,
+
+      },
+
+      body: form,
+
+    }
+
+  );
+
   const text = await resp.text();
 
-if (!resp.ok || /<Ack>(Failure|PartialFailure)<\/Ack>/i.test(text)) {
-  console.error("[eBay/uploadPhoto] eBay response:", text);
-  throw new Error(`eBay photo upload failed: ${text}`);
-}
+  if (!resp.ok) {
 
-const m = text.match(/<FullURL>([^<]+)<\/FullURL>/);
-if (!m) {
-  console.error("[eBay/uploadPhoto] No FullURL returned:", text);
-  throw new Error(`eBay did not return a photo URL: ${text}`);
-}
+    console.error("[eBay/uploadPhoto] Media API response:", resp.status, text);
 
-return m[1];
-}
+    throw new Error(`eBay photo upload failed (${resp.status}): ${text}`);
 
+  }
+
+  let result: { imageUrl?: string };
+
+  try {
+
+    result = JSON.parse(text);
+
+  } catch {
+
+    console.error("[eBay/uploadPhoto] Invalid JSON response:", text);
+
+    throw new Error(`eBay photo upload returned invalid response: ${text}`);
+
+  }
+
+  if (!result.imageUrl) {
+
+    console.error("[eBay/uploadPhoto] No imageUrl returned:", result);
+
+    throw new Error("eBay did not return a photo URL.");
+
+  }
+
+  return result.imageUrl;
+
+}
 // ── Policies & location ──────────────────────────────────────────────────────
 
 export interface AccountSetup {
