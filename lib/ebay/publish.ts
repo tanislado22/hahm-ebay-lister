@@ -840,6 +840,17 @@ function pickFirstPolicy(r: EbayResp, listKey: string, idField: string): string 
   const list = r.json?.[listKey] || [];
   return list.length ? String(list[0][idField] || "") : "";
 }
+function pickReturnsAcceptedPolicy(r: EbayResp): string {
+
+  if (!r.ok) return "";
+
+  const list = r.json?.returnPolicies || [];
+
+  const policy = list.find((p: any) => p.returnsAccepted === true);
+
+  return policy ? String(policy.returnPolicyId || "") : "";
+
+}
 
 // Policies and location change rarely; refetching them for every item of a
 // batch adds four eBay calls per publish. Cache per access token for 10 min.
@@ -868,7 +879,7 @@ async function fetchAccountSetupUncached(accessToken: string): Promise<AccountSe
   return {
     fulfillmentPolicyId: pickFirstPolicy(ful, "fulfillmentPolicies", "fulfillmentPolicyId"),
     paymentPolicyId: pickFirstPolicy(pay, "paymentPolicies", "paymentPolicyId"),
-    returnPolicyId: pickFirstPolicy(ret, "returnPolicies", "returnPolicyId"),
+   returnPolicyId: pickReturnsAcceptedPolicy(ret),
     locationKey: await fetchOrCreateLocation(accessToken),
   };
 }
