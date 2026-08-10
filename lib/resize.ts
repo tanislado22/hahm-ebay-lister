@@ -9,8 +9,8 @@
 
 const FULL_DIM = 1024;
 const FULL_QUALITY = 0.82;
-const THUMB_DIM = 360;
-const THUMB_QUALITY = 0.5;
+const THUMB_DIM = 240;
+const THUMB_QUALITY = 0.35;
 
 export interface ResizedImage {
   mediaType: "image/jpeg";
