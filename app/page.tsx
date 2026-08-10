@@ -714,6 +714,7 @@ export default function Home() {
           onRename={rename}
           onRenameSku={renameSku}
           onMovePhoto={movePhoto}
+          onRemovePhoto={removePhoto}
           onReorderPhoto={reorderPhoto}
           onDeleteGroup={deleteGroup}
           onAddGroup={addGroup}
