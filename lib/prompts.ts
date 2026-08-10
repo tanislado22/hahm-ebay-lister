@@ -254,6 +254,9 @@ export function buildVerifyGroupPrompt(n: number): string {
 
 Do ALL of these photos show the SAME physical item?
 - Front/back/side/tag/close-up shots of ONE item → all the same item → valid
+- A folded photo with an SKU label can still be the SAME physical item and should remain in the group when the garment matches.
+
+- Do NOT send an SKU-label, folded, tag, measurement, or close-up photo to review only because it looks different from the main front/back photos.
 - A completely different item mixed in by mistake → invalid
 
 If all photos are the SAME item:
