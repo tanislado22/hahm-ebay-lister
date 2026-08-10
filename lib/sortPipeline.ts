@@ -239,17 +239,43 @@ async function mergeSplitGroups(
   const pairs = groups.slice(0, -1);
   const pairVotes = await mapLimit(pairs, MERGE_CONCURRENCY, async (group, i) => {
     const next = groups[i + 1];
-    const aBlock = toImageBlock(images[group.indices[0]]);
-    const bBlock = toImageBlock(images[next.indices[0]]);
-    if (!aBlock || !bBlock) return false;
     const content: Anthropic.ContentBlockParam[] = [
-      { type: "text", text: "Photo 1:" },
-      aBlock,
-      { type: "text", text: "--- Group B ---" },
-      { type: "text", text: "Photo 2:" },
-      bBlock,
-      { type: "text", text: buildVerifyMergePrompt(group.indices.length, next.indices.length) },
-    ];
+
+  { type: "text", text: `Group A (${group.indices.length} photos):` },
+
+];
+
+for (const idx of group.indices.slice(0, 3)) {
+
+  const block = toImageBlock(images[idx]);
+
+  if (block) content.push(block);
+
+}
+
+content.push({
+
+  type: "text",
+
+  text: `--- Group B (${next.indices.length} photos) ---`,
+
+});
+
+for (const idx of next.indices.slice(0, 3)) {
+
+  const block = toImageBlock(images[idx]);
+
+  if (block) content.push(block);
+
+}
+
+content.push({
+
+  type: "text",
+
+  text: buildVerifyMergePrompt(group.indices.length, next.indices.length),
+
+});
     const result = await claudeJson<{ merge?: boolean }>(
       client,
       model,
