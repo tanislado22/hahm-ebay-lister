@@ -96,7 +96,7 @@ const [zoomed, setZoomed] = useState(false);
   src={photo.previewUrl}
 
   alt="Item photo"
-
+draggable={false}
   onClick={(e) => {
 
   e.stopPropagation();
