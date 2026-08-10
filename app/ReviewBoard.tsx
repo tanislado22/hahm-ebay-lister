@@ -264,6 +264,7 @@ export function ReviewBoard({
   onRename,
   onRenameSku,
   onMovePhoto,
+  onRemovePhoto,
   onReorderPhoto,
   onDeleteGroup,
   onAddGroup,
