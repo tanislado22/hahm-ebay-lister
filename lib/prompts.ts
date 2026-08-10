@@ -270,6 +270,11 @@ export function buildVerifyMergePrompt(nA: number, nB: number): string {
 
 Group A: ${nA} photo(s) shown first.
 Group B: ${nB} photo(s) shown after.
+- A folded photo with an SKU label can be the SAME physical item as an unfolded/front/back/detail photo; do not treat folding or the SKU label alone as evidence of a different item.
+
+- If one group contains only an SKU/folded photo and the adjacent group visually matches the same garment, MERGE them into one listing.
+
+
 
 Look carefully at ALL photos. Are ALL of them actually the SAME physical item that was accidentally split into two groups? (For example: front view in Group A, back view and tag in Group B.)
 
