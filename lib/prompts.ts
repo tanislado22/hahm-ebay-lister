@@ -227,6 +227,11 @@ Rules:
 - Photos of the SAME item go in the same group (front view, back view, tag photo, close-up = same item)
 - Each distinct physical item = its own separate group
 - Every numbered photo must go in exactly one group
+- A folded-item photo showing an SKU label marks the START of a new physical item.
+
+- All photos after that SKU photo belong to that same item until the next folded-item photo with a different SKU label.
+
+- Never create a separate group just because a photo is folded or shows an SKU label.
 - Use short descriptive folder names: brand + color + item type, all lowercase, hyphens only
   Examples: "nike-black-dri-fit-top", "coach-tan-leather-tote", "levis-501-blue-jeans"
 
