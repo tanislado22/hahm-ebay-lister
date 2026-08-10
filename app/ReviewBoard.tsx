@@ -326,6 +326,7 @@ export function ReviewBoard({
                 groups={groups}
                 photoById={photoById}
                 onMovePhoto={onMovePhoto}
+                onRemovePhoto={onRemovePhoto}
                 onReorderPhoto={onReorderPhoto}
               />
             )}
