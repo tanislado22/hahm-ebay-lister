@@ -232,6 +232,9 @@ Rules:
 - All photos after that SKU photo belong to that same item until the next folded-item photo with a different SKU label.
 
 - Never create a separate group just because a photo is folded or shows an SKU label.
+- An SKU-label photo must NEVER become a group by itself; attach it to the physical item shown in that photo.
+
+- Do not split one physical item into multiple groups because its photos show different angles, tags, measurements, folded views, or close-ups.
 - Use short descriptive folder names: brand + color + item type, all lowercase, hyphens only
   Examples: "nike-black-dri-fit-top", "coach-tan-leather-tote", "levis-501-blue-jeans"
 
