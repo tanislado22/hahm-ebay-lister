@@ -140,7 +140,9 @@ const [zoomed, setZoomed] = useState(false);
 
     <img
 
-      src={photo.previewUrl}
+      src={`data:${photo.mediaType};base64,${photo.data}`}
+
+
 
       alt="Item photo enlarged"
 
