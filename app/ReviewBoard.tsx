@@ -90,7 +90,17 @@ function Thumb({
     >
       <div className="board-thumb-img">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={photo.previewUrl} alt="Item photo" />
+        <img
+
+  src={photo.previewUrl}
+
+  alt="Item photo"
+
+  onClick={() => window.open(photo.previewUrl, "_blank")}
+
+  style={{ cursor: "zoom-in" }}
+
+/>
         {drag?.isCover && <span className="thumb-cover-badge">Cover</span>}
       </div>
       <MoveSelect
