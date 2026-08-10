@@ -96,7 +96,19 @@ function Thumb({
 
   alt="Item photo"
 
-  onClick={() => window.open(photo.previewUrl, "_blank")}
+  onClick={(e) => {
+
+  e.stopPropagation();
+
+  const w = window.open("", "_blank");
+
+  if (w) {
+
+    w.document.write(`<img src="${photo.previewUrl}" style="max-width:100%;height:auto;" />`);
+
+  }
+
+}}
 
   style={{ cursor: "zoom-in" }}
 
