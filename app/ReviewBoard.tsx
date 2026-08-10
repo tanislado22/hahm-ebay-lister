@@ -15,6 +15,7 @@ interface ReviewBoardProps {
   onAddGroup: () => void;
   onWriteAll: () => void;
   onBack: () => void;
+  onRemovePhoto: (photoId: string) => void;
 }
 
 function MoveSelect({
@@ -63,6 +64,7 @@ function Thumb({
   groups,
   photoById,
   onMovePhoto,
+  onRemovePhoto,
   drag,
 }: {
   photoId: string;
@@ -70,6 +72,7 @@ function Thumb({
   groups: ItemGroup[];
   photoById: ReviewBoardProps["photoById"];
   onMovePhoto: ReviewBoardProps["onMovePhoto"];
+  onRemovePhoto: ReviewBoardProps["onRemovePhoto"];
   drag?: DragState;
 }) {
 const [zoomed, setZoomed] = useState(false); 
@@ -108,6 +111,27 @@ draggable={false}
   style={{ cursor: "zoom-in" }}
 
 />
+        <button
+
+  type="button"
+
+  aria-label="Remove photo"
+
+  onClick={(e) => {
+
+    e.stopPropagation();
+
+    onRemovePhoto(photoId);
+
+  }}
+
+  className="thumb-remove"
+
+>
+
+  ×
+
+</button>
         {drag?.isCover && <span className="thumb-cover-badge">Cover</span>}
       </div>
       {zoomed && (
@@ -178,12 +202,14 @@ function PhotoGrid({
   groups,
   photoById,
   onMovePhoto,
+  onRemovePhoto,
   onReorderPhoto,
 }: {
   group: ItemGroup;
   groups: ItemGroup[];
   photoById: ReviewBoardProps["photoById"];
   onMovePhoto: ReviewBoardProps["onMovePhoto"];
+  onRemovePhoto: ReviewBoardProps["onRemovePhoto"];
   onReorderPhoto: ReviewBoardProps["onReorderPhoto"];
 }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -204,6 +230,7 @@ function PhotoGrid({
           groups={groups}
           photoById={photoById}
           onMovePhoto={onMovePhoto}
+          onRemovePhoto={onRemovePhoto}
           drag={{
             draggable: group.photoIds.length > 1,
             isCover: i === 0,
