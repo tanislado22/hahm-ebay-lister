@@ -72,6 +72,7 @@ function Thumb({
   onMovePhoto: ReviewBoardProps["onMovePhoto"];
   drag?: DragState;
 }) {
+const [zoomed, setZoomed] = useState(false); 
   const photo = photoById(photoId);
   if (!photo) return null;
   const cls = ["board-thumb"];
@@ -100,13 +101,7 @@ function Thumb({
 
   e.stopPropagation();
 
-  const w = window.open("", "_blank");
-
-  if (w) {
-
-    w.document.write(`<img src="${photo.previewUrl}" style="max-width:100%;height:auto;" />`);
-
-  }
+  setZoomed(true);
 
 }}
 
@@ -115,6 +110,55 @@ function Thumb({
 />
         {drag?.isCover && <span className="thumb-cover-badge">Cover</span>}
       </div>
+      {zoomed && (
+
+  <div
+
+    onClick={() => setZoomed(false)}
+
+    style={{
+
+      position: "fixed",
+
+      inset: 0,
+
+      background: "rgba(0,0,0,0.85)",
+
+      display: "flex",
+
+      alignItems: "center",
+
+      justifyContent: "center",
+
+      zIndex: 9999,
+
+      cursor: "zoom-out",
+
+    }}
+
+  >
+
+    <img
+
+      src={photo.previewUrl}
+
+      alt="Item photo enlarged"
+
+      style={{
+
+        maxWidth: "95vw",
+
+        maxHeight: "95vh",
+
+        objectFit: "contain",
+
+      }}
+
+    />
+
+  </div>
+
+)}
       <MoveSelect
         photoId={photoId}
         currentGroupId={groupId}
