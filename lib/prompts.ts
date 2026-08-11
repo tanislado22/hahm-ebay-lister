@@ -276,6 +276,15 @@ Group B: ${nB} photo(s) shown after.
 - A folded photo with an SKU label can be the SAME physical item as an unfolded/front/back/detail photo; do not treat folding or the SKU label alone as evidence of a different item.
 
 - If one group contains only an SKU/folded photo and the adjacent group visually matches the same garment, MERGE them into one listing.
+- IMPORTANT: Never merge two groups merely because one group contains only one photo.
+
+- Merge ONLY when the clothing itself visually matches: same color, pattern, garment type, fabric, details, tags, or other identifying features.
+
+- A SKU label is not enough by itself to prove a match.
+
+- If the single photo clearly shows a DIFFERENT garment from the adjacent group, return merge: false.
+
+- If a folded/SKU photo visually matches the garment in the adjacent group, return merge: true.
 
 
 
