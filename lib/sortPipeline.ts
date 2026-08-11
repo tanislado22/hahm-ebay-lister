@@ -284,7 +284,13 @@ content.push({
       `merge ${i}`,
       deadline
     );
-    return result?.merge === true;
+    if (group.indices.length === 1 || next.indices.length === 1) {
+
+  return true;
+
+}
+
+return result?.merge === true;
   });
 
   const merged: { name: string; indices: number[] }[] = [];
