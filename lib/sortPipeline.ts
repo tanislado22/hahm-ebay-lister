@@ -284,11 +284,7 @@ content.push({
       `merge ${i}`,
       deadline
     );
-    if (group.indices.length === 1 || next.indices.length === 1) {
-
-  return true;
-
-}
+    
 
 return result?.merge === true;
   });
