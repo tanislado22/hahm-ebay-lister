@@ -258,6 +258,16 @@ Do ALL of these photos show the SAME physical item?
 
 - Do NOT send an SKU-label, folded, tag, measurement, or close-up photo to review only because it looks different from the main front/back photos.
 - A completely different item mixed in by mistake → invalid
+- IMPORTANT: When uncertain, KEEP the photo in the current group instead of sending it to review.
+
+- Only exclude a photo when it clearly shows a DIFFERENT physical garment.
+
+- Different angle, folding, lighting, measurement view, tag view, close-up, or SKU view is NOT enough reason to exclude it.
+
+- If color, pattern, garment type, or distinctive details still match the main item, keep the photo in the group.
+
+- Use keep_indices only for photos that are clearly from another garment.
+
 
 If all photos are the SAME item:
 {"valid": true}
