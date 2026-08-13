@@ -97,6 +97,118 @@ export function ListingCard({
     group.status === "done" &&
     (priceNum === undefined || Number.isNaN(priceNum) || priceNum <= 0);
 
+  type SoldCompsSummary = {
+
+  sampleSize: number;
+
+  low: number | null;
+
+  high: number | null;
+
+  average: number | null;
+
+  median: number | null;
+
+};
+
+const [soldComps, setSoldComps] = useState<SoldCompsSummary | null>(null);
+
+const [soldCompsLoading, setSoldCompsLoading] = useState(false);
+
+const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
+
+useEffect(() => {
+
+  const keyword = listing?.title?.trim();
+
+  if (!keyword || group.status !== "done") {
+
+    setSoldComps(null);
+
+    setSoldCompsError(null);
+
+    return;
+
+  }
+
+  let cancelled = false;
+
+  async function loadSoldComps() {
+
+    try {
+
+      setSoldCompsLoading(true);
+
+      setSoldCompsError(null);
+
+      const response = await fetch(
+
+        `/api/soldcomps?keyword=${encodeURIComponent(keyword)}`
+
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+
+        throw new Error(data?.error || "SoldComps request failed");
+
+      }
+
+      if (!cancelled) {
+
+        setSoldComps({
+
+          sampleSize: data.sampleSize ?? 0,
+
+          low: data.low ?? null,
+
+          high: data.high ?? null,
+
+          average: data.average ?? null,
+
+          median: data.median ?? null,
+
+        });
+
+      }
+
+    } catch (error) {
+
+      if (!cancelled) {
+
+        setSoldComps(null);
+
+        setSoldCompsError(
+
+          error instanceof Error ? error.message : "SoldComps request failed"
+
+        );
+
+      }
+
+    } finally {
+
+      if (!cancelled) {
+
+        setSoldCompsLoading(false);
+
+      }
+
+    }
+
+  }
+
+  loadSoldComps();
+
+  return () => {
+
+    cancelled = true;
+
+  };
+
+}, [listing?.title, group.status]);
+
   return (
     <article className={`listing-card status-${group.status}`}>
       <header className="listing-card-head" onClick={() => setOpen((o) => !o)}>
@@ -226,6 +338,53 @@ export function ListingCard({
                   </button>
                 </span>
               )}
+              {soldCompsLoading && (
+
+  <span className="comps-line">
+
+    Sold: loading sold listings...
+
+  </span>
+
+)}
+
+{soldCompsError && (
+
+  <span className="comps-line">
+
+    Sold: unavailable
+
+  </span>
+
+)}
+
+{soldComps && !soldCompsLoading && !soldCompsError && (
+
+  <span className="comps-line">
+
+    Sold: {soldComps.sampleSize} sold listings
+
+    {soldComps.low !== null && soldComps.high !== null
+
+      ? `, $${soldComps.low.toFixed(2)}–$${soldComps.high.toFixed(2)}`
+
+      : ""}
+
+    {soldComps.average !== null
+
+      ? `, avg $${soldComps.average.toFixed(2)}`
+
+      : ""}
+
+    {soldComps.median !== null
+
+      ? `, median $${soldComps.median.toFixed(2)}`
+
+      : ""}
+
+  </span>
+
+)}
             </div>
             <div className="stat editable">
               <label className="k" htmlFor={`cond-${group.id}`}>
