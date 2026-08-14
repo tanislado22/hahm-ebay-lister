@@ -379,6 +379,7 @@ useEffect(() => {
 
 {soldComps && !soldCompsLoading && !soldCompsError && (
 
+ <>
   <span className="comps-line">
 
     Sold: {soldComps.sampleSize} sold listings
@@ -451,6 +452,7 @@ useEffect(() => {
 
 )}
 )}
+   </>
             </div>
             <div className="stat editable">
               <label className="k" htmlFor={`cond-${group.id}`}>
