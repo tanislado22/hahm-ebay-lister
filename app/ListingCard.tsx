@@ -143,17 +143,28 @@ const garmentWords = titleWords.filter((word) =>
 
 );
 
+const audienceWord = titleWords.find((word) =>
+
+  /^(women'?s?|men'?s?|girls?|boys?|kids?|youth|unisex)$/i.test(word)
+
+);
+
 const keyword = [
 
   listing?.brand,
 
+  audienceWord,
+
   ...garmentWords.slice(0, 3),
+
+  listing?.size,
 
 ]
 
   .filter(Boolean)
 
   .join(" ");
+
 
 
 
