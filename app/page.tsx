@@ -134,7 +134,7 @@ export default function Home() {
       return;
     }
     try {
-     const resized = [];
+     const resized: Awaited<ReturnType<typeof resizeImage>>[] = [];
 
 for (let i = 0; i < files.length; i += 3) {
 
