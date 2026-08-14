@@ -57,6 +57,9 @@ export const PROFILE_PROMPT_ADDONS: Record<string, string> = {
   clothing: `\n\nPROFILE: CLOTHING / SHOES / ACCESSORIES
 Prioritize garment and fashion resale details. Read every tag and measurement photo.
 For clothing: capture exact brand, printed size, size type, department, fabric/material percentages, care/country tag, style, type, pattern, neckline, sleeve length, fit, closure, rise, inseam, waist, dress/skirt length, lining, hood, and condition flaws.
+- For clothing condition: default to "Pre-owned" unless there is clear visual evidence the item is new. A storage bag, plastic bag, SKU sticker, inventory number, or seller-added label does NOT mean the item is new. Only use "New with tags" when an original retail/manufacturer tag is clearly attached. Only use "New without tags" when there is clear evidence the item is genuinely new and unworn.
+
+
 For shoes: capture US/UK/EU size, width, upper/sole material, style, toe shape, heel height, closure, model, and condition of soles/insoles.
 For bags/accessories: capture style/type, exterior/interior material, closure, strap type/drop, hardware color, lining, pockets, dimensions, and flaws.
 Do not fill hard-good fields unless they are actually relevant.`,
