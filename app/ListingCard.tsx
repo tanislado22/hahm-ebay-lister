@@ -131,6 +131,7 @@ const [soldComps, setSoldComps] = useState<SoldCompsSummary | null>(null);
 const [soldCompsLoading, setSoldCompsLoading] = useState(false);
 
 const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
+  const [showSoldItems, setShowSoldItems] = useState(false);
 
 useEffect(() => {
 
@@ -401,7 +402,54 @@ useEffect(() => {
       : ""}
 
   </span>
+  {soldComps.items && soldComps.items.length > 0 && (
 
+  <button
+
+    type="button"
+
+    className="comps-use"
+
+    onClick={() => setShowSoldItems(!showSoldItems)}
+
+  >
+
+    {showSoldItems ? "Hide sold items" : "View sold items"}
+
+  </button>
+
+)}
+{showSoldItems && soldComps.items && (
+
+  <div>
+
+    {soldComps.items.map((item, index) => (
+
+      <div key={item.itemId ?? index}>
+
+        {item.url ? (
+
+          <a href={item.url} target="_blank" rel="noopener noreferrer">
+
+            {item.title ?? "Sold item"}
+
+          </a>
+
+        ) : (
+
+          <span>{item.title ?? "Sold item"}</span>
+
+        )}
+
+        {item.soldPrice ? ` — $${item.soldPrice}` : ""}
+
+      </div>
+
+    ))}
+
+  </div>
+
+)}
 )}
             </div>
             <div className="stat editable">
