@@ -135,7 +135,25 @@ const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
 
 useEffect(() => {
 
-  const keyword = "Beyond Scrubs Jogger Scrub Pants";
+  const titleWords = (listing?.title ?? "").trim().split(/\s+/);
+
+const garmentWords = titleWords.filter((word) =>
+
+  /^(pants?|jeans?|joggers?|scrubs?|shirt|shirts|t-?shirt|tee|top|blouse|dress|shorts?|skirt|skort|jacket|coat|sweater|hoodie|sweatshirt|tank|polo|flannel|shoes?|sneakers?|boots?)$/i.test(word)
+
+);
+
+const keyword = [
+
+  listing?.brand,
+
+  ...garmentWords.slice(0, 3),
+
+]
+
+  .filter(Boolean)
+
+  .join(" ");
 
 
 
@@ -161,7 +179,9 @@ useEffect(() => {
 
     const response = await fetch(
 
-  `/api/soldcomps?keyword=${encodeURIComponent(keyword)}&limit=10`
+  `/api/soldcomps?keyword=${encodeURIComponent(keyword)}&title=${encodeURIComponent(listing?.title ?? "")}&size=${encodeURIComponent(listing?.size ?? "")}`
+
+
 
 );
 
