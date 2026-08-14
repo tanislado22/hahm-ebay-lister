@@ -159,11 +159,11 @@ useEffect(() => {
 
       setSoldCompsError(null);
 
-      const response = await fetch(
+    const response = await fetch(
 
-        `/api/soldcomps?keyword=${encodeURIComponent(keyword)}`
+  `/api/soldcomps?keyword=${encodeURIComponent(keyword)}&limit=10`
 
-      );
+);
 
       const data = await response.json();
 
