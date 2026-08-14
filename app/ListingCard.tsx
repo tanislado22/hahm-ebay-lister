@@ -119,7 +119,7 @@ const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
 
 useEffect(() => {
 
-  const keyword = (listing?.title ?? "").trim().split(/\s+/).slice(0, 8).join(" ");
+  const keyword = (listing?.title ?? "").trim().split(/\s+/).slice(0, 6).join(" ");
 
   if (!keyword || group.status !== "done") {
 
