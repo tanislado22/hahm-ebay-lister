@@ -451,8 +451,9 @@ useEffect(() => {
   </div>
 
 )}
-)}
    </>
+)}
+   
             </div>
             <div className="stat editable">
               <label className="k" htmlFor={`cond-${group.id}`}>
