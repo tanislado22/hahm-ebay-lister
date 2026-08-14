@@ -135,7 +135,9 @@ const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
 
 useEffect(() => {
 
-  const keyword = (listing?.title ?? "").trim().split(/\s+/).slice(0, 6).join(" ");
+  const keyword = "Beyond Scrubs Jogger Scrub Pants";
+
+
 
   if (!keyword || group.status !== "done") {
 
