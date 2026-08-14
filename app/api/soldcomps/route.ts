@@ -92,7 +92,42 @@ export async function GET(request: NextRequest) {
 
     }
 
-    const items = Array.isArray(data.items) ? data.items : [];
+    let items = Array.isArray(data.items) ? data.items : [];
+    if (data.hasNextPage === true) {
+
+  const page2Params = new URLSearchParams(params);
+
+  page2Params.set("page", "2");
+
+  const response2 = await fetch(
+
+    `https://api.sold-comps.com/v1/scrape?${page2Params.toString()}`,
+
+    {
+
+      headers: {
+
+        Authorization: `Bearer ${apiKey}`,
+
+      },
+
+      cache: "no-store",
+
+    }
+
+  );
+
+  if (response2.ok) {
+
+    const data2 = await response2.json();
+
+    const items2 = Array.isArray(data2.items) ? data2.items : [];
+
+    items = [...items, ...items2];
+
+  }
+
+}
 
     const prices = items
 
