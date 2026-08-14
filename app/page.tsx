@@ -134,7 +134,19 @@ export default function Home() {
       return;
     }
     try {
-      const resized = await Promise.all(files.map(resizeImage));
+     const resized = [];
+
+for (let i = 0; i < files.length; i += 3) {
+
+  const batch = files.slice(i, i + 3);
+
+  const batchResized = await Promise.all(batch.map(resizeImage));
+
+  resized.push(...batchResized);
+
+  await sleep(20);
+
+}
       setPhotos((prev) =>
         [...prev, ...resized.map((r) => ({ id: newId(), ...r }))].slice(
           0,
