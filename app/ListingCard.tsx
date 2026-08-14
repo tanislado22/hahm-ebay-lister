@@ -108,6 +108,21 @@ export function ListingCard({
   average: number | null;
 
   median: number | null;
+    items?: {
+
+  itemId?: string;
+
+  title?: string;
+
+  soldPrice?: string;
+
+  soldCurrency?: string;
+
+  endedAt?: string;
+
+  url?: string;
+
+}[];
 
 };
 
@@ -168,6 +183,9 @@ useEffect(() => {
           average: data.average ?? null,
 
           median: data.median ?? null,
+          items: Array.isArray(data.items) ? data.items : [],
+
+
 
         });
 
