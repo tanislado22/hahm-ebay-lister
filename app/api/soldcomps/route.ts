@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
 
       page: "1",
 
-      count: "50",
+      count: "240",
 
       itemCondition: "used",
 
