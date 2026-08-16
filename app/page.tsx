@@ -744,6 +744,7 @@ for (let i = 0; i < files.length; i += 3) {
           onRenameSku={renameSku}
           onRetry={writeGroup}
           onPost={postGroup}
+          onReorderPhoto={reorderPhoto}
           onPostAll={postAll}
           onBack={() => setStep("review")}
         />
