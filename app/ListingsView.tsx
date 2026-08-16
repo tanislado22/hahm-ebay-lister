@@ -61,6 +61,7 @@ interface ListingsViewProps {
   onRenameSku: (groupId: string, sku: string) => void;
   onRetry: (groupId: string) => void;
   onPost: (groupId: string) => void;
+  onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
   onPostAll: () => void;
   onBack: () => void;
 }
@@ -73,6 +74,7 @@ export function ListingsView({
   onRenameSku,
   onRetry,
   onPost,
+  onReorderPhoto,
   onPostAll,
   onBack,
 }: ListingsViewProps) {
@@ -133,6 +135,7 @@ export function ListingsView({
             onRenameSku={onRenameSku}
             onRetry={onRetry}
             onPost={onPost}
+            onReorderPhoto={onReorderPhoto}
           />
         ))}
       </div>
