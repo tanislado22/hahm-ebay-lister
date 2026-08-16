@@ -1291,6 +1291,11 @@ export async function publishListing(
       fulfillmentPolicyId: setup.fulfillmentPolicyId,
       paymentPolicyId: setup.paymentPolicyId,
       returnPolicyId: setup.returnPolicyId,
+      bestOfferTerms: {
+
+  bestOfferEnabled: true,
+
+},
     },
     // Catalog matching helps commodity items (books, media, boxed products)
     // inherit eBay's established product data — but only when a strong,
