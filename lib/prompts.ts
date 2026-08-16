@@ -97,19 +97,25 @@ Study each photo carefully:
 
 Return ONLY valid JSON — no markdown, no code fences, no explanation. Use this exact structure:
 {
-  "title": "SEO-rich eBay listing title — maximum 80 characters, front-load best keywords, no filler",
+ "title": "SEO-rich eBay listing title - maximum 80 characters, front-load best keywords, no filler. If size is estimated from measurements because no size tag is visible, clearly use 'Approx Size [SIZE]' and 'See Measurements' in the title. Never present an estimated size as a confirmed tag size.",
   "category": "Pick the CLOSEST broad match from: womens_top, womens_dress, womens_skirt, womens_pants, womens_coat, womens_sweater, womens_jeans, womens_clothing, womens_shoes, handbag, wallet, mens_top, mens_pants, mens_coat, mens_sweater, mens_jeans, mens_clothing, mens_shoes, jewelry, scarf, belt, sunglasses, hat, accessory, doll, collectible, collector_plate, toy, home_decor, book, knife, sporting_goods, electronics, camera, audio, video_game, media, vinyl_record, cd, dvd_bluray, musical_instrument, kitchenware, glassware, pottery_ceramics, art, craft, tool, automotive, office, health_beauty, small_appliance, lighting, linens, holiday, board_game, puzzle, plush, action_figure, trading_card, sports_memorabilia, coin, stamp, ephemera, other",
   "category_hint": "Short search phrase for the real eBay category, such as 'vintage porcelain figurine' or 'men's hiking boots'. Keep it under 8 words.",
   "category_id": "Leave blank unless the exact eBay category ID is explicitly known. Otherwise use an empty string.",
   "brand": "Brand name exactly as shown on tag/label. Use 'No Brand' if truly unbranded.",
   "item_type": "Specific descriptive item type",
   "color": ["Primary color", "Secondary color if present — omit if solid"],
-  "size": "Size EXACTLY as printed on the tag. If no size tag is visible but visible measurements clearly indicate one standard size, give that standard size (e.g. 'M', '32x34', '10.5'). Otherwise use an empty string — NEVER write placeholder text like 'See photos', 'Unknown', or 'N/A' (eBay blocks apparel listings with non-standard size values).",
+"size": "If a size tag is visible, use the size EXACTLY as printed. If no size tag is visible but measurements clearly support an approximate standard size, return 'Approx. Size [SIZE] based on measurements'. NEVER present an estimated size as a confirmed tag size. If measurements are insufficient or unclear, use an empty string.",
+
+
+
+
   "material": "Fabric or material composition as shown on tag. Use an empty string if unclear — NEVER placeholder text like 'See tag in photos' (that belongs in the description, not a searchable field).",
   "condition": "One of: NEW_WITH_TAGS, NEW_NO_TAGS, EXCELLENT, VERY_GOOD, GOOD, FAIR",
   "condition_notes": "Honest 2-3 sentence condition description for buyers.",
   "measurements": "Measurements visible in photos, each with its label (e.g. 'Pit to pit 21 in, length 27 in' or 'Waist 32 in, rise 11 in, inseam 29 in'). Use an empty string if none visible — no placeholder text.",
-  "description": "Full eBay listing description — plain text only, no markdown.",
+"description": "Full eBay listing description - plain text only, no markdown. If no size tag is visible and size is estimated from measurements, clearly state: 'Size tag is missing. Approximate size [SIZE] based on measurements. Please review the measurements provided for proper fit.' Include the actual visible measurements. Never present an estimated size as a confirmed tag size.",
+
+
   "suggested_price": 0.00,
   "seo_keywords": ["Up to 10 search phrases buyers would use"],
   "key_features": ["Up to 5 features"],
