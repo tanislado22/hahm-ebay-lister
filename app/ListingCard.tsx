@@ -79,7 +79,15 @@ export function ListingCard({
   const listing = group.listing;
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const cover = photoById(group.photoIds[0]);
+useEffect(() => {
 
+  if (group.status === "done") {
+
+    setOpen(true);
+
+  }
+
+}, [group.status]);
   const specifics = useMemo(() => {
     const entries = Object.entries(listing?.item_specifics ?? {});
     return entries.filter(([k, v]) => v && v.trim() !== "" && !k.startsWith("---"));
