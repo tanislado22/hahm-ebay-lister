@@ -60,6 +60,9 @@ interface ListingCardProps {
   onRenameSku: (groupId: string, sku: string) => void;
   onRetry: (groupId: string) => void;
   onPost: (groupId: string) => void;
+  onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
+
+
 }
 
 export function ListingCard({
@@ -70,9 +73,11 @@ export function ListingCard({
   onRenameSku,
   onRetry,
   onPost,
+  onReorderPhoto,
 }: ListingCardProps) {
   const [open, setOpen] = useState(true);
   const listing = group.listing;
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
   const cover = photoById(group.photoIds[0]);
 
   const specifics = useMemo(() => {
@@ -310,6 +315,133 @@ const keyword = [
           </span>
         )}
       </header>
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", padding: "12px" }}>
+
+  {group.photoIds.map((pid, i) => {
+
+    const photo = photoById(pid);
+
+    if (!photo) return null;
+
+    return (
+
+      <div
+
+        key={pid}
+
+        draggable={group.photoIds.length > 1}
+
+        onDragStart={(e) => {
+
+          setDragIndex(i);
+
+          e.dataTransfer.effectAllowed = "move";
+
+          e.dataTransfer.setData("text/plain", pid);
+
+        }}
+
+        onDragOver={(e) => {
+
+          e.preventDefault();
+
+          e.dataTransfer.dropEffect = "move";
+
+        }}
+
+        onDrop={(e) => {
+
+          e.preventDefault();
+
+          if (dragIndex !== null && dragIndex !== i) {
+
+            onReorderPhoto(group.id, dragIndex, i);
+
+          }
+
+          setDragIndex(null);
+
+        }}
+
+        onDragEnd={() => setDragIndex(null)}
+
+        style={{
+
+          position: "relative",
+
+          cursor: "grab",
+
+          border: i === 0 ? "3px solid #333" : "1px solid #ccc",
+
+          borderRadius: "8px",
+
+          padding: "3px",
+
+        }}
+
+      >
+
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+
+        <img
+
+          src={photo.previewUrl}
+
+          alt=""
+
+          style={{
+
+            width: "90px",
+
+            height: "90px",
+
+            objectFit: "contain",
+
+            display: "block",
+
+          }}
+
+        />
+
+        {i === 0 && (
+
+          <span
+
+            style={{
+
+              position: "absolute",
+
+              left: "4px",
+
+              bottom: "4px",
+
+              background: "white",
+
+              padding: "2px 5px",
+
+              borderRadius: "4px",
+
+              fontSize: "11px",
+
+              fontWeight: 700,
+
+            }}
+
+          >
+
+            MAIN
+
+          </span>
+
+        )}
+
+      </div>
+
+    );
+
+  })}
+
+</div>
 
       {open && listing && group.status === "done" && (
         <div className="listing-card-body">
