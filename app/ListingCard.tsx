@@ -78,6 +78,7 @@ export function ListingCard({
   const [open, setOpen] = useState(true);
   const listing = group.listing;
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [zoomedPhoto, setZoomedPhoto] = useState<Photo | null>(null);
   const cover = photoById(group.photoIds[0]);
 useEffect(() => {
 
@@ -413,6 +414,9 @@ const keyword = [
           src={photo.previewUrl}
 
           alt=""
+          onClick={() => setZoomedPhoto(photo)}
+
+
 
           style={{
 
@@ -467,6 +471,56 @@ const keyword = [
   })}
 
 </div>
+{zoomedPhoto && (
+
+  <div
+
+    onClick={() => setZoomedPhoto(null)}
+
+    style={{
+
+      position: "fixed",
+
+      inset: 0,
+
+      background: "rgba(0,0,0,0.85)",
+
+      display: "flex",
+
+      alignItems: "center",
+
+      justifyContent: "center",
+
+      zIndex: 9999,
+
+      cursor: "zoom-out",
+
+    }}
+
+  >
+
+    <img
+
+      src={zoomedPhoto.previewUrl}
+
+      alt="Item photo enlarged"
+
+      style={{
+
+        maxWidth: "95vw",
+
+        maxHeight: "95vh",
+
+        objectFit: "contain",
+
+      }}
+
+    />
+
+  </div>
+
+)}
+
 
       {open && listing && group.status === "done" && (
         <div className="listing-card-body">
