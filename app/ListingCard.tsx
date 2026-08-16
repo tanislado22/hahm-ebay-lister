@@ -145,6 +145,23 @@ const [soldCompsLoading, setSoldCompsLoading] = useState(false);
 
 const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
   const [showSoldItems, setShowSoldItems] = useState(false);
+  const marketMedian =
+
+  group.comps?.ok && group.comps.median !== undefined
+
+    ? group.comps.median
+
+    : null;
+
+const soldMedian = soldComps?.median ?? null;
+
+const recommendedPrice =
+
+  soldMedian !== null && marketMedian !== null
+
+    ? Math.round((soldMedian * 0.7 + marketMedian * 0.3) * 100) / 100
+
+    : marketMedian;
 
 useEffect(() => {
 
@@ -530,6 +547,16 @@ const keyword = [
                   </button>
                 </span>
               )}
+             
+{recommendedPrice !== null && (
+
+  <span className="comps-line">
+
+    Recommended: ${recommendedPrice.toFixed(2)}
+
+  </span>
+
+)}
               {soldCompsLoading && (
 
   <span className="comps-line">
