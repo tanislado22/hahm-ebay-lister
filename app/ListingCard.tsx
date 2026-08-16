@@ -501,7 +501,7 @@ const keyword = [
 
     <img
 
-      src={zoomedPhoto.previewUrl}
+    src={`data:${zoomedPhoto.mediaType};base64,${zoomedPhoto.data}`}
 
       alt="Item photo enlarged"
 
