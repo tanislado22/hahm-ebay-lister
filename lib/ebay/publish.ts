@@ -826,6 +826,76 @@ async function uploadPhoto(
   return result.imageUrl;
 
 }
+
+// — Trading API: fixed-price listing ------------------------------------------
+
+function escapeXml(value: unknown): string {
+
+  return String(value ?? "")
+
+    .replace(/&/g, "&amp;")
+
+    .replace(/</g, "&lt;")
+
+    .replace(/>/g, "&gt;")
+
+    .replace(/"/g, "&quot;")
+
+    .replace(/'/g, "&apos;");
+
+}
+
+async function addFixedPriceItemTrading(
+
+  accessToken: string,
+
+  xmlBody: string,
+
+): Promise<string> {
+
+  const resp = await fetch(EBAY_TRADING, {
+
+    method: "POST",
+
+    headers: {
+
+      "X-EBAY-API-IAF-TOKEN": accessToken,
+
+      "Content-Type": "text/xml",
+
+      "X-EBAY-API-CALL-NAME": "AddFixedPriceItem",
+
+      "X-EBAY-API-SITEID": "0",
+
+      "X-EBAY-API-COMPATIBILITY-LEVEL": "1423",
+
+    },
+
+    body: xmlBody,
+
+  });
+
+  const text = await resp.text();
+
+  if (!resp.ok || !/<Ack>(Success|Warning)<\/Ack>/i.test(text)) {
+
+    console.error("[ebay/trading] AddFixedPriceItem failed:", text);
+
+    throw new Error(`eBay AddFixedPriceItem failed (${resp.status})`);
+
+  }
+
+  const itemId = text.match(/<ItemID>([^<]+)<\/ItemID>/i)?.[1];
+
+  if (!itemId) {
+
+    throw new Error("eBay AddFixedPriceItem did not return an ItemID.");
+
+  }
+
+  return itemId;
+
+}
 // ── Policies & location ──────────────────────────────────────────────────────
 
 export interface AccountSetup {
@@ -1215,6 +1285,156 @@ export async function publishListing(
     packageWeightAndSize: defaultPackageWeightAndSize(catKey),
   };
 
+  const tradingConditionId =
+
+  conditionIdsForGrade(
+
+    normalizeConditionInput(listing.condition),
+
+    acceptedConds,
+
+    catKey,
+
+  )[0] ?? 3000;
+
+const itemSpecificsXml = Object.entries(aspects)
+
+  .map(([name, rawValues]) => {
+
+    const values = Array.isArray(rawValues) ? rawValues : [rawValues];
+
+    const valueXml = values
+
+      .filter((v) => v !== null && v !== undefined && String(v).trim() !== "")
+
+      .map((v) => `<Value>${escapeXml(v)}</Value>`)
+
+      .join("");
+
+    if (!valueXml) return "";
+
+    return `
+
+      <NameValueList>
+
+        <Name>${escapeXml(name)}</Name>
+
+        ${valueXml}
+
+      </NameValueList>`;
+
+  })
+
+  .join("");
+
+const pictureXml = photoUrls
+
+  .slice(0, 24)
+
+  .map((url) => `<PictureURL>${escapeXml(url)}</PictureURL>`)
+
+  .join("");
+
+const postalCode = String(
+
+  process.env.EBAY_LOCATION_POSTAL_CODE || ""
+
+).trim();
+
+const tradingXml = `<?xml version="1.0" encoding="utf-8"?>
+
+<AddFixedPriceItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+
+  <Item>
+
+    <Title>${escapeXml(String(listing.title || "Untitled").slice(0, 80))}</Title>
+
+    <Description>${escapeXml(listing.description || "")}</Description>
+
+    <PrimaryCategory>
+
+      <CategoryID>${escapeXml(catId)}</CategoryID>
+
+    </PrimaryCategory>
+
+    <StartPrice currencyID="${escapeXml(EBAY_CURRENCY)}">${escapeXml(price)}</StartPrice>
+
+    <Currency>${escapeXml(EBAY_CURRENCY)}</Currency>
+
+    <Country>US</Country>
+
+    ${postalCode ? `<PostalCode>${escapeXml(postalCode)}</PostalCode>` : `<Location>United States</Location>`}
+
+    <ListingType>FixedPriceItem</ListingType>
+
+    <ListingDuration>GTC</ListingDuration>
+
+    <Quantity>1</Quantity>
+
+    <SKU>${escapeXml(sku)}</SKU>
+
+    <InventoryTrackingMethod>SKU</InventoryTrackingMethod>
+
+    <ConditionID>${tradingConditionId}</ConditionID>
+
+    ${
+
+      listing.condition_notes
+
+        ? `<ConditionDescription>${escapeXml(listing.condition_notes)}</ConditionDescription>`
+
+        : ""
+
+    }
+
+    <PictureDetails>
+
+      ${pictureXml}
+
+    </PictureDetails>
+
+    ${
+
+      itemSpecificsXml
+
+        ? `<ItemSpecifics>${itemSpecificsXml}</ItemSpecifics>`
+
+        : ""
+
+    }
+
+    <BestOfferDetails>
+
+      <BestOfferEnabled>true</BestOfferEnabled>
+
+    </BestOfferDetails>
+
+    <SellerProfiles>
+
+      <SellerPaymentProfile>
+
+        <PaymentProfileID>${escapeXml(setup.paymentPolicyId)}</PaymentProfileID>
+
+      </SellerPaymentProfile>
+
+      <SellerReturnProfile>
+
+        <ReturnProfileID>${escapeXml(setup.returnPolicyId)}</ReturnProfileID>
+
+      </SellerReturnProfile>
+
+      <SellerShippingProfile>
+
+        <ShippingProfileID>${escapeXml(setup.fulfillmentPolicyId)}</ShippingProfileID>
+
+      </SellerShippingProfile>
+
+    </SellerProfiles>
+
+  </Item>
+
+</AddFixedPriceItemRequest>`;
+
   const putInventory = () =>
     withTransientRetry(
       () =>
@@ -1225,6 +1445,58 @@ export async function publishListing(
       "inventory item",
       sku
     );
+const useTradingApi = process.env.EBAY_PUBLISH_MODE === "trading";
+
+if (useTradingApi) {
+
+  try {
+
+    const tradingItemId = await addFixedPriceItemTrading(
+
+      accessToken,
+
+      tradingXml,
+
+    );
+
+    return {
+
+      success: true,
+
+      sku,
+
+      listingId: tradingItemId,
+
+      warnings: warnings.length ? warnings : undefined,
+
+    };
+
+  } catch (e) {
+
+    console.error("[ebay/trading] publish failed:", e);
+
+    return {
+
+      success: false,
+
+      sku,
+
+      error:
+
+        e instanceof Error
+
+          ? e.message
+
+          : "Trading API publish failed.",
+
+      warnings: warnings.length ? warnings : undefined,
+
+    };
+
+  }
+
+}
+
 
   let r = await putInventory();
   if (![200, 201, 204].includes(r.status)) {
