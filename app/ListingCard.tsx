@@ -61,6 +61,8 @@ interface ListingCardProps {
   onRetry: (groupId: string) => void;
   onPost: (groupId: string) => void;
   onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
+onRemovePhoto: (photoId: string) => void;
+
 
 
 }
@@ -74,6 +76,7 @@ export function ListingCard({
   onRetry,
   onPost,
   onReorderPhoto,
+  onRemovePhoto,
 }: ListingCardProps) {
   const [open, setOpen] = useState(true);
   const listing = group.listing;
@@ -464,6 +467,67 @@ const keyword = [
 
         )}
 
+   {group.photoIds.length > 1 && (
+
+  <button
+
+    type="button"
+
+    onClick={(e) => {
+
+      e.stopPropagation();
+
+      onRemovePhoto(pid);
+
+    }}
+
+    onMouseDown={(e) => e.stopPropagation()}
+
+    draggable={false}
+
+    title="Remove photo"
+
+    style={{
+
+      position: "absolute",
+
+      top: "4px",
+
+      right: "4px",
+
+      width: "22px",
+
+      height: "22px",
+
+      borderRadius: "50%",
+
+      border: "1px solid #ccc",
+
+      background: "white",
+
+      color: "red",
+
+      cursor: "pointer",
+
+      fontWeight: 700,
+
+      fontSize: "16px",
+
+      lineHeight: 1,
+
+      zIndex: 2,
+
+    }}
+
+  >
+
+    ×
+
+  </button>
+
+)}
+
+  
       </div>
 
     );
