@@ -293,7 +293,7 @@ const keyword = [
 
   };
 
-}, [group.status]);
+}, [group.status, listing?.title, listing?.brand, listing?.size]);
 
   return (
     <article className={`listing-card status-${group.status}`}>
