@@ -125,7 +125,7 @@ Return ONLY valid JSON — no markdown, no code fences, no explanation. Use this
   "condition": "One of: NEW_WITH_TAGS, NEW_NO_TAGS, EXCELLENT, VERY_GOOD, GOOD, FAIR",
   "condition_notes": "Honest 2-3 sentence condition description for buyers.",
   "measurements": "Measurements visible in photos, each with its label (e.g. 'Pit to pit 21 in, length 27 in' or 'Waist 32 in, rise 11 in, inseam 29 in'). Use an empty string if none visible — no placeholder text.",
-"description": "Full eBay listing description - plain text only, no markdown. If no size tag is visible and size is estimated from measurements, clearly state: 'Size tag is missing. Approximate size [SIZE] based on measurements. Please review the measurements provided for proper fit.' Include the actual visible measurements. Never present an estimated size as a confirmed tag size.",
+"description": "Full eBay listing description - plain text only, no markdown.Always include all measurements visible in the photos in the description, with their exact labels and values. For tops, include Pit to Pit and Length when visible. For pants or bottoms, include Waist, Rise, Inseam, and Leg Opening when visible. Never omit a visible measurement. If no size tag is visible and size is estimated from measurements, clearly state: 'Size tag is missing. Approximate size [SIZE] based on measurements. Please review the measurements provided for proper fit.' Include the actual visible measurements. Never present an estimated size as a confirmed tag size.",
 
 
   "suggested_price": 0.00,
