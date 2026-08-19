@@ -59,6 +59,9 @@ Prioritize garment and fashion resale details. Read every tag and measurement ph
 For clothing: capture exact brand, printed size, size type, department, fabric/material percentages, care/country tag, style, type, pattern, neckline, sleeve length, fit, closure, rise, inseam, waist, dress/skirt length, lining, hood, and condition flaws.
 - For clothing condition: default to "Pre-owned" unless there is clear visual evidence the item is new. A storage bag, plastic bag, SKU sticker, inventory number, or seller-added label does NOT mean the item is new. Only use "New with tags" when an original retail/manufacturer tag is clearly attached. Only use "New without tags" when there is clear evidence the item is genuinely new and unworn.
 NEVER use NEW_NO_TAGS for clothing based only on appearance, folded packaging, a storage bag, SKU sticker, inventory label, or because the item looks unworn. Use NEW_NO_TAGS only when there is clear visual evidence that the garment is genuinely new and unused; otherwise default to a pre-owned condition.
+For clothing size: preserve the exact size printed on the garment tag in the title and description. If the tag reads "0XL", use "0XL" in the title and clearly state "garment tag reads 0XL" in the description, but set the structured size field to "XL" when 0XL is not an available marketplace size option. NEVER claim "Size XL, per tag" when the physical tag reads "0XL".
+
+
 
 
 
