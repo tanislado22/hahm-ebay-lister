@@ -1341,6 +1341,14 @@ const postalCode = String(
 
 ).trim();
 
+  const pkg = defaultPackageWeightAndSize(catKey) as any;
+
+const totalOz = Math.max(1, Math.ceil(Number(pkg?.weight?.value || 16)));
+
+const weightMajor = Math.floor(totalOz / 16);
+
+const weightMinor = totalOz % 16;
+
 const tradingXml = `<?xml version="1.0" encoding="utf-8"?>
 
 <AddFixedPriceItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
@@ -1408,6 +1416,16 @@ const tradingXml = `<?xml version="1.0" encoding="utf-8"?>
       <BestOfferEnabled>true</BestOfferEnabled>
 
     </BestOfferDetails>
+
+    <ShippingPackageDetails>
+
+  <MeasurementUnit>English</MeasurementUnit>
+
+  <WeightMajor unit="lbs">${weightMajor}</WeightMajor>
+
+  <WeightMinor unit="oz">${weightMinor}</WeightMinor>
+
+</ShippingPackageDetails>
 
     <SellerProfiles>
 
