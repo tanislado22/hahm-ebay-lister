@@ -881,7 +881,7 @@ async function addFixedPriceItemTrading(
 
     console.error("[ebay/trading] AddFixedPriceItem failed:", text);
 
-    throw new Error(`eBay AddFixedPriceItem failed (${resp.status})`);
+    throw new Error(`eBay AddFixedPriceItem failed (${resp.status}): ${text}`);
 
   }
 
