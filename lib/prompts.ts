@@ -112,6 +112,7 @@ Return ONLY valid JSON — no markdown, no code fences, no explanation. Use this
   "item_type": "Specific descriptive item type",
   "color": ["Primary color", "Secondary color if present — omit if solid"],
 "size": "If a size tag is visible, use the size EXACTLY as printed. If no size tag is visible but measurements clearly support an approximate standard size, return 'Approx. [SIZE]' based on the measurements. NEVER present an estimated size as a confirmed tag size. If measurements are insufficient or unclear, use an empty string.",
+"size_estimated": "Return true ONLY when size is estimated from measurements because no size tag is visible. Return false when size is read from a visible size tag or when no estimated size is provided.",
 
 
 
