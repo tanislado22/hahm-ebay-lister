@@ -10,6 +10,7 @@ export interface ListingResult {
   item_type?: string;
   color?: string[] | string;
   size?: string;
+  size_estimated?: boolean;
   material?: string;
   condition?: string;
   condition_notes?: string;
