@@ -87,6 +87,7 @@ export default function Home() {
   const [binPrefix, setBinPrefix] = useState("");
   const [step, setStep] = useState<Step>("upload");
   const [groups, setGroups] = useState<ItemGroup[]>([]);
+  const [manualGroups, setManualGroups] = useState<string[][]>([]);
   const [orphanIds, setOrphanIds] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
   const [sorting, setSorting] = useState(false);
