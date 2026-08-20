@@ -148,12 +148,21 @@ for (let i = 0; i < files.length; i += 3) {
   await sleep(20);
 
 }
-      setPhotos((prev) =>
-        [...prev, ...resized.map((r) => ({ id: newId(), ...r }))].slice(
-          0,
-          MAX_PHOTOS
-        )
-      );
+      const newPhotos = resized.map((r) => ({ id: newId(), ...r }));
+
+setPhotos((prev) =>
+
+  [...prev, ...newPhotos].slice(0, MAX_PHOTOS)
+
+);
+
+setManualGroups((prev) => [
+
+  ...prev,
+
+  newPhotos.map((p) => p.id),
+
+]);
     } catch (e) {
       setError((e as Error).message);
     }
