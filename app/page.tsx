@@ -168,8 +168,21 @@ setManualGroups((prev) => [
     }
   }, []);
 
-  const removePhoto = (id: string) =>
-    setPhotos((prev) => prev.filter((p) => p.id !== id));
+  const removePhoto = (id: string) => {
+
+  setPhotos((prev) => prev.filter((p) => p.id !== id));
+
+  setManualGroups((prev) =>
+
+    prev
+
+      .map((group) => group.filter((photoId) => photoId !== id))
+
+      .filter((group) => group.length > 0)
+
+  );
+
+};
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
