@@ -702,7 +702,23 @@ setManualGroups((prev) => [
                 onChange={(e) => void addFiles(e.target.files)}
               />
             </div>
+{manualGroups.length > 0 && (
 
+  <div className="note">
+
+    <strong>{manualGroups.length} items added</strong>
+
+    <div>
+
+      Each photo selection is saved as one separate item.
+
+      Choose the photos for the next item to continue.
+
+    </div>
+
+  </div>
+
+)
             {photos.length > 0 && (
               <div className="thumbs" aria-label="Selected photos">
                 {photos.map((p) => (
