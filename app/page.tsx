@@ -731,7 +731,7 @@ setManualGroups((prev) => [
 
   </div>
 
-)
+)}
             {photos.length > 0 && (
               <div className="thumbs" aria-label="Selected photos">
                 {photos.map((p) => (
