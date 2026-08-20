@@ -197,6 +197,39 @@ setManualGroups((prev) => [
         }
       }
 
+      if (manualGroups.length > 0) {
+
+  const validPhotoIds = new Set(photos.map((p) => p.id));
+
+  const nextGroups: ItemGroup[] = manualGroups
+
+    .map((photoIds, i) => ({
+
+      id: newId(),
+
+      sku: binPrefix.trim(),
+
+      name: `Item ${i + 1}`,
+
+      photoIds: photoIds.filter((id) => validPhotoIds.has(id)),
+
+      status: "idle" as const,
+
+    }))
+
+    .filter((g) => g.photoIds.length > 0);
+
+  setSkuStart(skuOffset);
+
+  setGroups(nextGroups);
+
+  setOrphanIds([]);
+
+  setStep("review");
+
+  return;
+
+}
       // Sort in chunks so each request's thumbnail payload stays small.
       type RawGroup = { name: string; photoIds: string[] };
       const chunkResults: RawGroup[][] = [];
