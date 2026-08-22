@@ -197,7 +197,7 @@ const badTitlePattern = /\b(lot|bundle|bulk|wholesale|set of|lot of)\b/i;
 
     query.includes("long sleeve") &&
 
-    (title.includes("short sleeve") || title.includes("sleeveless"))
+    (/\bshort(?:\s+\w+){0,2}\s+sleeves?\b/.test(title) || title.includes("sleeveless"))
 
   ) {
 
