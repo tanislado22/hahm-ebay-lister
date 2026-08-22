@@ -6,13 +6,13 @@ export async function GET(request: NextRequest) {
 
   try {
 
-    const apiKey = process.env.SOLDCOMPS_API_KEY;
+    const apiToken = process.env.APIFY_API_TOKEN;
 
-    if (!apiKey) {
+    if (!apiToken) {
 
       return NextResponse.json(
 
-        { error: "SOLDCOMPS_API_KEY is not configured" },
+        { error: "APIFY_API_TOKEN is not configured" },
 
         { status: 500 }
 
@@ -36,35 +36,57 @@ export async function GET(request: NextRequest) {
 
     }
 
-    const params = new URLSearchParams({
+    const actorInput = {
 
-      keyword,
+      query: keyword,
 
-      ebaySite: "ebay.com",
+      condition: "used",
 
-      page: "1",
+      country: "US",
 
-      count: "200",
+      maxResults: 10,
 
-      itemCondition: "used",
+      soldWithinDays: 30,
 
-      sold: "true",
+      includeDetails: false,
 
-      sortOrder: "endedRecently",
+      compact: false,
 
-    });
+      incrementalMode: false,
+
+      emitUnchanged: false,
+
+      excludeEmptyFields: false,
+
+      descriptionFormat: "all",
+
+      freeShipping: false,
+
+      returnsAccepted: false,
+
+      skipReposts: false,
+
+      maxPages: 5,
+
+    };
 
     const response = await fetch(
 
-      `https://api.sold-comps.com/v1/scrape?${params.toString()}`,
+      "https://api.apify.com/v2/acts/blackfalcondata~ebay-sold-listings-scraper/run-sync-get-dataset-items",
 
       {
 
+        method: "POST",
+
         headers: {
 
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${apiToken}`,
+
+          "Content-Type": "application/json",
 
         },
+
+        body: JSON.stringify(actorInput),
 
         cache: "no-store",
 
@@ -80,7 +102,7 @@ export async function GET(request: NextRequest) {
 
         {
 
-          error: "SoldComps request failed",
+          error: "Apify sold comps request failed",
 
           details: data,
 
@@ -92,48 +114,69 @@ export async function GET(request: NextRequest) {
 
     }
 
-    let items = Array.isArray(data.items) ? data.items : [];
-    if (data.hasNextPage === true) {
+    const rawItems = Array.isArray(data) ? data : [];
 
-  const page2Params = new URLSearchParams(params);
+    const items = rawItems
 
-  page2Params.set("page", "2");
+      .map((item: any) => {
 
-  const response2 = await fetch(
+        const rawPrice =
 
-    `https://api.sold-comps.com/v1/scrape?${page2Params.toString()}`,
+          item.priceValue ??
 
-    {
+          item.soldPrice ??
 
-      headers: {
+          item.price ??
 
-        Authorization: `Bearer ${apiKey}`,
+          null;
 
-      },
+        const soldPrice =
 
-      cache: "no-store",
+          typeof rawPrice === "number"
 
-    }
+            ? rawPrice
 
-  );
+            : Number.parseFloat(String(rawPrice ?? ""));
 
-  if (response2.ok) {
+        return {
 
-    const data2 = await response2.json();
+          ...item,
 
-    const items2 = Array.isArray(data2.items) ? data2.items : [];
+          soldPrice,
 
-    items = [...items, ...items2];
+          soldDate: item.soldDate ?? null,
 
-  }
+          title: item.title ?? "",
 
-}
+          condition: item.condition ?? null,
+
+          currency: item.priceCurrency ?? item.currency ?? "USD",
+
+          url:
+
+            item.canonicalUrl ??
+
+            item.sourceUrl ??
+
+            item.url ??
+
+            null,
+
+        };
+
+      })
+
+      .filter(
+
+        (item: any) =>
+
+          Number.isFinite(item.soldPrice) && item.soldPrice > 0
+
+      );
 
     const prices = items
 
-      .map((item: any) => Number.parseFloat(item.soldPrice))
-
-      .filter((price: number) => Number.isFinite(price) && price > 0)
+      .map((item: any) => item.soldPrice)
 
       .sort((a: number, b: number) => a - b);
 
@@ -141,9 +184,13 @@ export async function GET(request: NextRequest) {
 
       prices.length > 0
 
-        ? prices.reduce((sum: number, price: number) => sum + price, 0) /
+        ? prices.reduce(
 
-          prices.length
+            (sum: number, price: number) => sum + price,
+
+            0
+
+          ) / prices.length
 
         : null;
 
@@ -155,13 +202,21 @@ export async function GET(request: NextRequest) {
 
         : prices.length % 2 === 1
 
-          ? prices[Math.floor(prices.length / 2)]
+        ? prices[Math.floor(prices.length / 2)]
 
-          : (prices[prices.length / 2 - 1] + prices[prices.length / 2]) / 2;
+        : (
+
+            prices[prices.length / 2 - 1] +
+
+            prices[prices.length / 2]
+
+          ) / 2;
 
     return NextResponse.json({
 
       source: "soldcomps",
+
+      provider: "apify",
 
       keyword,
 
@@ -171,11 +226,27 @@ export async function GET(request: NextRequest) {
 
       low: prices.length ? prices[0] : null,
 
-      high: prices.length ? prices[prices.length - 1] : null,
+      high: prices.length
 
-      average: average === null ? null : Number(average.toFixed(2)),
+        ? prices[prices.length - 1]
 
-      median: median === null ? null : Number(median.toFixed(2)),
+        : null,
+
+      average:
+
+        average === null
+
+          ? null
+
+          : Number(average.toFixed(2)),
+
+      median:
+
+        median === null
+
+          ? null
+
+          : Number(median.toFixed(2)),
 
       items,
 
@@ -183,11 +254,11 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
 
-    console.error("SoldComps API error:", error);
+    console.error("Apify SoldComps API error:", error);
 
     return NextResponse.json(
 
-      { error: "Unable to fetch SoldComps data" },
+      { error: "Unable to fetch sold comps data" },
 
       { status: 500 }
 
@@ -196,3 +267,4 @@ export async function GET(request: NextRequest) {
   }
 
 }
+
