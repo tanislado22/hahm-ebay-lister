@@ -240,11 +240,34 @@ const badTitlePattern = /\b(lot|bundle|bulk|wholesale|set of|lot of)\b/i;
   const bTitle = (b.title ?? "").toLowerCase();
 
   const query = keyword.toLowerCase();
+  const queryWords = query.split(/\s+/);
+
+const audienceIndex = queryWords.findIndex((word) =>
+
+  /^(women|womens|men|mens|girls|boys|kids|youth|unisex)$/i.test(word)
+
+);
+
+const brandPhrase =
+
+  audienceIndex > 0
+
+    ? queryWords.slice(0, audienceIndex).join(" ")
+
+    : queryWords[0] ?? "";
 
   const scoreTitle = (title: string) => {
 
     let score = 0;
+if (brandPhrase && title.includes(brandPhrase)) {
 
+
+
+  score += 8;
+
+
+
+}
     // Coincidencia normal de palabras
 
     for (const word of searchWords) {
