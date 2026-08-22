@@ -183,6 +183,16 @@ const audienceWord = titleWords.find((word) =>
 
 );
 
+const detailWords = titleWords
+
+  .filter((word) =>
+
+    /^(sheer|polka|dot|long|short|sleeve|sleeveless|floral|plaid|striped|silk|linen|cami)$/i.test(word)
+
+  )
+
+  .slice(0, 6);
+
 const keyword = [
 
   listing?.brand,
@@ -190,6 +200,8 @@ const keyword = [
   audienceWord,
 
   ...garmentWords.slice(0, 3),
+
+  ...detailWords,
 
   listing?.size,
 
