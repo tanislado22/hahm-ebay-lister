@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
 
       country: "US",
 
-      maxResults: 10,
+      maxResults: 20,
 
       soldWithinDays: 30,
 
@@ -115,7 +115,16 @@ export async function GET(request: NextRequest) {
     }
 
     const rawItems = Array.isArray(data) ? data : [];
+const searchWords = keyword
 
+  .toLowerCase()
+
+  .split(/\s+/)
+
+  .filter((word) => word.length > 2);
+
+const badTitlePattern = /\b(lot|bundle|bulk|wholesale|set of|lot of)\b/i;
+    
     const items = rawItems
 
       .map((item: any) => {
@@ -168,11 +177,39 @@ export async function GET(request: NextRequest) {
 
       .filter(
 
-        (item: any) =>
+  (item: any) =>
 
-          Number.isFinite(item.soldPrice) && item.soldPrice > 0
+    Number.isFinite(item.soldPrice) &&
 
-      );
+    item.soldPrice > 0 &&
+
+    !badTitlePattern.test(item.title ?? "")
+
+)
+
+.sort((a: any, b: any) => {
+
+  const aTitle = (a.title ?? "").toLowerCase();
+
+  const bTitle = (b.title ?? "").toLowerCase();
+
+  const aScore = searchWords.filter((word) =>
+
+    aTitle.includes(word)
+
+  ).length;
+
+  const bScore = searchWords.filter((word) =>
+
+    bTitle.includes(word)
+
+  ).length;
+
+  return bScore - aScore;
+
+})
+
+.slice(0, 10);
 
     const prices = items
 
