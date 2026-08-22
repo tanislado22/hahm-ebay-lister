@@ -175,17 +175,63 @@ const badTitlePattern = /\b(lot|bundle|bulk|wholesale|set of|lot of)\b/i;
 
       })
 
-      .filter(
+     .filter((item: any) => {
 
-  (item: any) =>
+  const title = (item.title ?? "").toLowerCase();
 
-    Number.isFinite(item.soldPrice) &&
+  const query = keyword.toLowerCase();
 
-    item.soldPrice > 0 &&
+  if (!Number.isFinite(item.soldPrice) || item.soldPrice <= 0) {
 
-    !badTitlePattern.test(item.title ?? "")
+    return false;
 
-)
+  }
+
+  if (badTitlePattern.test(title)) {
+
+    return false;
+
+  }
+
+  if (
+
+    query.includes("long sleeve") &&
+
+    (title.includes("short sleeve") || title.includes("sleeveless"))
+
+  ) {
+
+    return false;
+
+  }
+
+  if (
+
+    query.includes("short sleeve") &&
+
+    (title.includes("long sleeve") || title.includes("sleeveless"))
+
+  ) {
+
+    return false;
+
+  }
+
+  if (
+
+    query.includes("sleeveless") &&
+
+    (title.includes("long sleeve") || title.includes("short sleeve"))
+
+  ) {
+
+    return false;
+
+  }
+
+  return true;
+
+})
 
 .sort((a: any, b: any) => {
 
