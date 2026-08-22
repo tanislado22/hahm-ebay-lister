@@ -193,19 +193,79 @@ const badTitlePattern = /\b(lot|bundle|bulk|wholesale|set of|lot of)\b/i;
 
   const bTitle = (b.title ?? "").toLowerCase();
 
-  const aScore = searchWords.filter((word) =>
+  const query = keyword.toLowerCase();
 
-    aTitle.includes(word)
+  const scoreTitle = (title: string) => {
 
-  ).length;
+    let score = 0;
 
-  const bScore = searchWords.filter((word) =>
+    // Coincidencia normal de palabras
 
-    bTitle.includes(word)
+    for (const word of searchWords) {
 
-  ).length;
+      if (title.includes(word)) score += 1;
 
-  return bScore - aScore;
+    }
+
+    // Características importantes reciben más peso
+
+    const importantTerms = [
+
+      "sheer",
+
+      "blouse",
+
+      "shirt",
+
+      "top",
+
+      "long sleeve",
+
+      "short sleeve",
+
+      "sleeveless",
+
+      "polka dot",
+
+      "floral",
+
+      "plaid",
+
+      "striped",
+
+      "silk",
+
+      "linen",
+
+      "cami"
+
+    ];
+
+    for (const term of importantTerms) {
+
+      if (query.includes(term) && title.includes(term)) {
+
+        score += 3;
+
+      }
+
+    }
+
+    // Penalizar características contradictorias
+
+    if (query.includes("long sleeve") && title.includes("short sleeve")) score -= 5;
+
+    if (query.includes("long sleeve") && title.includes("sleeveless")) score -= 5;
+
+    if (query.includes("short sleeve") && title.includes("long sleeve")) score -= 5;
+
+    if (query.includes("sleeveless") && title.includes("long sleeve")) score -= 5;
+
+    return score;
+
+  };
+
+  return scoreTitle(bTitle) - scoreTitle(aTitle);
 
 })
 
