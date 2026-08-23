@@ -130,6 +130,7 @@ const saveClient = () => {
 
   const clientsLoadedRef = useRef(false);
 const selectedClientSaveReadyRef = useRef(false);
+  const workModeSaveReadyRef = useRef(false);
   useEffect(() => {
 
     const savedClients = localStorage.getItem("savedClients");
@@ -191,6 +192,25 @@ if (!selectedClientSaveReadyRef.current) {
   }
 
 }, [selectedClientId]);
+
+  useEffect(() => {
+    if (!workModeSaveReadyRef.current) {
+
+
+
+  workModeSaveReadyRef.current = true;
+
+
+
+  return;
+
+
+
+}
+
+  localStorage.setItem("workMode", workMode);
+
+}, [workMode]);
   const photoMap = useMemo(() => {
     const m = new Map<string, Photo>();
     photos.forEach((p) => m.set(p.id, p));
