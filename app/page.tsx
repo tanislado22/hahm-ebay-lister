@@ -127,31 +127,37 @@ const saveClient = () => {
 
 };
 
+  const clientsLoadedRef = useRef(false);
+
   useEffect(() => {
 
-  const savedClients = localStorage.getItem("savedClients");
+    const savedClients = localStorage.getItem("savedClients");
 
-  if (savedClients) {
+    if (savedClients) {
 
-    try {
+      try {
 
-      setClients(JSON.parse(savedClients));
+        setClients(JSON.parse(savedClients));
 
-    } catch {
+      } catch {
 
-      localStorage.removeItem("savedClients");
+        localStorage.removeItem("savedClients");
+
+      }
 
     }
 
-  }
+    clientsLoadedRef.current = true;
 
-}, []);
+  }, []);
 
-useEffect(() => {
+  useEffect(() => {
 
-  localStorage.setItem("savedClients", JSON.stringify(clients));
+    if (!clientsLoadedRef.current) return;
 
-}, [clients]);
+    localStorage.setItem("savedClients", JSON.stringify(clients));
+
+  }, [clients]);
   const photoMap = useMemo(() => {
     const m = new Map<string, Photo>();
     photos.forEach((p) => m.set(p.id, p));
