@@ -147,6 +147,13 @@ const saveClient = () => {
       }
 
     }
+    const savedSelectedClientId = localStorage.getItem("selectedClientId");
+
+if (savedSelectedClientId) {
+
+  setSelectedClientId(savedSelectedClientId);
+
+}
 
     clientsLoadedRef.current = true;
 
@@ -159,6 +166,19 @@ const saveClient = () => {
     localStorage.setItem("savedClients", JSON.stringify(clients));
 
   }, [clients]);
+  useEffect(() => {
+
+  if (selectedClientId) {
+
+    localStorage.setItem("selectedClientId", selectedClientId);
+
+  } else {
+
+    localStorage.removeItem("selectedClientId");
+
+  }
+
+}, [selectedClientId]);
   const photoMap = useMemo(() => {
     const m = new Map<string, Photo>();
     photos.forEach((p) => m.set(p.id, p));
