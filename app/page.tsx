@@ -101,7 +101,31 @@ export default function Home() {
   const [clientName, setClientName] = useState("");
   const [clients, setClients] = useState<{ id: string; name: string; active: boolean }[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+const saveClient = () => {
 
+  const name = clientName.trim();
+
+  if (!name) return;
+
+  setClients((prev) => [
+
+    ...prev,
+
+    {
+
+      id: crypto.randomUUID(),
+
+      name,
+
+      active: true,
+
+    },
+
+  ]);
+
+  setClientName("");
+
+};
   const photoMap = useMemo(() => {
     const m = new Map<string, Photo>();
     photos.forEach((p) => m.set(p.id, p));
