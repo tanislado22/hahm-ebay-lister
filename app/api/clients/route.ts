@@ -155,3 +155,74 @@ export async function POST(request: Request) {
   }
 
 }
+export async function PATCH(request: Request) {
+
+  try {
+
+    const sql = await ensureClientsTable();
+
+    const body = await request.json();
+
+    const id = String(body?.id || "").trim();
+
+    const name = String(body?.name || "").trim();
+
+    if (!id || !name) {
+
+      return NextResponse.json(
+
+        { success: false, error: "Client id and name are required" },
+
+        { status: 400 }
+
+      );
+
+    }
+
+    const updated = await sql`
+
+      UPDATE clients
+
+      SET name = ${name}
+
+      WHERE id = ${id}
+
+      RETURNING id, name, active
+
+    `;
+
+    if (updated.length === 0) {
+
+      return NextResponse.json(
+
+        { success: false, error: "Client not found" },
+
+        { status: 404 }
+
+      );
+
+    }
+
+    return NextResponse.json({
+
+      success: true,
+
+      client: updated[0],
+
+    });
+
+  } catch (error) {
+
+    console.error("PATCH /api/clients failed:", error);
+
+    return NextResponse.json(
+
+      { success: false, error: "Failed to update client" },
+
+      { status: 500 }
+
+    );
+
+  }
+
+}
