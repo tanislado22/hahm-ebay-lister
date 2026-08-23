@@ -679,7 +679,7 @@ setManualGroups((prev) => [
     <button type="button" style={{ fontSize: "20px", padding: "10px 18px" }} onClick={() => setWorkMode("client")}>Client Job</button>
 <p style={{ fontSize: "20px", marginTop: "16px" }}>Selected mode: {workMode === "store" ? "My Store" : "Client Job"}</p>
     {workMode === "client" && (
-
+<>
   <input
 
     type="text"
@@ -706,7 +706,7 @@ setManualGroups((prev) => [
   Save Client
 
 </button>
-
+</>
 )}
   </div>
 
