@@ -129,7 +129,7 @@ const saveClient = () => {
 };
 
   const clientsLoadedRef = useRef(false);
-
+const selectedClientSaveReadyRef = useRef(false);
   useEffect(() => {
 
     const savedClients = localStorage.getItem("savedClients");
@@ -167,7 +167,13 @@ if (savedSelectedClientId) {
 
   }, [clients]);
   useEffect(() => {
+if (!selectedClientSaveReadyRef.current) {
 
+  selectedClientSaveReadyRef.current = true;
+
+  return;
+
+}
   if (selectedClientId) {
 
     localStorage.setItem("selectedClientId", selectedClientId);
