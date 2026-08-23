@@ -693,6 +693,19 @@ setManualGroups((prev) => [
     style={{ fontSize: "20px", padding: "10px", marginTop: "16px" }}
 
   />
+  <button
+
+  type="button"
+
+  onClick={saveClient}
+
+  style={{ fontSize: "20px", padding: "10px 18px", marginTop: "16px", marginLeft: "10px" }}
+
+>
+
+  Save Client
+
+</button>
 
 )}
   </div>
