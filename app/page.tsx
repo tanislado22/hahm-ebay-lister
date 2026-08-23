@@ -875,6 +875,67 @@ setManualGroups((prev) => [
   {selectedClientId === client.id ? "Selected" : "Select Client"}
 
 </button>
+        <button
+
+  type="button"
+
+  onClick={async () => {
+
+    const newName = window.prompt("Enter the new client name:", client.name);
+
+    if (!newName || !newName.trim() || newName.trim() === client.name) {
+
+      return;
+
+    }
+
+    const response = await fetch("/api/clients", {
+
+      method: "PATCH",
+
+      headers: {
+
+        "Content-Type": "application/json",
+
+      },
+
+      body: JSON.stringify({
+
+        id: client.id,
+
+        name: newName.trim(),
+
+      }),
+
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+
+      window.alert(data.error || "Failed to update client name");
+
+      return;
+
+    }
+
+    setClients((prev) =>
+
+      prev.map((c) =>
+
+        c.id === client.id ? { ...c, name: data.client.name } : c
+
+      )
+
+    );
+
+  }}
+
+>
+
+  Edit Name
+
+</button>
 <button
 
   type="button"
