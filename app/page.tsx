@@ -154,7 +154,13 @@ if (savedSelectedClientId) {
   setSelectedClientId(savedSelectedClientId);
 
 }
+const savedWorkMode = localStorage.getItem("workMode");
 
+if (savedWorkMode === "store" || savedWorkMode === "client") {
+
+  setWorkMode(savedWorkMode);
+
+}
     clientsLoadedRef.current = true;
 
   }, []);
