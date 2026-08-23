@@ -126,6 +126,32 @@ const saveClient = () => {
   setClientName("");
 
 };
+
+  useEffect(() => {
+
+  const savedClients = localStorage.getItem("savedClients");
+
+  if (savedClients) {
+
+    try {
+
+      setClients(JSON.parse(savedClients));
+
+    } catch {
+
+      localStorage.removeItem("savedClients");
+
+    }
+
+  }
+
+}, []);
+
+useEffect(() => {
+
+  localStorage.setItem("savedClients", JSON.stringify(clients));
+
+}, [clients]);
   const photoMap = useMemo(() => {
     const m = new Map<string, Photo>();
     photos.forEach((p) => m.set(p.id, p));
@@ -706,6 +732,77 @@ setManualGroups((prev) => [
   Save Client
 
 </button>
+  {clients.length > 0 && (
+
+  <div style={{ marginTop: "20px" }}>
+
+    <h3>Saved Clients</h3>
+
+    {clients.map((client) => (
+
+      <div
+
+        key={client.id}
+
+        style={{
+
+          display: "flex",
+
+          alignItems: "center",
+
+          gap: "10px",
+
+          marginTop: "10px",
+
+        }}
+
+      >
+
+        <strong>{client.name}</strong>
+
+        <span>
+
+          {client.active ? "Active" : "Inactive"}
+
+        </span>
+
+        <button
+
+          type="button"
+
+          onClick={() =>
+
+            setClients((prev) =>
+
+              prev.map((c) =>
+
+                c.id === client.id
+
+                  ? { ...c, active: !c.active }
+
+                  : c
+
+              )
+
+            )
+
+          }
+
+        >
+
+          {client.active ? "Deactivate" : "Reactivate"}
+
+        </button>
+
+      </div>
+
+    ))}
+
+  </div>
+
+)}
+
+
 </>
 )}
   </div>
