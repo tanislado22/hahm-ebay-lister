@@ -100,6 +100,7 @@ export default function Home() {
   const [workMode, setWorkMode] = useState<"store" | "client">("store");
   const [clientName, setClientName] = useState("");
   const [clients, setClients] = useState<{ id: string; name: string; active: boolean }[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 const saveClient = () => {
 
@@ -799,6 +800,17 @@ setManualGroups((prev) => [
           {client.active ? "Deactivate" : "Reactivate"}
 
         </button>
+        <button
+
+  type="button"
+
+  onClick={() => setSelectedClientId(client.id)}
+
+>
+
+  {selectedClientId === client.id ? "Selected" : "Select Client"}
+
+</button>
 <button
 
   type="button"
