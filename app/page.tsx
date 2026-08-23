@@ -99,6 +99,7 @@ export default function Home() {
   const [ebayConnected, setEbayConnected] = useState(false);
   const [workMode, setWorkMode] = useState<"store" | "client">("store");
   const [clientName, setClientName] = useState("");
+  const [clients, setClients] = useState<{ id: string; name: string; active: boolean }[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const photoMap = useMemo(() => {
