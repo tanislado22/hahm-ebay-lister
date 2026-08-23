@@ -166,7 +166,17 @@ const recommendedPrice =
     ? Math.round((soldMedian * 0.7 + marketMedian * 0.3) * 100) / 100
 
     : marketMedian;
+useEffect(() => {
 
+  if (soldMedian === null || recommendedPrice === null) return;
+
+  onEdit(group.id, {
+
+    suggested_price: recommendedPrice,
+
+  });
+
+}, [soldMedian]);
 useEffect(() => {
 
   const titleWords = (listing?.title ?? "").trim().split(/\s+/);
