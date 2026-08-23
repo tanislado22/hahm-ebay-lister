@@ -163,7 +163,7 @@ const recommendedPrice =
 
   soldMedian !== null && marketMedian !== null
 
-    ? Math.round((soldMedian * 0.7 + marketMedian * 0.3) * 100) / 100
+    ? Math.floor(soldMedian * 0.7 + marketMedian * 0.3) + 0.99
 
     : marketMedian;
 useEffect(() => {
