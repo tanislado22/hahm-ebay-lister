@@ -98,6 +98,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [ebayConnected, setEbayConnected] = useState(false);
   const [workMode, setWorkMode] = useState<"store" | "client">("store");
+  const [clientName, setClientName] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const photoMap = useMemo(() => {
@@ -652,6 +653,23 @@ setManualGroups((prev) => [
 
     <button type="button" style={{ fontSize: "20px", padding: "10px 18px" }} onClick={() => setWorkMode("client")}>Client Job</button>
 <p style={{ fontSize: "20px", marginTop: "16px" }}>Selected mode: {workMode === "store" ? "My Store" : "Client Job"}</p>
+    {workMode === "client" && (
+
+  <input
+
+    type="text"
+
+    placeholder="Client Name"
+
+    value={clientName}
+
+    onChange={(e) => setClientName(e.target.value)}
+
+    style={{ fontSize: "20px", padding: "10px", marginTop: "16px" }}
+
+  />
+
+)}
   </div>
 
 </section>
