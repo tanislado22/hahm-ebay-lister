@@ -793,7 +793,41 @@ setManualGroups((prev) => [
           {client.active ? "Deactivate" : "Reactivate"}
 
         </button>
+<button
 
+  type="button"
+
+  onClick={() => {
+
+    const firstConfirm = window.confirm(
+
+      `Delete ${client.name} permanently?`
+
+    );
+
+    if (!firstConfirm) return;
+
+    const secondConfirm = window.confirm(
+
+      `FINAL CONFIRMATION: This will permanently delete ${client.name}. This cannot be undone.`
+
+    );
+
+    if (!secondConfirm) return;
+
+    setClients((prev) =>
+
+      prev.filter((c) => c.id !== client.id)
+
+    );
+
+  }}
+
+>
+
+  Delete Permanently
+
+</button>
       </div>
 
     ))}
