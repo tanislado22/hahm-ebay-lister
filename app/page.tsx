@@ -97,6 +97,7 @@ export default function Home() {
   const [skuStart, setSkuStart] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [ebayConnected, setEbayConnected] = useState(false);
+  const [workMode, setWorkMode] = useState<"store" | "client">("store");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const photoMap = useMemo(() => {
@@ -641,6 +642,19 @@ setManualGroups((prev) => [
       </header>
 
       <EbayConnect />
+      <section className="panel">
+
+  <h2 className="section-label">Work mode</h2>
+
+  <div>
+
+   <button type="button" onClick={() => setWorkMode("store")}>My Store</button>
+
+    <button type="button" onClick={() => setWorkMode("client")}>Client Job</button>
+<p>Selected mode: {workMode === "store" ? "My Store" : "Client Job"}</p>
+  </div>
+
+</section>
 
       {step === "upload" && (
         <>
