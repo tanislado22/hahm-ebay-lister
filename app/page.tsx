@@ -759,9 +759,21 @@ setManualGroups((prev) => [
 
   <div>
 
-   <button type="button" style={{ fontSize: "20px", padding: "10px 18px" }} onClick={() => setWorkMode("store")}>My Store</button>
+   <button type="button" style={{ fontSize: "20px", padding: "10px 18px" }} onClick={() => {
 
-    <button type="button" style={{ fontSize: "20px", padding: "10px 18px" }} onClick={() => setWorkMode("client")}>Client Job</button>
+  localStorage.setItem("workMode", "store");
+
+  setWorkMode("store");
+
+}}>My Store</button>
+
+    <button type="button" style={{ fontSize: "20px", padding: "10px 18px" }} onClick={() => {
+
+  localStorage.setItem("workMode", "client");
+
+  setWorkMode("client");
+
+}}>Client Job</button>
 <p style={{ fontSize: "20px", marginTop: "16px" }}>Selected mode: {workMode === "store" ? "My Store" : "Client Job"}</p>
     {workMode === "client" && (
 <>
