@@ -85,7 +85,15 @@ export function EbayConnect({
     setBusy(true);
     setNotice(null);
     try {
-      const r = await apiPost("/api/ebay/connect", { url: pasteValue.trim() });
+     const r = await apiPost("/api/ebay/connect", {
+
+  url: pasteValue.trim(),
+
+  workMode,
+
+  clientId: workMode === "client" ? selectedClientId : null,
+
+});
       const data = (await r.json()) as { ok: boolean; error?: string };
       if (!data.ok) throw new Error(data.error || "Couldn't connect.");
       setPasteValue("");
