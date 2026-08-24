@@ -473,6 +473,7 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
         id: newId(),
         sku: binPrefix.trim(),
         name: g.name,
+        clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
         photoIds: g.photoIds,
         status: "idle",
       }));
