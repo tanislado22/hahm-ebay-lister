@@ -215,3 +215,50 @@ export async function POST(request: Request) {
   }
 
 }
+export async function DELETE(request: Request) {
+
+  try {
+
+    const body = await request.json();
+
+    const id = body?.id;
+
+    if (typeof id !== "string" || !id) {
+
+      return NextResponse.json(
+
+        { success: false, error: "Job id is required" },
+
+        { status: 400 }
+
+      );
+
+    }
+
+    const sql = await ensureJobsTable();
+
+    await sql`
+
+      DELETE FROM jobs
+
+      WHERE id = ${id}
+
+    `;
+
+    return NextResponse.json({ success: true });
+
+  } catch (error) {
+
+    console.error("DELETE /api/jobs failed:", error);
+
+    return NextResponse.json(
+
+      { success: false, error: "Failed to delete job" },
+
+      { status: 500 }
+
+    );
+
+  }
+
+}
