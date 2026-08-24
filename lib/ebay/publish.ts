@@ -1005,6 +1005,10 @@ async function fetchOrCreateLocation(accessToken: string): Promise<string> {
 // ── The full publish flow for one item ───────────────────────────────────────
 
 export interface PublishInput {
+workMode?: "store" | "client";
+
+clientId?: string;  
+  
   sku: string;
   listing: ListingResult;
   // Base64 photos to upload to eBay in this request (legacy single-request
