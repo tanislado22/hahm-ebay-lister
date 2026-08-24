@@ -347,7 +347,25 @@ if (!selectedClientSaveReadyRef.current) {
 
         setOrphanIds([]);
 
-        setStep(restoredGroups.length > 0 ? "review" : "upload");
+        const hasFinishedListings = restoredGroups.some(
+
+  (group) => group.status === "done" && group.listing
+
+);
+
+setStep(
+
+  restoredGroups.length === 0
+
+    ? "upload"
+
+    : hasFinishedListings
+
+      ? "listings"
+
+      : "review"
+
+);
 
         jobsLoadedKeyRef.current = workspaceKey;
 
