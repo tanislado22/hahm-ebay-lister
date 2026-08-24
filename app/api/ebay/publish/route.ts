@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { EBAY_COOKIE, accessTokenFromCookie } from "@/lib/ebay/session";
+import {
+
+  ebayConnectionKey,
+
+  getEbayConnection,
+
+} from "@/lib/ebay/client-connections";
 import { guardApiRequest } from "@/lib/api-guard";
 import { fetchAccountSetup, publishListing } from "@/lib/ebay/publish";
 import type { PublishInput } from "@/lib/ebay/publish";
@@ -33,7 +40,35 @@ export async function POST(req: NextRequest) {
   // Mint a fresh access token from the encrypted connection cookie.
   let accessToken: string | null;
   try {
-    accessToken = await accessTokenFromCookie(req.cookies.get(EBAY_COOKIE)?.value);
+  const workMode = body.workMode ?? "store";
+
+let sealedConnection: string | null | undefined;
+
+if (workMode === "client") {
+
+  const connectionKey = ebayConnectionKey("client", body.clientId ?? null);
+
+  if (!connectionKey) {
+
+    throw new Error("Select a client before publishing.");
+
+  }
+
+  sealedConnection = await getEbayConnection(connectionKey);
+
+  if (!sealedConnection) {
+
+    throw new Error("Selected client is not connected to eBay.");
+
+  }
+
+} else {
+
+  sealedConnection = req.cookies.get(EBAY_COOKIE)?.value;
+
+} 
+    accessToken = await accessTokenFromCookie(sealedConnection);
+    
   } catch (e) {
     return NextResponse.json({ success: false, error: (e as Error).message }, { status: 500 });
   }
