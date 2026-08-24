@@ -7,7 +7,13 @@ import {
   connectionFromToken,
   sealConnection,
 } from "@/lib/ebay/session";
+import {
 
+  ebayConnectionKey,
+
+  saveEbayConnection,
+
+} from "@/lib/ebay/client-connections";
 export const dynamic = "force-dynamic";
 
 // Manual connect: the user pastes the URL (or code) from eBay's success page.
@@ -36,7 +42,17 @@ export async function POST(req: NextRequest) {
   const denied = guardApiRequest(req);
   if (denied) return denied;
 
-  let body: { url?: string; code?: string };
+  let body: {
+
+  url?: string;
+
+  code?: string;
+
+  workMode?: "store" | "client";
+
+  clientId?: string | null;
+
+};
   try {
     body = await req.json();
   } catch {
@@ -59,15 +75,68 @@ export async function POST(req: NextRequest) {
     const sealed = await sealConnection(
       connectionFromToken(token.refresh_token, token.refresh_token_expires_in)
     );
+   const workMode = body.workMode ?? "store";
+
+
+
+const connectionKey = ebayConnectionKey(workMode, body.clientId);
+
+
+
+if (!connectionKey) {
+
+
+
+  return NextResponse.json(
+
+
+
+    { ok: false, error: "Select a client before connecting eBay." },
+
+
+
+    { status: 400 }
+
+
+
+  );
+
+
+
+}
+
+
+
+if (workMode === "client") {
+
+
+
+  await saveEbayConnection(connectionKey, sealed);
+
+
+
+}
     const res = NextResponse.json({ ok: true });
-    res.cookies.set(EBAY_COOKIE, sealed, {
-      httpOnly: true,
-      secure: true,
-      sameSite: "lax",
-      path: "/",
-      maxAge: EBAY_COOKIE_MAX_AGE,
-    });
-    return res;
+
+if (workMode === "store") {
+
+  res.cookies.set(EBAY_COOKIE, sealed, {
+
+    httpOnly: true,
+
+    secure: true,
+
+    sameSite: "lax",
+
+    path: "/",
+
+    maxAge: EBAY_COOKIE_MAX_AGE,
+
+  });
+
+}
+
+return res;
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: (e as Error).message },
