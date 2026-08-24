@@ -844,13 +844,10 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
   };
 
   const deleteGroup = (groupId: string) =>
-    setGroups((prev) => {
-      const target = prev.find((g) => g.id === groupId);
-      if (target && target.photoIds.length > 0) {
-        setOrphanIds((o) => [...o, ...target.photoIds]);
-      }
-      return prev.filter((g) => g.id !== groupId);
-    });
+
+  setGroups((prev) => prev.filter((g) => g.id !== groupId));
+
+
 
   const addGroup = () =>
     setGroups((prev) => [
