@@ -79,6 +79,7 @@ export interface ItemGroup {
   id: string;
   sku: string; // bin reference, e.g. "K75-A"
   name: string;
+  clientId?: string;
   photoIds: string[];
   listing?: ListingResult;
   status: ItemStatus;
