@@ -102,6 +102,7 @@ export default function Home() {
   const [clients, setClients] = useState<{ id: string; name: string; active: boolean }[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const groupInputRef = useRef<HTMLInputElement>(null);
 const saveClient = () => {
 
   const name = clientName.trim();
@@ -542,6 +543,70 @@ setManualGroups((prev) => [
       setError((e as Error).message);
     }
   }, []);
+
+  const addFilesToGroup = useCallback(async (groupId: string, fileList: FileList | null) => {
+
+  if (!fileList || fileList.length === 0) return;
+
+  setError(null);
+
+  const files = Array.from(fileList).filter((f) => f.type.startsWith("image/"));
+
+  if (files.length === 0) {
+
+    setError("Those didn't look like photos. Use JPG, PNG, or WebP.");
+
+    return;
+
+  }
+
+  try {
+
+    const resized: Awaited<ReturnType<typeof resizeImage>>[] = [];
+
+    for (let i = 0; i < files.length; i += 3) {
+
+      const batch = files.slice(i, i + 3);
+
+      const batchResized = await Promise.all(batch.map(resizeImage));
+
+      resized.push(...batchResized);
+
+      await sleep(20);
+
+    }
+
+    const newPhotos = resized.map((r) => ({ id: newId(), ...r }));
+
+    setPhotos((prev) =>
+
+      [...prev, ...newPhotos].slice(0, MAX_PHOTOS)
+
+    );
+
+    setGroups((prev) =>
+
+      prev.map((g) =>
+
+        g.id === groupId
+
+          ? { ...g, photoIds: [...g.photoIds, ...newPhotos.map((p) => p.id)] }
+
+          : g
+
+      )
+
+    );
+
+  } catch (e) {
+
+    setError((e as Error).message);
+
+  }
+
+}, []);
+
+
 
   const removePhoto = (id: string) => {
 
@@ -1416,6 +1481,7 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
           onReorderPhoto={reorderPhoto}
           onDeleteGroup={deleteGroup}
           onAddGroup={addGroup}
+          onAddFilesToGroup={addFilesToGroup}
           onWriteAll={writeAll}
           onBack={() => setStep("upload")}
         />
