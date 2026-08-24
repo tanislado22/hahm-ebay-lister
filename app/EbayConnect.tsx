@@ -28,12 +28,24 @@ export function EbayConnect({
 
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch("/api/ebay/status", { cache: "no-store" });
+      const params = new URLSearchParams({
+
+  workMode,
+
+  ...(selectedClientId ? { clientId: selectedClientId } : {}),
+
+});
+
+const r = await fetch(`/api/ebay/status?${params.toString()}`, {
+
+  cache: "no-store",
+
+});
       setStatus((await r.json()) as Status);
     } catch {
       setStatus({ configured: false, connected: false });
     }
-  }, []);
+  }, [workMode, selectedClientId]);
 
   useEffect(() => {
     void refresh();
