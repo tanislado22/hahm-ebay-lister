@@ -369,7 +369,7 @@ setManualGroups((prev) => [
       sku: binPrefix.trim(),
 
       name: `Item ${i + 1}`,
-
+clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
       photoIds: photoIds.filter((id) => validPhotoIds.has(id)),
 
       status: "idle" as const,
