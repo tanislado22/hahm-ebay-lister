@@ -8,7 +8,19 @@ interface Status {
   connected: boolean;
 }
 
-export function EbayConnect() {
+export function EbayConnect({
+
+  workMode,
+
+  selectedClientId,
+
+}: {
+
+  workMode: "store" | "client";
+
+  selectedClientId: string | null;
+
+}) {
   const [status, setStatus] = useState<Status | null>(null);
   const [notice, setNotice] = useState<{ ok: boolean; msg: string } | null>(null);
   const [busy, setBusy] = useState(false);
