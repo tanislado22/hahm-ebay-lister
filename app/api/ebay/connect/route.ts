@@ -76,10 +76,15 @@ export async function POST(req: NextRequest) {
       connectionFromToken(token.refresh_token, token.refresh_token_expires_in)
     );
    const workMode = body.workMode ?? "store";
+    const clientId = body.clientId ?? null;
 
 
 
-const connectionKey = ebayConnectionKey(workMode, body.clientId);
+
+
+const connectionKey = ebayConnectionKey(workMode, clientId);
+
+
 
 
 
