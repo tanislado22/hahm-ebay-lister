@@ -245,6 +245,133 @@ if (!selectedClientSaveReadyRef.current) {
   localStorage.setItem("workMode", workMode);
 
 }, [workMode]);
+  const jobsLoadedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+
+    const clientId = workMode === "client" ? selectedClientId : null;
+
+    if (workMode === "client" && !clientId) {
+
+      jobsLoadedKeyRef.current = null;
+
+      return;
+
+    }
+
+    const workspaceKey =
+
+      workMode === "client" ? `client:${clientId}` : "store";
+
+    const controller = new AbortController();
+
+    const loadJobs = async () => {
+
+      jobsLoadedKeyRef.current = null;
+
+      try {
+
+        const params = new URLSearchParams({
+
+          workMode,
+
+        });
+
+        if (clientId) {
+
+          params.set("clientId", clientId);
+
+        }
+
+        const response = await fetch(`/api/jobs?${params.toString()}`, {
+
+          cache: "no-store",
+
+          signal: controller.signal,
+
+        });
+
+        if (!response.ok) {
+
+          throw new Error("Failed to load saved jobs");
+
+        }
+
+        const result = await response.json();
+
+        const jobs = Array.isArray(result.jobs) ? result.jobs : [];
+
+        const restoredGroups: ItemGroup[] = [];
+
+        const restoredPhotos: Photo[] = [];
+
+        const seenPhotoIds = new Set<string>();
+
+        for (const job of jobs) {
+
+          const data =
+
+            typeof job.data === "string"
+
+              ? JSON.parse(job.data)
+
+              : job.data;
+
+          if (!data?.group) continue;
+
+          restoredGroups.push(data.group as ItemGroup);
+
+          if (Array.isArray(data.photos)) {
+
+            for (const photo of data.photos as Photo[]) {
+
+              if (!seenPhotoIds.has(photo.id)) {
+
+                seenPhotoIds.add(photo.id);
+
+                restoredPhotos.push(photo);
+
+              }
+
+            }
+
+          }
+
+        }
+
+        setGroups(restoredGroups);
+
+        setPhotos(restoredPhotos);
+
+        setManualGroups(restoredGroups.map((group) => group.photoIds));
+
+        setOrphanIds([]);
+
+        setStep(restoredGroups.length > 0 ? "review" : "upload");
+
+        jobsLoadedKeyRef.current = workspaceKey;
+
+      } catch (error) {
+
+        if ((error as Error).name !== "AbortError") {
+
+          console.error("Failed to restore jobs:", error);
+
+        }
+
+      }
+
+    };
+
+    loadJobs();
+
+    return () => {
+
+      controller.abort();
+
+    };
+
+  }, [workMode, selectedClientId]);
   const photoMap = useMemo(() => {
     const m = new Map<string, Photo>();
     photos.forEach((p) => m.set(p.id, p));
@@ -257,7 +384,91 @@ if (!selectedClientSaveReadyRef.current) {
   useEffect(() => {
     groupsRef.current = groups;
   }, [groups]);
+ useEffect(() => {
 
+    const clientId = workMode === "client" ? selectedClientId : null;
+
+    if (workMode === "client" && !clientId) return;
+
+    const workspaceKey =
+
+      workMode === "client" ? `client:${clientId}` : "store";
+
+    if (jobsLoadedKeyRef.current !== workspaceKey) return;
+
+    if (groups.length === 0) return;
+
+    const timer = window.setTimeout(() => {
+
+      const saveJobs = async () => {
+
+        try {
+
+          for (const group of groups) {
+
+            const groupPhotos = photos.filter((photo) =>
+
+              group.photoIds.includes(photo.id)
+
+            );
+
+            const response = await fetch("/api/jobs", {
+
+              method: "POST",
+
+              headers: {
+
+                "Content-Type": "application/json",
+
+              },
+
+              body: JSON.stringify({
+
+                id: group.id,
+
+                workMode,
+
+                clientId,
+
+                data: {
+
+                  group,
+
+                  photos: groupPhotos,
+
+                },
+
+              }),
+
+            });
+
+            if (!response.ok) {
+
+              throw new Error(`Failed to save job ${group.id}`);
+
+            }
+
+          }
+
+        } catch (error) {
+
+          console.error("Failed to save jobs:", error);
+
+        }
+
+      };
+
+      saveJobs();
+
+    }, 500);
+
+    return () => {
+
+      window.clearTimeout(timer);
+
+    };
+
+  }, [groups, photos, workMode, selectedClientId]);
   // Keep eBay connection status in sync (also after the connect bar updates).
   useEffect(() => {
     const check = () =>
