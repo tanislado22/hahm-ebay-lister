@@ -24,7 +24,12 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
 
   try {
-    const state = crypto.randomUUID();
+    const body = await req.json();
+
+const workMode = body.workMode ?? "store";
+
+const clientId = body.clientId ?? null;
+    const state = Buffer.from(JSON.stringify({ nonce: crypto.randomUUID(), workMode, clientId })).toString("base64url");
     const url = buildAuthorizeUrl(state);
     const res = NextResponse.json({ ok: true, url });
     setStateCookie(res, state);
