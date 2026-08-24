@@ -13,6 +13,7 @@ interface ReviewBoardProps {
   onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
   onDeleteGroup: (groupId: string) => void;
   onAddGroup: () => void;
+  onAddFilesToGroup: (groupId: string, fileList: FileList | null) => void;
   onWriteAll: () => void;
   onBack: () => void;
   onRemovePhoto: (photoId: string) => void;
@@ -268,6 +269,9 @@ export function ReviewBoard({
   onReorderPhoto,
   onDeleteGroup,
   onAddGroup,
+  onAddFilesToGroup,
+
+
   onWriteAll,
   onBack,
 }: ReviewBoardProps) {
@@ -316,6 +320,55 @@ export function ReviewBoard({
               >
                 Delete
               </button>
+<label className="btn btn-ghost">
+
+
+
+  + Add photos
+
+
+
+  <input
+
+
+
+    type="file"
+
+
+
+    accept="image/*"
+
+
+
+    multiple
+
+
+
+    hidden
+
+
+
+    onChange={(e) => {
+
+
+
+      void onAddFilesToGroup(group.id, e.target.files);
+
+
+
+      e.currentTarget.value = "";
+
+
+
+    }}
+
+
+
+  />
+
+
+
+</label>
             </header>
             {group.photoIds.length === 0 ? (
               <p className="board-empty">
