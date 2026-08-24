@@ -1016,7 +1016,13 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
         </div>
       </header>
 
-      <EbayConnect />
+      <EbayConnect
+
+  workMode={workMode}
+
+  selectedClientId={selectedClientId}
+
+/>
       <section className="panel">
 
   <h2 className="section-label">Work mode</h2>
