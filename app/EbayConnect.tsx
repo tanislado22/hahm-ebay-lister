@@ -63,7 +63,13 @@ export function EbayConnect({
     setBusy(true);
     setNotice(null);
     try {
-      const r = await apiPost("/api/ebay/auth", {});
+      const r = await apiPost("/api/ebay/auth", {
+
+  workMode,
+
+  clientId: workMode === "client" ? selectedClientId : null,
+
+});
       const data = (await r.json()) as { ok: boolean; url?: string; error?: string };
       if (!data.ok || !data.url) throw new Error(data.error || "Couldn't start eBay authorization.");
       window.open(data.url, "_blank", "noopener,noreferrer");
