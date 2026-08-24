@@ -166,13 +166,47 @@ if (savedWorkMode === "store" || savedWorkMode === "client") {
 
   }, []);
 
-  useEffect(() => {
+ useEffect(() => {
 
-    if (!clientsLoadedRef.current) return;
+  if (!clientsLoadedRef.current) return;
 
-    localStorage.setItem("savedClients", JSON.stringify(clients));
+  localStorage.setItem("savedClients", JSON.stringify(clients));
 
-  }, [clients]);
+  const saveClientsToDatabase = async () => {
+
+    try {
+
+      const response = await fetch("/api/clients", {
+
+        method: "POST",
+
+        headers: {
+
+          "Content-Type": "application/json",
+
+        },
+
+        body: JSON.stringify({ clients }),
+
+      });
+
+      if (!response.ok) {
+
+        console.error("Failed to save clients to database");
+
+      }
+
+    } catch (error) {
+
+      console.error("Failed to save clients to database:", error);
+
+    }
+
+  };
+
+  saveClientsToDatabase();
+
+}, [clients]);
   useEffect(() => {
 if (!selectedClientSaveReadyRef.current) {
 
