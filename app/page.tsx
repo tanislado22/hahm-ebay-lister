@@ -320,7 +320,11 @@ if (!selectedClientSaveReadyRef.current) {
 
           if (!data?.group) continue;
 
-          restoredGroups.push(data.group as ItemGroup);
+          if (Array.isArray(data.group.photoIds) && data.group.photoIds.length > 0) {
+
+  restoredGroups.push(data.group as ItemGroup);
+
+}
 
           if (Array.isArray(data.photos)) {
 
