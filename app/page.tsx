@@ -847,9 +847,39 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
     );
   };
 
-  const deleteGroup = (groupId: string) =>
+  const deleteGroup = async (groupId: string) => {
 
   setGroups((prev) => prev.filter((g) => g.id !== groupId));
+
+  try {
+
+    const response = await fetch("/api/jobs", {
+
+      method: "DELETE",
+
+      headers: {
+
+        "Content-Type": "application/json",
+
+      },
+
+      body: JSON.stringify({ id: groupId }),
+
+    });
+
+    if (!response.ok) {
+
+      throw new Error("Failed to delete saved job");
+
+    }
+
+  } catch (error) {
+
+    console.error("Failed to permanently delete group:", error);
+
+  }
+
+};
 
 
 
