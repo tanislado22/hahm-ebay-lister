@@ -849,6 +849,12 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
 
   const deleteGroup = async (groupId: string) => {
 
+  // Remove it immediately from both the visible state and the ref
+
+  // used by background/autosave work.
+
+  groupsRef.current = groupsRef.current.filter((g) => g.id !== groupId);
+
   setGroups((prev) => prev.filter((g) => g.id !== groupId));
 
   try {
