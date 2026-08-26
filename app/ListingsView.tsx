@@ -64,6 +64,7 @@ interface ListingsViewProps {
   onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
   onRemovePhoto: (photoId: string) => void;
   onDelete: (groupId: string) => void;
+  onDeleteAll: () => void;
   onPostAll: () => void;
   onBack: () => void;
 }
@@ -79,6 +80,7 @@ export function ListingsView({
   onReorderPhoto,
   onRemovePhoto,
   onDelete,
+  onDeleteAll,
   onPostAll,
   onBack,
 }: ListingsViewProps) {
@@ -127,7 +129,29 @@ export function ListingsView({
           </button>
         </div>
       )}
+<button
 
+  type="button"
+
+  className="btn btn-ghost"
+
+  onClick={() => {
+
+    if (window.confirm("Delete ALL items permanently?")) {
+
+      onDeleteAll();
+
+    }
+
+  }}
+
+  disabled={groups.length === 0}
+
+>
+
+  🗑 Delete All
+
+</button>
       <div className="listing-list">
         {groups.map((group) => (
           <ListingCard
