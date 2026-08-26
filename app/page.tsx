@@ -1581,6 +1581,7 @@ const deleteAll = async () => {
           onPost={postGroup}
           onReorderPhoto={reorderPhoto}
           onRemovePhoto={removePhoto}
+          onDelete={deleteGroup}
           onDeleteAll={deleteAll}
 
 
