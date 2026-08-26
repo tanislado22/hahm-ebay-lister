@@ -62,7 +62,7 @@ interface ListingCardProps {
   onPost: (groupId: string) => void;
   onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
 onRemovePhoto: (photoId: string) => void;
-
+onDelete: (groupId: string) => void;
 
 
 }
@@ -77,6 +77,7 @@ export function ListingCard({
   onPost,
   onReorderPhoto,
   onRemovePhoto,
+  onDelete,
 }: ListingCardProps) {
   const [open, setOpen] = useState(true);
   const listing = group.listing;
