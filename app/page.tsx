@@ -886,6 +886,52 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
   }
 
 };
+const deleteAll = async () => {
+
+  const ids = groupsRef.current.map((g) => g.id);
+
+  groupsRef.current = [];
+
+  setGroups([]);
+
+  try {
+
+    await Promise.all(
+
+      ids.map(async (id) => {
+
+        const response = await fetch("/api/jobs", {
+
+          method: "DELETE",
+
+          headers: {
+
+            "Content-Type": "application/json",
+
+          },
+
+          body: JSON.stringify({ id }),
+
+        });
+
+        if (!response.ok) {
+
+          throw new Error(`Failed to delete saved job ${id}`);
+
+        }
+
+      })
+
+    );
+
+  } catch (error) {
+
+    console.error("Failed to permanently delete all groups:", error);
+
+  }
+
+};
+
 
 
 
@@ -1535,6 +1581,9 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
           onPost={postGroup}
           onReorderPhoto={reorderPhoto}
           onRemovePhoto={removePhoto}
+          onDeleteAll={deleteAll}
+
+
           onPostAll={postAll}
           onBack={() => setStep("review")}
         />
