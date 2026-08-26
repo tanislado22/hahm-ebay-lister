@@ -934,6 +934,27 @@ const keyword = [
           )}
         </div>
       )}
+      <button
+
+  type="button"
+
+  className="btn btn-ghost"
+
+  onClick={() => {
+
+    if (window.confirm("Delete this item permanently?")) {
+
+      onDelete(group.id);
+
+    }
+
+  }}
+
+>
+
+  🗑️ Delete
+
+</button>
     </article>
   );
 }
