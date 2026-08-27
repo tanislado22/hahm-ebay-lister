@@ -1688,7 +1688,9 @@ if (useTradingApi) {
   }
 
   // 4. Publish, with recovery.
-  if (input.draft) {
+ if (input.saveAsDraft) {
+
+
 
   return {
 
