@@ -1006,6 +1006,8 @@ async function fetchOrCreateLocation(accessToken: string): Promise<string> {
 
 export interface PublishInput {
 workMode?: "store" | "client";
+saveAsDraft?: boolean;
+
 
 clientId?: string;  
   
@@ -1686,6 +1688,23 @@ if (useTradingApi) {
   }
 
   // 4. Publish, with recovery.
+  if (input.draft) {
+
+  return {
+
+    success: true,
+
+    sku,
+
+    offerId,
+
+    listingId: "",
+
+    warnings,
+
+  };
+
+}
   return publishOfferWithRecovery(accessToken, {
     sku,
     offerId,
