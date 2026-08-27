@@ -133,6 +133,23 @@ export function ListingsView({
               `🚀 Post all ${readyToPost} to eBay`
             )}
           </button>
+          <button
+
+  type="button"
+
+  className="btn btn-ghost"
+
+  disabled={done === 0}
+
+  onClick={onDraftAll}
+
+>
+
+  📄 Draft All Listings
+
+</button>
+
+
         </div>
       )}
 <button
@@ -255,22 +272,7 @@ export function ListingsView({
         >
           ⬇️ Download all ({done})
         </button>
-        <button
-
-  type="button"
-
-  className="btn btn-ghost"
-
-  disabled={done === 0}
-
-  onClick={onDraftAll}
-
->
-
-  📝 Draft All Listings
-
-</button>
-
+       
 
       </div>
 
