@@ -1123,6 +1123,7 @@ export async function publishListing(
   input: PublishInput
 ): Promise<PublishResult> {
   const { sku, listing } = input;
+ const saveAsDraft = input.saveAsDraft === true;
   const catKey = String(listing.category || "other");
   const warnings: string[] = [];
 
