@@ -1218,7 +1218,21 @@ const draftGroup = async (groupId: string) => {
       await postGroup(id);
     }
   };
+const draftAll = async () => {
 
+  const ready = groups
+
+    .filter((g) => g.status === "done" && g.postStatus !== "posted")
+
+    .map((g) => g.id);
+
+  for (const id of ready) {
+
+    await draftGroup(id);
+
+  }
+
+};
   const usableGroups = useMemo(
     () => groups.filter((g) => g.photoIds.length > 0),
     [groups]
@@ -1659,6 +1673,7 @@ const draftGroup = async (groupId: string) => {
 
 
           onPostAll={postAll}
+          onDraftAll={draftAll}
           onBack={() => setStep("review")}
         />
       )}
