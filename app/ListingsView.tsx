@@ -69,6 +69,7 @@ interface ListingsViewProps {
   onDelete: (groupId: string) => void;
   onDeleteAll: () => void;
   onPostAll: () => void;
+  onDraftAll: () => void;
   onBack: () => void;
 }
 
@@ -86,6 +87,7 @@ export function ListingsView({
   onDelete,
   onDeleteAll,
   onPostAll,
+  onDraftAll,
   onBack,
 }: ListingsViewProps) {
   const done = groups.filter((g) => g.status === "done").length;
@@ -253,6 +255,23 @@ export function ListingsView({
         >
           ⬇️ Download all ({done})
         </button>
+        <button
+
+  type="button"
+
+  className="btn btn-ghost"
+
+  disabled={done === 0}
+
+  onClick={onDraftAll}
+
+>
+
+  📝 Draft All Listings
+
+</button>
+
+
       </div>
 
       {allDone && (
