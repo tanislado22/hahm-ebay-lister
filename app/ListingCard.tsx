@@ -60,6 +60,7 @@ interface ListingCardProps {
   onRenameSku: (groupId: string, sku: string) => void;
   onRetry: (groupId: string) => void;
   onPost: (groupId: string) => void;
+  onDraft: (groupId: string) => void;
   onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
 onRemovePhoto: (photoId: string) => void;
 onDelete: (groupId: string) => void;
@@ -75,6 +76,7 @@ export function ListingCard({
   onRenameSku,
   onRetry,
   onPost,
+  onDraft,
   onReorderPhoto,
   onRemovePhoto,
   onDelete,
@@ -925,6 +927,19 @@ const keyword = [
                   "🚀 Post this to eBay"
                 )}
               </button>
+              <button
+
+  type="button"
+
+  className="btn btn-ghost"
+
+  onClick={() => onDraft(group.id)}
+
+>
+
+  📝 Draft Listing
+
+</button>
               {group.postStatus === "error" && group.postError && (
                 <p className="post-result err">⚠️ {group.postError}</p>
               )}
