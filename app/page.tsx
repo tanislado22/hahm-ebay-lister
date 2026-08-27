@@ -1136,7 +1136,79 @@ const deleteAll = async () => {
     },
     [photoMap]
   );
+const draftGroup = async (groupId: string) => {
 
+  const group = groupsRef.current.find((g) => g.id === groupId);
+
+  if (!group || !group.listing) return;
+
+  try {
+
+    const images = group.photoIds
+
+      .map((id) => photoMap.get(id))
+
+      .filter((p): p is Photo => Boolean(p))
+
+      .map((p) => ({ mediaType: p.mediaType, data: p.data }))
+
+      .slice(0, MAX_PUBLISH_PHOTOS);
+
+    const imageUrls: string[] = [];
+
+    for (const batch of chunkImagesForUpload(images)) {
+
+      const res = await apiPost("/api/ebay/upload-photos", {
+
+        images: batch,
+
+        sku: group.sku,
+
+        startIndex: imageUrls.length,
+
+      });
+
+      const data = await readJson(res);
+
+      if (!res.ok) {
+
+        throw new Error(data?.error || "Photo upload failed.");
+
+      }
+
+      imageUrls.push(...(data?.imageUrls ?? []));
+
+    }
+
+    const res = await apiPost("/api/ebay/publish", {
+
+      sku: group.sku,
+
+      listing: group.listing,
+
+      imageUrls,
+
+      saveAsDraft: true,
+
+    });
+
+    const data = await readJson(res);
+
+    if (!data?.success) {
+
+      throw new Error(data?.error || "eBay rejected the draft.");
+
+    }
+
+    alert("Draft saved to eBay.");
+
+  } catch (e) {
+
+    alert((e as Error).message);
+
+  }
+
+};
   const postAll = async () => {
     const ready = groups
       .filter((g) => g.status === "done" && g.postStatus !== "posted")
@@ -1579,6 +1651,7 @@ const deleteAll = async () => {
           onRenameSku={renameSku}
           onRetry={writeGroup}
           onPost={postGroup}
+          onDraft={draftGroup}
           onReorderPhoto={reorderPhoto}
           onRemovePhoto={removePhoto}
           onDelete={deleteGroup}
