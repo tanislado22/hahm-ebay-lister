@@ -1382,6 +1382,8 @@ const tradingXml = `<?xml version="1.0" encoding="utf-8"?>
 
     <ListingType>FixedPriceItem</ListingType>
 
+
+
     <ListingDuration>GTC</ListingDuration>
 
     <Quantity>1</Quantity>
@@ -1473,6 +1475,8 @@ const tradingXml = `<?xml version="1.0" encoding="utf-8"?>
 const useTradingApi = process.env.EBAY_PUBLISH_MODE === "trading";
 
 if (useTradingApi) {
+
+
 
   try {
 
