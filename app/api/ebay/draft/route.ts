@@ -13,6 +13,48 @@ import {
 import { guardApiRequest } from "@/lib/api-guard";
 import { fetchAccountSetup, publishListing } from "@/lib/ebay/publish";
 const EBAY_FEED_BASE = "https://api.ebay.com/sell/feed/v1";
+async function createDraftFeedTask(accessToken: string) {
+
+  const resp = await fetch(`${EBAY_FEED_BASE}/task`, {
+
+    method: "POST",
+
+    headers: {
+
+      Authorization: `Bearer ${accessToken}`,
+
+      "Content-Type": "application/json",
+
+      Accept: "application/json",
+
+    },
+
+    body: JSON.stringify({
+
+      feedType: "FX_LISTING",
+
+      schemaVersion: "1.0",
+
+    }),
+
+  });
+
+  const text = await resp.text();
+
+  if (!resp.ok) {
+
+    throw new Error(
+
+      `eBay create feed task failed (${resp.status}): ${text}`
+
+    );
+
+  }
+
+  return text ? JSON.parse(text) : {};
+
+}
+
 
 export const maxDuration = 300;
 
