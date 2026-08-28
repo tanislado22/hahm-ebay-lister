@@ -27,6 +27,8 @@ async function createDraftFeedTask(accessToken: string) {
 
       Accept: "application/json",
 
+      "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+
     },
 
     body: JSON.stringify({
@@ -51,12 +53,86 @@ async function createDraftFeedTask(accessToken: string) {
 
   }
 
-  return text ? JSON.parse(text) : {};
+  const location = resp.headers.get("location");
+
+  if (!location) {
+
+    throw new Error("eBay did not return a feed task Location header.");
+
+  }
+
+  const taskId = location.split("/").filter(Boolean).pop();
+
+  if (!taskId) {
+
+    throw new Error("Could not read the eBay feed task ID.");
+
+  }
+
+  return taskId;
 
 }
 
 
 export const maxDuration = 300;
+async function uploadDraftFeedFile(
+
+  accessToken: string,
+
+  taskId: string,
+
+  csvText: string
+
+) {
+
+  const formData = new FormData();
+
+  const file = new Blob([csvText], {
+
+    type: "text/csv",
+
+  });
+
+  formData.append("file", file, "draft-listing.csv");
+
+  const resp = await fetch(
+
+    `${EBAY_FEED_BASE}/task/${taskId}/upload_file`,
+
+    {
+
+      method: "POST",
+
+      headers: {
+
+        Authorization: `Bearer ${accessToken}`,
+
+        Accept: "application/json",
+
+      },
+
+      body: formData,
+
+    }
+
+  );
+
+  const text = await resp.text();
+
+  if (!resp.ok) {
+
+    throw new Error(
+
+      `eBay upload feed file failed (${resp.status}): ${text}`
+
+    );
+
+  }
+
+  return text ? JSON.parse(text) : {};
+
+}
+
 
 export async function POST(req: NextRequest) {
 
