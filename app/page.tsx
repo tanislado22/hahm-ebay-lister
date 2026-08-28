@@ -664,7 +664,9 @@ setManualGroups((prev) => [
 
       id: newId(),
 
-      sku: binPrefix.trim(),
+      sku: `${binPrefix.trim()}-${String.fromCharCode(65 + skuOffset + i)}`,
+
+
 
       name: `Item ${i + 1}`,
 clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
@@ -769,7 +771,7 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
 
       const nextGroups: ItemGroup[] = merged.map((g, i) => ({
         id: newId(),
-        sku: binPrefix.trim(),
+     sku: `${binPrefix.trim()}-${String.fromCharCode(65 + skuOffset + i)}`,
         name: g.name,
         clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
         photoIds: g.photoIds,
