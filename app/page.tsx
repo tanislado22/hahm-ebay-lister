@@ -1178,7 +1178,7 @@ const draftGroup = async (groupId: string) => {
 
       }
 
-      imageUrls.push(...(data?.imageUrls ?? []));
+      imageUrls.push(...(data?.urls ?? []));
 
     }
 
