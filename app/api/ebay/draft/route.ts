@@ -12,7 +12,7 @@ import {
 
 import { guardApiRequest } from "@/lib/api-guard";
 import { fetchAccountSetup, publishListing } from "@/lib/ebay/publish";
-
+const EBAY_FEED_BASE = "https://api.ebay.com/sell/feed/v1";
 
 export const maxDuration = 300;
 
