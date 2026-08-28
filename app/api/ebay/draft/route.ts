@@ -11,6 +11,8 @@ import {
 } from "@/lib/ebay/client-connections";
 
 import { guardApiRequest } from "@/lib/api-guard";
+import { fetchAccountSetup, publishListing } from "@/lib/ebay/publish";
+
 
 export const maxDuration = 300;
 
@@ -102,15 +104,25 @@ export async function POST(req: NextRequest) {
 
     }
 
-    return NextResponse.json({
+    const setup = await fetchAccountSetup(accessToken);
 
-      success: true,
+const result = await publishListing(accessToken, setup, {
 
-      message: "Draft connection is ready.",
+  ...body,
 
-      sku: body.sku,
+  saveAsDraft: true,
 
-    });
+});
+
+return NextResponse.json(
+
+  result,
+
+  { status: result.success ? 200 : 422 }
+
+);
+
+
 
   } catch (e) {
 
