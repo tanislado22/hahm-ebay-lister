@@ -1182,7 +1182,7 @@ const draftGroup = async (groupId: string) => {
 
     }
 
-    const res = await apiPost("/api/ebay/publish", {
+   const res = await apiPost("/api/ebay/draft", {
 
       sku: group.sku,
 
