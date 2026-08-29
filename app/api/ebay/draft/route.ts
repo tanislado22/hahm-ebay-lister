@@ -288,11 +288,19 @@ function buildDraftCsv(body: any) {
 
   return [
 
-    headers.map(csvEscape).join(","),
+  "#INFO,Version=0.0.2,Template= eBay-draft-listings-template_US",
 
-    row.map(csvEscape).join(","),
+  "#INFO Action and Category ID are required fields.",
 
-  ].join("\n");
+  "#INFO After you've successfully uploaded your draft, complete the listing in Seller Hub.",
+
+  "#INFO",
+
+  headers.map(csvEscape).join(","),
+
+  row.map(csvEscape).join(","),
+
+].join("\n");
 
 }
 export async function POST(req: NextRequest) {
