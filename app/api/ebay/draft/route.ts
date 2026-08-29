@@ -12,6 +12,7 @@ import {
 
 import { guardApiRequest } from "@/lib/api-guard";
 import { fetchAccountSetup, publishListing } from "@/lib/ebay/publish";
+import { suggestLeafCategories } from "@/lib/ebay/taxonomy";
 const EBAY_FEED_BASE = "https://api.ebay.com/sell/feed/v1";
 async function createDraftFeedTask(accessToken: string) {
 
@@ -228,9 +229,18 @@ function csvEscape(value: unknown) {
 
 }
 
-function buildDraftCsv(body: any) {
+async function buildDraftCsv(body: any) {
+
+
 
   const listing = body?.listing ?? {};
+  const suggestions = await suggestLeafCategories(
+
+  `${listing.category_hint || ""} ${listing.title || ""}`,
+
+  3
+
+);
 
   const imageUrls = Array.isArray(body?.imageUrls) ? body.imageUrls : [];
 
@@ -267,7 +277,9 @@ function buildDraftCsv(body: any) {
 
   body?.sku ?? "",
 
-  listing?.category_id ?? "",
+  suggestions[0]?.id ?? listing?.category_id ?? "",
+
+
 
   listing?.title ?? "",
 
@@ -395,7 +407,9 @@ export async function POST(req: NextRequest) {
 
    const taskId = await createDraftFeedTask(accessToken);
 
-const csvText = buildDraftCsv(body);
+const csvText = await buildDraftCsv(body);
+
+
 
 await uploadDraftFeedFile(accessToken, taskId, csvText);
     let task = await getDraftFeedTask(accessToken, taskId);
