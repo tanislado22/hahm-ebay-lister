@@ -258,6 +258,7 @@ function buildDraftCsv(body: any) {
 
   "Format",
 "Duration",
+    "Location",
 ];
 
   const row = [
@@ -284,6 +285,7 @@ function buildDraftCsv(body: any) {
 
   "FixedPrice",
 "GTC",
+    "New Bedford, MA",
 ];
 
   return [
