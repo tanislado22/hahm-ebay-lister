@@ -282,12 +282,12 @@ async function buildDraftCsv(body: any) {
 
 
   listing?.title ?? "",
-
+"",
   listing?.price ?? body?.price ?? 11,
 
   1,
 
-  "",
+ 
 
   imageUrls.join("|"),
 
