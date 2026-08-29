@@ -73,6 +73,39 @@ async function createDraftFeedTask(accessToken: string) {
 
 }
 
+async function getDraftFeedTask(accessToken: string, taskId: string) {
+
+  const resp = await fetch(`${EBAY_FEED_BASE}/task/${taskId}`, {
+
+    method: "GET",
+
+    headers: {
+
+      Authorization: `Bearer ${accessToken}`,
+
+      Accept: "application/json",
+
+      "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+
+    },
+
+  });
+
+  const text = await resp.text();
+
+  if (!resp.ok) {
+
+    throw new Error(
+
+      `eBay get feed task failed (${resp.status}): ${text}`
+
+    );
+
+  }
+
+  return text ? JSON.parse(text) : {};
+
+}
 
 export const maxDuration = 300;
 async function uploadDraftFeedFile(
@@ -283,6 +316,29 @@ export async function POST(req: NextRequest) {
 const csvText = buildDraftCsv(body);
 
 await uploadDraftFeedFile(accessToken, taskId, csvText);
+    let task = await getDraftFeedTask(accessToken, taskId);
+
+for (let i = 0; i < 10; i++) {
+
+  if (
+
+    task?.status === "COMPLETED" ||
+
+    task?.status === "COMPLETED_WITH_ERROR"
+
+  ) {
+
+    break;
+
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  task = await getDraftFeedTask(accessToken, taskId);
+
+}
+
+console.log("EBAY DRAFT TASK RESULT:", JSON.stringify(task));
 
 return NextResponse.json(
 
