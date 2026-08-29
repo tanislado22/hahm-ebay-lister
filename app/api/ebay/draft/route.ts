@@ -236,31 +236,55 @@ function buildDraftCsv(body: any) {
 
   const headers = [
 
-    "Action",
+  "Action(SiteID=US|Country=US|Currency=USD|Version=1193|CC=UTF-8)",
 
-    "Custom label (SKU)",
+  "Custom label (SKU)",
 
-    "Category ID",
+  "Category ID",
 
-    "Title",
+  "Title",
 
-    "Item photo URL",
+  "UPC",
 
-  ];
+  "Price",
+
+  "Quantity",
+
+  "Item photo URL",
+
+  "Condition ID",
+
+  "Description",
+
+  "Format",
+
+];
 
   const row = [
 
-    "VerifyAddItem",
+  "Draft",
 
-    body?.sku ?? "",
+  body?.sku ?? "",
 
-    listing?.category_id ?? "",
+  listing?.category_id ?? "",
 
-    listing?.title ?? "",
+  listing?.title ?? "",
 
-    imageUrls.join("|"),
+  "",
 
-  ];
+  "",
+
+  "",
+
+  imageUrls.join("|"),
+
+  "",
+
+  "",
+
+  "",
+
+];
 
   return [
 
