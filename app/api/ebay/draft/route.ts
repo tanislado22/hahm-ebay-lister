@@ -133,7 +133,63 @@ async function uploadDraftFeedFile(
 
 }
 
+function csvEscape(value: unknown) {
 
+  const text = String(value ?? "");
+
+  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+
+    return `"${text.replace(/"/g, '""')}"`;
+
+  }
+
+  return text;
+
+}
+
+function buildDraftCsv(body: any) {
+
+  const listing = body?.listing ?? {};
+
+  const imageUrls = Array.isArray(body?.imageUrls) ? body.imageUrls : [];
+
+  const headers = [
+
+    "Action",
+
+    "Custom label (SKU)",
+
+    "Category ID",
+
+    "Title",
+
+    "Item photo URL",
+
+  ];
+
+  const row = [
+
+    "Draft",
+
+    body?.sku ?? "",
+
+    listing?.category_id ?? "",
+
+    listing?.title ?? "",
+
+    imageUrls.join("|"),
+
+  ];
+
+  return [
+
+    headers.map(csvEscape).join(","),
+
+    row.map(csvEscape).join(","),
+
+  ].join("\n");
+
+}
 export async function POST(req: NextRequest) {
 
   const denied = guardApiRequest(req);
