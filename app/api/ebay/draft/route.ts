@@ -250,7 +250,7 @@ function buildDraftCsv(body: any) {
 
   const row = [
 
-    "Draft",
+    "VerifyAddItem",
 
     body?.sku ?? "",
 
