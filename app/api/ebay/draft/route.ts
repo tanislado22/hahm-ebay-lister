@@ -257,7 +257,7 @@ function buildDraftCsv(body: any) {
   "Description",
 
   "Format",
-
+"Duration",
 ];
 
   const row = [
@@ -283,7 +283,7 @@ function buildDraftCsv(body: any) {
   listing?.description ?? body?.description ?? "Draft listing",
 
   "FixedPrice",
-
+"GTC",
 ];
 
   return [
