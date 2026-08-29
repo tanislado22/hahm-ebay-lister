@@ -262,7 +262,7 @@ function buildDraftCsv(body: any) {
 
   const row = [
 
-  "Draft",
+  "VerifyAddItem",
 
   body?.sku ?? "",
 
@@ -270,19 +270,19 @@ function buildDraftCsv(body: any) {
 
   listing?.title ?? "",
 
-  "",
+  listing?.price ?? body?.price ?? 11,
 
-  "",
+  1,
 
   "",
 
   imageUrls.join("|"),
 
-  "",
+  "NEW",
 
-  "",
+  listing?.description ?? body?.description ?? "Draft listing",
 
-  "",
+  "FixedPrice",
 
 ];
 
