@@ -278,7 +278,7 @@ export function defaultPackageWeightAndSize(catKey: string): Record<string, unkn
   };
 }
 
-function normalizeConditionInput(value: string | undefined): string {
+export function normalizeConditionInput(value: string | undefined): string {
   const cleaned = (value || "GOOD")
     .trim()
     .toUpperCase()
@@ -292,7 +292,7 @@ function isApparelConditionPolicy(acceptedIds: Set<number>): boolean {
   return acceptedIds.has(2990) || acceptedIds.has(3010);
 }
 
-function conditionIdsForGrade(
+export function conditionIdsForGrade(
   grade: string,
   acceptedIds: Set<number>,
   catKey: string
