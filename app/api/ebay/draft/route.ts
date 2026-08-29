@@ -20,6 +20,7 @@ import {
   normalizeConditionInput,
 
   conditionIdsForGrade,
+  buildAspects,
 
 } from "@/lib/ebay/publish";
 import {
@@ -280,7 +281,7 @@ const conditionId =
     catKey
 
   )[0] ?? 3000;
-
+const aspects = buildAspects(listing, catKey);
 
   const imageUrls = Array.isArray(body?.imageUrls) ? body.imageUrls : [];
 
@@ -309,6 +310,15 @@ const conditionId =
   "Format",
 "Duration",
     "Location",
+    "C:Brand",
+
+"C:Color",
+
+"C:Department",
+
+"C:Size",
+
+"C:Size Type",
 ];
 
   const row = [
@@ -317,7 +327,7 @@ const conditionId =
 
   body?.sku ?? "",
 
-  suggestions[0]?.id ?? listing?.category_id ?? "",
+categoryId,
 
 
 
@@ -338,6 +348,21 @@ conditionId,
   "FixedPrice",
 "GTC",
     "New Bedford, MA",
+ aspects["Brand"]?.[0] ?? listing?.brand ?? "",
+
+aspects["Color"]?.[0] ?? listing?.color ?? "",
+
+aspects["Department"]?.[0] ?? listing?.department ?? "",
+
+
+
+aspects["Size"]?.[0] ?? listing?.size ?? "",
+
+aspects["Size Type"]?.[0] ?? listing?.size_type ?? "",
+
+
+
+
 ];
 
   return [
