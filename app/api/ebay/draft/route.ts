@@ -358,7 +358,7 @@ aspects["Department"]?.[0] ?? listing?.department ?? "",
 
 aspects["Size"]?.[0] ?? listing?.size ?? "",
 
-aspects["Size Type"]?.[0] ?? listing?.size_type ?? "",
+aspects["Size Type"]?.[0] ?? listing?.size_type ?? "Regular",
 
 
 
