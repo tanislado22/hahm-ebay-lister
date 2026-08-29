@@ -391,9 +391,7 @@ console.log("EBAY DRAFT TASK RESULT:", JSON.stringify(task));
 
   const resultBuffer = await getDraftFeedResultFile(accessToken, taskId);
 
-  const { gunzipSync } = await import("node:zlib");
-
-  const resultText = gunzipSync(resultBuffer).toString("utf8");
+  const resultText = resultBuffer.toString("utf8");
 
   console.log("EBAY DRAFT ERROR FILE:", resultText);
 
