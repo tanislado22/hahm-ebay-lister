@@ -107,6 +107,54 @@ async function getDraftFeedTask(accessToken: string, taskId: string) {
 
 }
 
+async function getDraftFeedResultFile(
+
+  accessToken: string,
+
+  taskId: string
+
+) {
+
+  const resp = await fetch(
+
+    `${EBAY_FEED_BASE}/task/${taskId}/download_result_file`,
+
+    {
+
+      method: "GET",
+
+      headers: {
+
+        Authorization: `Bearer ${accessToken}`,
+
+        Accept: "*/*",
+
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+
+      },
+
+    }
+
+  );
+
+  const buffer = await resp.arrayBuffer();
+
+  if (!resp.ok) {
+
+    const text = new TextDecoder().decode(buffer);
+
+    throw new Error(
+
+      `eBay get result file failed (${resp.status}): ${text}`
+
+    );
+
+  }
+
+  return Buffer.from(buffer);
+
+}
+
 export const maxDuration = 300;
 async function uploadDraftFeedFile(
 
@@ -339,6 +387,17 @@ for (let i = 0; i < 10; i++) {
 }
 
 console.log("EBAY DRAFT TASK RESULT:", JSON.stringify(task));
+    if (task?.status === "COMPLETED_WITH_ERROR") {
+
+  const resultBuffer = await getDraftFeedResultFile(accessToken, taskId);
+
+  const { gunzipSync } = await import("node:zlib");
+
+  const resultText = gunzipSync(resultBuffer).toString("utf8");
+
+  console.log("EBAY DRAFT ERROR FILE:", resultText);
+
+}
 
 return NextResponse.json(
 
