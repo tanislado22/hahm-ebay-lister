@@ -447,7 +447,7 @@ export async function POST(req: NextRequest) {
 
    const taskId = await createDraftFeedTask(accessToken);
 
-const csvText = await buildDraftCsv(body);
+const csvText = await buildDraftCsv(body, accessToken);
 
 
 
