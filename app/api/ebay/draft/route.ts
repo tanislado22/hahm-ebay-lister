@@ -278,21 +278,25 @@ export async function POST(req: NextRequest) {
 
     }
 
-    const setup = await fetchAccountSetup(accessToken);
+   const taskId = await createDraftFeedTask(accessToken);
 
-const result = await publishListing(accessToken, setup, {
+const csvText = buildDraftCsv(body);
 
-  ...body,
-
-  saveAsDraft: true,
-
-});
+await uploadDraftFeedFile(accessToken, taskId, csvText);
 
 return NextResponse.json(
 
-  result,
+  {
 
-  { status: result.success ? 200 : 422 }
+    success: true,
+
+    taskId,
+
+    message: "Draft feed uploaded to eBay.",
+
+  },
+
+  { status: 200 }
 
 );
 
