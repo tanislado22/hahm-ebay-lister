@@ -11,7 +11,17 @@ import {
 } from "@/lib/ebay/client-connections";
 
 import { guardApiRequest } from "@/lib/api-guard";
-import { fetchAccountSetup, publishListing } from "@/lib/ebay/publish";
+import {
+
+  fetchAccountSetup,
+
+  publishListing,
+
+  normalizeConditionInput,
+
+  conditionIdsForGrade,
+
+} from "@/lib/ebay/publish";
 import { suggestLeafCategories } from "@/lib/ebay/taxonomy";
 const EBAY_FEED_BASE = "https://api.ebay.com/sell/feed/v1";
 async function createDraftFeedTask(accessToken: string) {
