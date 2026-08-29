@@ -22,7 +22,13 @@ import {
   conditionIdsForGrade,
 
 } from "@/lib/ebay/publish";
-import { suggestLeafCategories } from "@/lib/ebay/taxonomy";
+import {
+
+  suggestLeafCategories,
+
+  acceptedConditionIds,
+
+} from "@/lib/ebay/taxonomy";
 const EBAY_FEED_BASE = "https://api.ebay.com/sell/feed/v1";
 async function createDraftFeedTask(accessToken: string) {
 
@@ -239,7 +245,7 @@ function csvEscape(value: unknown) {
 
 }
 
-async function buildDraftCsv(body: any) {
+async function buildDraftCsv(body: any, accessToken: string) {
 
 
 
@@ -251,6 +257,30 @@ async function buildDraftCsv(body: any) {
   3
 
 );
+const categoryId = suggestions[0]?.id ?? listing?.category_id ?? "";
+
+const acceptedConds = await acceptedConditionIds(
+
+  categoryId,
+
+  accessToken
+
+);
+
+const catKey = String(listing.category || "other");
+
+const conditionId =
+
+  conditionIdsForGrade(
+
+    normalizeConditionInput(listing.condition),
+
+    acceptedConds,
+
+    catKey
+
+  )[0] ?? 3000;
+
 
   const imageUrls = Array.isArray(body?.imageUrls) ? body.imageUrls : [];
 
@@ -301,7 +331,7 @@ async function buildDraftCsv(body: any) {
 
   imageUrls.join("|"),
 
-  "NEW",
+conditionId,
 
   listing?.description ?? body?.description ?? "Draft listing",
 
