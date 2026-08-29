@@ -84,8 +84,7 @@ const r = await fetch(`/api/ebay/status?${params.toString()}`, {
 });
       const data = (await r.json()) as { ok: boolean; url?: string; error?: string };
       if (!data.ok || !data.url) throw new Error(data.error || "Couldn't start eBay authorization.");
-      window.open(data.url, "_blank", "noopener,noreferrer");
-    } catch (e) {
+      window.location.href = data.url;    } catch (e) {
       setNotice({ ok: false, msg: (e as Error).message });
     } finally {
       setBusy(false);
