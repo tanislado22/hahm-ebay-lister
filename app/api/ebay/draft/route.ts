@@ -311,6 +311,8 @@ const aspects = buildAspects(listing, catKey);
   "Format",
 "Duration",
     "Location",
+    "PostalCode",
+
     "Shipping profile name",
 
    "C:Brand",
@@ -351,6 +353,7 @@ conditionId,
   "FixedPrice",
 "GTC",
     listing?.location || setup.locationName || "",
+    process.env.EBAY_LOCATION_POSTAL_CODE || "",
    setup.fulfillmentPolicyName,
 
 
