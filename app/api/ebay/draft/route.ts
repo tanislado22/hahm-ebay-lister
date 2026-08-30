@@ -251,6 +251,7 @@ async function buildDraftCsv(body: any, accessToken: string) {
 
 
   const listing = body?.listing ?? {};
+    const setup = await fetchAccountSetup(accessToken);
   const suggestions = await suggestLeafCategories(
 
   `${listing.category_hint || ""} ${listing.title || ""}`,
