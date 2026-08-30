@@ -8,6 +8,8 @@ import {
 } from "@/lib/export";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
+import { apiPost } from "@/lib/api-client";
+
 async function uploadPhotosToEbay(sku: string, photos: Photo[]) {
 
   const batches = chunkImagesForUpload(photos);
@@ -18,23 +20,15 @@ async function uploadPhotosToEbay(sku: string, photos: Photo[]) {
 
   for (const images of batches) {
 
-    const response = await fetch("/api/ebay/upload-photos", {
+    const response = await apiPost("/api/ebay/upload-photos", {
 
-      method: "POST",
+  sku,
 
-      headers: { "Content-Type": "application/json" },
+  images,
 
-      body: JSON.stringify({
+  startIndex,
 
-        sku,
-
-        images,
-
-        startIndex,
-
-      }),
-
-    });
+});
 
     const result = await response.json();
 
