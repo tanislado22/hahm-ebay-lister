@@ -310,7 +310,9 @@ const aspects = buildAspects(listing, catKey);
   "Format",
 "Duration",
     "Location",
-    "C:Brand",
+    "Shipping profile name",
+
+   "C:Brand",
 
 "C:Color",
 
@@ -347,7 +349,10 @@ conditionId,
 
   "FixedPrice",
 "GTC",
-    "New Bedford, MA",
+    listing?.location ?? "",
+   setup.fulfillmentPolicyName,
+
+
  aspects["Brand"]?.[0] ?? listing?.brand ?? "",
 
 aspects["Color"]?.[0] ?? listing?.color ?? "",
