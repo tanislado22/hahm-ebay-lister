@@ -330,7 +330,7 @@ const packageInfo = defaultPackageWeightAndSize(catKey);
 
   const row = [
 
-  "VerifyAddItem",
+ "Draft",
 
   body?.sku ?? "",
 
