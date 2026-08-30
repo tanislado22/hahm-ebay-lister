@@ -314,7 +314,7 @@ const headers = [
 
 const row = [
 
-  "Draft",
+ "VerifyAddItem",
 
   body?.sku ?? "",
 
