@@ -515,7 +515,7 @@ for (let i = 0; i < 10; i++) {
 
 console.log("EBAY DRAFT TASK RESULT:", JSON.stringify(task));
     if (
-
+task?.status === "COMPLETED" ||
   task?.status === "COMPLETED_WITH_ERROR" ||
 
   task?.uploadSummary?.failureCount > 0
