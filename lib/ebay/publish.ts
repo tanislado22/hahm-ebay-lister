@@ -904,6 +904,7 @@ export interface AccountSetup {
   paymentPolicyId: string;
   returnPolicyId: string;
   locationKey: string;
+  locationName: string;
 }
 
 function pickFirstPolicy(r: EbayResp, listKey: string, idField: string): string {
@@ -957,7 +958,7 @@ async function fetchAccountSetupUncached(accessToken: string): Promise<AccountSe
   };
 }
 
-async function fetchOrCreateLocation(accessToken: string): Promise<string> {
+async function fetchOrCreateLocation(accessToken: string): Promise<{ key: string; name: string }> {
   const list = await ebayRequest(accessToken, "GET", `${EBAY_INV_BASE}/location`);
   if (list.ok) {
 
@@ -977,7 +978,21 @@ async function fetchOrCreateLocation(accessToken: string): Promise<string> {
 
     ) {
 
-      return loc.merchantLocationKey;
+      return {
+
+  key: String(loc.merchantLocationKey),
+
+  name:
+
+    [loc.location?.address?.city, loc.location?.address?.stateOrProvince]
+
+      .filter(Boolean)
+
+      .join(", ") ||
+
+    String(loc.location?.address?.postalCode || ""),
+
+};
 
     }
 
@@ -1002,7 +1017,13 @@ async function fetchOrCreateLocation(accessToken: string): Promise<string> {
     body: payload,
     extraHeaders: { "Content-Language": "en-US" },
   });
-  return key;
+  return {
+
+  key,
+
+  name: process.env.EBAY_LOCATION_POSTAL_CODE || "10001",
+
+};
 }
 
 // ── The full publish flow for one item ───────────────────────────────────────
