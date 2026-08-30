@@ -350,7 +350,7 @@ conditionId,
 
   "FixedPrice",
 "GTC",
-    listing?.location ?? "",
+    listing?.location || setup.locationName || "",
    setup.fulfillmentPolicyName,
 
 
