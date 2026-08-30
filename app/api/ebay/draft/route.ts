@@ -286,8 +286,7 @@ const aspects = buildAspects(listing, catKey);
 const packageInfo = defaultPackageWeightAndSize(catKey);
 
   const imageUrls = Array.isArray(body?.imageUrls) ? body.imageUrls : [];
-
-  const headers = [
+const headers = [
 
   "Action(SiteID=US|Country=US|Currency=USD|Version=1193|CC=UTF-8)",
 
@@ -310,72 +309,32 @@ const packageInfo = defaultPackageWeightAndSize(catKey);
   "Description",
 
   "Format",
-"Duration",
-    "Location",
-    "PostalCode",
-"WeightMajor",
 
-    "Shipping profile name",
-
-   "C:Brand",
-
-"C:Color",
-
-"C:Department",
-
-"C:Size",
-
-"C:Size Type",
 ];
 
-  const row = [
+const row = [
 
- "Draft",
+  "Draft",
 
   body?.sku ?? "",
 
-categoryId,
-
-
+  categoryId,
 
   listing?.title ?? "",
-"",
+
+  "",
+
   listing?.price ?? body?.price ?? 11,
 
   1,
 
- 
-
   imageUrls.join("|"),
 
-conditionId,
+  conditionId,
 
   listing?.description ?? body?.description ?? "Draft listing",
 
   "FixedPrice",
-"GTC",
-    listing?.location || setup.locationName || "",
-    process.env.EBAY_LOCATION_POSTAL_CODE || "",
-    (packageInfo.weight as any)?.value ?? 16,
-
-
-   setup.fulfillmentPolicyName,
-
-
- aspects["Brand"]?.[0] ?? listing?.brand ?? "",
-
-aspects["Color"]?.[0] ?? listing?.color ?? "",
-
-aspects["Department"]?.[0] ?? listing?.department ?? "",
-
-
-
-aspects["Size"]?.[0] ?? listing?.size ?? "",
-
-aspects["Size Type"]?.[0] ?? listing?.size_type ?? "Regular",
-
-
-
 
 ];
 
