@@ -21,7 +21,7 @@ import {
 
   conditionIdsForGrade,
   buildAspects,
-
+defaultPackageWeightAndSize,
 } from "@/lib/ebay/publish";
 import {
 
@@ -283,6 +283,7 @@ const conditionId =
 
   )[0] ?? 3000;
 const aspects = buildAspects(listing, catKey);
+const packageInfo = defaultPackageWeightAndSize(catKey);
 
   const imageUrls = Array.isArray(body?.imageUrls) ? body.imageUrls : [];
 
@@ -312,6 +313,7 @@ const aspects = buildAspects(listing, catKey);
 "Duration",
     "Location",
     "PostalCode",
+"WeightMajor",
 
     "Shipping profile name",
 
@@ -354,6 +356,9 @@ conditionId,
 "GTC",
     listing?.location || setup.locationName || "",
     process.env.EBAY_LOCATION_POSTAL_CODE || "",
+    (packageInfo.weight as any)?.value ?? 16,
+
+
    setup.fulfillmentPolicyName,
 
 
