@@ -900,6 +900,7 @@ async function addFixedPriceItemTrading(
 
 export interface AccountSetup {
   fulfillmentPolicyId: string;
+  fulfillmentPolicyName: string;
   paymentPolicyId: string;
   returnPolicyId: string;
   locationKey: string;
@@ -948,6 +949,8 @@ async function fetchAccountSetupUncached(accessToken: string): Promise<AccountSe
   ]);
   return {
     fulfillmentPolicyId: pickFirstPolicy(ful, "fulfillmentPolicies", "fulfillmentPolicyId"),
+    fulfillmentPolicyName: String(ful.json?.fulfillmentPolicies?.[0]?.name || ""),
+
     paymentPolicyId: pickFirstPolicy(pay, "paymentPolicies", "paymentPolicyId"),
    returnPolicyId: pickReturnsAcceptedPolicy(ret),
     locationKey: await fetchOrCreateLocation(accessToken),
