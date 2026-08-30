@@ -948,13 +948,19 @@ async function fetchAccountSetupUncached(accessToken: string): Promise<AccountSe
     ebayRequest(accessToken, "GET", `${EBAY_ACC_BASE}/payment_policy?${mp}`),
     ebayRequest(accessToken, "GET", `${EBAY_ACC_BASE}/return_policy?${mp}`),
   ]);
+  const location = await fetchOrCreateLocation(accessToken);
+
   return {
     fulfillmentPolicyId: pickFirstPolicy(ful, "fulfillmentPolicies", "fulfillmentPolicyId"),
     fulfillmentPolicyName: String(ful.json?.fulfillmentPolicies?.[0]?.name || ""),
 
     paymentPolicyId: pickFirstPolicy(pay, "paymentPolicies", "paymentPolicyId"),
    returnPolicyId: pickReturnsAcceptedPolicy(ret),
-    locationKey: await fetchOrCreateLocation(accessToken),
+    locationKey: location.key,
+
+
+
+locationName: location.name,
   };
 }
 
