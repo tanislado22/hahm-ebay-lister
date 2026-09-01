@@ -51,7 +51,7 @@ async function createDraftFeedTask(accessToken: string) {
 
     body: JSON.stringify({
 
-      feedType: "FX_LISTING",
+      feedType: "FX_DRAFT",
 
       schemaVersion: "1.0",
 
