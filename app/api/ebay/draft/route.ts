@@ -324,7 +324,7 @@ const row = [
 
   "",
 
-  listing?.price ?? body?.price ?? 11,
+  listing?.suggested_price ?? listing?.price ?? body?.price ?? 11,
 
   1,
 
