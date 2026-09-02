@@ -309,7 +309,19 @@ const headers = [
   "Description",
 
   "Format",
+"WeightMajor",
 
+"WeightMinor",
+
+"WeightUnit",
+
+"PackageLength",
+
+"PackageWidth",
+
+"PackageDepth",
+
+"PackageType",
 ];
 
 const row = [
@@ -335,6 +347,21 @@ const row = [
   listing?.description ?? body?.description ?? "Draft listing",
 
   "FixedPrice",
+  Math.floor(Number(packageInfo.weight.value) / 16),
+
+Number(packageInfo.weight.value) % 16,
+
+"POUND",
+
+packageInfo.dimensions.length,
+
+packageInfo.dimensions.width,
+
+packageInfo.dimensions.height,
+
+packageInfo.packageType,
+
+
 
 ];
 
