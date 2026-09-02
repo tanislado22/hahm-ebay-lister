@@ -283,31 +283,7 @@ const conditionId =
 
   )[0] ?? 3000;
 const aspects = buildAspects(listing, catKey);
-const packageInfo = defaultPackageWeightAndSize(catKey) as {
 
-  weight: {
-
-    value: number;
-
-    unit: string;
-
-  };
-
-  dimensions: {
-
-    length: number;
-
-    width: number;
-
-    height: number;
-
-    unit: string;
-
-  };
-
-  packageType: string;
-
-};
   const imageUrls = Array.isArray(body?.imageUrls) ? body.imageUrls : [];
 const headers = [
 
@@ -332,19 +308,7 @@ const headers = [
   "Description",
 
   "Format",
-"WeightMajor",
 
-"WeightMinor",
-
-"WeightUnit",
-
-"PackageLength",
-
-"PackageWidth",
-
-"PackageDepth",
-
-"PackageType",
 ];
 
 const row = [
@@ -370,20 +334,7 @@ const row = [
   listing?.description ?? body?.description ?? "Draft listing",
 
   "FixedPrice",
-  Math.floor(Number(packageInfo.weight.value) / 16),
-
-Number(packageInfo.weight.value) % 16,
-
-"POUND",
-
-packageInfo.dimensions.length,
-
-packageInfo.dimensions.width,
-
-packageInfo.dimensions.height,
-
-packageInfo.packageType,
-
+ 
 
 
 ];
