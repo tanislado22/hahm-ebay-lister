@@ -283,8 +283,31 @@ const conditionId =
 
   )[0] ?? 3000;
 const aspects = buildAspects(listing, catKey);
-const packageInfo = defaultPackageWeightAndSize(catKey);
+const packageInfo = defaultPackageWeightAndSize(catKey) as {
 
+  weight: {
+
+    value: number;
+
+    unit: string;
+
+  };
+
+  dimensions: {
+
+    length: number;
+
+    width: number;
+
+    height: number;
+
+    unit: string;
+
+  };
+
+  packageType: string;
+
+};
   const imageUrls = Array.isArray(body?.imageUrls) ? body.imageUrls : [];
 const headers = [
 
