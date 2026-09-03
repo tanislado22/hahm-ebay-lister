@@ -283,6 +283,18 @@ const conditionId =
 
   )[0] ?? 3000;
 const aspects = buildAspects(listing, catKey);
+const draftAspectEntries = [
+
+  ["Type", aspects.Type],
+
+  ["Department", aspects.Department],
+
+  ["Size", aspects.Size],
+
+  ["Color", aspects.Color],
+
+].filter(([, values]) => Array.isArray(values) && values.length > 0);
+
 
   const imageUrls = Array.isArray(body?.imageUrls) ? body.imageUrls : [];
 const headers = [
@@ -308,6 +320,14 @@ const headers = [
   "Description",
 
   "Format",
+...draftAspectEntries.flatMap((_, index) => [
+
+  `Attribute Name ${index + 1}`,
+
+  `Attribute Value ${index + 1}`,
+
+]),
+
 
 ];
 
@@ -335,7 +355,13 @@ const row = [
 
   "FixedPrice",
  
+...draftAspectEntries.flatMap(([name, values]) => [
 
+  name,
+
+  values.join("|"),
+
+]),
 
 ];
 
