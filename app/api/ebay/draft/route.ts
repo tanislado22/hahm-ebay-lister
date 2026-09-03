@@ -359,7 +359,7 @@ const row = [
 
   name,
 
-  values.join("|"),
+ Array.isArray(values) ? values.join("|") : String(values ?? ""),
 
 ]),
 
