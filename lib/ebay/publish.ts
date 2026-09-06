@@ -375,6 +375,13 @@ export function buildAspects(listing: ListingResult, catKey: string): Record<str
 
   putOne("Brand", String(listing.brand || "").trim());
   putOne("Size", cleanSize(listing.size));
+  const normalizedSize = cleanSize(listing.size);
+
+if (/^\d+P$/i.test(normalizedSize)) {
+
+  aspects["Size Type"] = ["Petites"];
+
+}
   putMany("Color", listing.color);
   putMany("Material", listing.material);
   putOne("Type", String(listing.item_type || "").trim());
