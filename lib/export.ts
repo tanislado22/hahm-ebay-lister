@@ -12,7 +12,19 @@ function csvCell(value: unknown): string {
 }
 
 const CSV_COLUMNS: { header: string; get: (l: ListingResult) => string }[] = [
-  { header: "Title", get: (l) => l.title ?? "" },
+{ header: "Title", get: (l) => {
+
+  const title = String(l.title ?? "").replace(/\s+/g, " ").trim();
+
+  if (title.length <= 80) return title;
+
+  const cut = title.slice(0, 80);
+
+  const lastSpace = cut.lastIndexOf(" ");
+
+  return (lastSpace > 48 ? cut.slice(0, lastSpace) : cut).trim();
+
+}},
   { header: "Suggested Price", get: (l) => priceNumber(l.suggested_price) },
   { header: "Condition", get: (l) => (l.condition ?? "").replace(/_/g, " ") },
   { header: "Brand", get: (l) => l.brand ?? "" },
