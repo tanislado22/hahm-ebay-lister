@@ -375,13 +375,45 @@ export function buildAspects(listing: ListingResult, catKey: string): Record<str
 
   putOne("Brand", String(listing.brand || "").trim());
   putOne("Size", cleanSize(listing.size));
-  const normalizedSize = cleanSize(listing.size);
+  const normalizedSize = cleanSize(listing.size).trim();
 
-if (/^\d+P$/i.test(normalizedSize)) {
+const sizeUpper = normalizedSize.toUpperCase();
+
+// Petite: 14P, 12P, PL, MP, SP, XSP, Petite, etc.
+
+const isPetite =
+
+  /^\d+P$/.test(sizeUpper) ||
+
+  /^(XS|S|M|L|XL)P$/.test(sizeUpper) ||
+
+  sizeUpper.includes("PETITE");
+
+// Plus: 1X, 2X, 3X, 14W, 18W, 20W, etc.
+
+const isPlus =
+
+  /^\d+X$/.test(sizeUpper) ||
+
+  /^\d+W$/.test(sizeUpper) ||
+
+  /^\d+W[-/]\d+W$/.test(sizeUpper);
+
+if (isPetite) {
 
   aspects["Size Type"] = ["Petites"];
 
+} else if (isPlus) {
+
+  aspects["Size Type"] = ["Plus"];
+
+} else if (normalizedSize) {
+
+  aspects["Size Type"] = ["Regular"];
+
 }
+
+
   putMany("Color", listing.color);
   putMany("Material", listing.material);
   putOne("Type", String(listing.item_type || "").trim());
