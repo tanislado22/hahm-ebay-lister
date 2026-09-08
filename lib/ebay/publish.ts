@@ -496,8 +496,16 @@ function reconcileAspects(
   catKey: string
 ): void {
   for (const a of meta) {
-    if (!a.required || !a.name) continue;
-    const current = aspects[a.name] ?? [];
+    if (!a.name) continue;
+
+const current = aspects[a.name] ?? [];
+
+// Skip optional aspects that do not already have a value.
+
+if (!a.required && !current.length) continue;
+
+
+ 
 
     if (a.mode === "SELECTION_ONLY") {
       // Must be one of eBay's allowed values, or the publish 25002-fails.
