@@ -1506,6 +1506,13 @@ const tradingXml = `<?xml version="1.0" encoding="utf-8"?>
     <ShippingPackageDetails>
 
   <MeasurementUnit>English</MeasurementUnit>
+  <PackageLength>${Math.ceil(Number(pkg?.dimensions?.length || 12))}</PackageLength>
+
+<PackageWidth>${Math.ceil(Number(pkg?.dimensions?.width || 9))}</PackageWidth>
+
+<PackageDepth>${Math.ceil(Number(pkg?.dimensions?.height || 3))}</PackageDepth>
+
+
 
   <WeightMajor unit="lbs">${weightMajor}</WeightMajor>
 
