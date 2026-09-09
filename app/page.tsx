@@ -1235,6 +1235,11 @@ const draftAll = async () => {
   }
 
 };
+  const soldCompsAll = () => {
+
+  window.dispatchEvent(new CustomEvent("sold-comps-all"));
+
+};
   const usableGroups = useMemo(
     () => groups.filter((g) => g.photoIds.length > 0),
     [groups]
@@ -1676,6 +1681,7 @@ const draftAll = async () => {
 
           onPostAll={postAll}
           onDraftAll={draftAll}
+          onSoldCompsAll={soldCompsAll}
           onBack={() => setStep("review")}
         />
       )}
