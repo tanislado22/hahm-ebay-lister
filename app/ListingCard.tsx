@@ -310,7 +310,7 @@ const keyword = [
 
   }
 
-  loadSoldComps();
+ // loadSoldComps();
 
   return () => {
 
