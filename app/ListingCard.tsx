@@ -149,7 +149,7 @@ useEffect(() => {
 const [soldComps, setSoldComps] = useState<SoldCompsSummary | null>(null);
 
 const [soldCompsLoading, setSoldCompsLoading] = useState(false);
-
+const [soldCompsRequest, setSoldCompsRequest] = useState(0);
 const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
   const [showSoldItems, setShowSoldItems] = useState(false);
   const marketMedian =
@@ -181,6 +181,8 @@ useEffect(() => {
 
 }, [soldMedian]);
 useEffect(() => {
+if (soldCompsRequest === 0) return;
+
 
   const titleWords = (listing?.title ?? "").trim().split(/\s+/);
 
@@ -310,7 +312,7 @@ const keyword = [
 
   }
 
- // loadSoldComps();
+  loadSoldComps();
 
   return () => {
 
@@ -318,7 +320,7 @@ const keyword = [
 
   };
 
-}, [group.status, listing?.title, listing?.brand, listing?.size]);
+}, [soldCompsRequest, group.status, listing?.title, listing?.brand, listing?.size]);
 
   return (
     <article className={`listing-card status-${group.status}`}>
@@ -938,6 +940,21 @@ const keyword = [
 >
 
   📝 Draft Listing
+
+</button>
+              <button
+
+  type="button"
+
+  className="btn btn-ghost"
+
+  onClick={() => setSoldCompsRequest((n) => n + 1)}
+
+  disabled={soldCompsLoading}
+
+>
+
+  {soldCompsLoading ? "Loading Sold Comps..." : "Sold Comps"}
 
 </button>
               {group.postStatus === "error" && group.postError && (
