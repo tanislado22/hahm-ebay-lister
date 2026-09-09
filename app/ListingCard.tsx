@@ -152,6 +152,23 @@ const [soldCompsLoading, setSoldCompsLoading] = useState(false);
 const [soldCompsRequest, setSoldCompsRequest] = useState(0);
 const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
   const [showSoldItems, setShowSoldItems] = useState(false);
+  useEffect(() => {
+
+  const handleSoldCompsAll = () => {
+
+    setSoldCompsRequest((n) => n + 1);
+
+  };
+
+  window.addEventListener("sold-comps-all", handleSoldCompsAll);
+
+  return () => {
+
+    window.removeEventListener("sold-comps-all", handleSoldCompsAll);
+
+  };
+
+}, []);
   const marketMedian =
 
   group.comps?.ok && group.comps.median !== undefined
