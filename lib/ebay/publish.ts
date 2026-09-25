@@ -357,6 +357,115 @@ function departmentForCategory(catKey: string): string {
   return "Unisex Adult";
 }
 
+// eBay File Exchange / Taxonomy names for the structured listing fields.
+const ASPECT_KEY_ALIASES: Record<string, string> = {
+  size: "Size",
+  color: "Color",
+  colour: "Color",
+  gender: "Gender",
+  department: "Department",
+  brand: "Brand",
+  type: "Type",
+  "size type": "Size Type",
+  sizetype: "Size Type",
+  material: "Material",
+};
+
+function canonicalAspectName(key: string): string {
+  return ASPECT_KEY_ALIASES[key.trim().toLowerCase()] || key;
+}
+
+function specificByNames(listing: ListingResult, names: string[]): string {
+  const specs = listing.item_specifics || {};
+  const want = new Set(names.map((n) => n.toLowerCase()));
+  for (const [k, v] of Object.entries(specs)) {
+    if (!want.has(k.trim().toLowerCase())) continue;
+    const cleaned = cleanAspectValue(String(v ?? "").trim());
+    if (cleaned) return cleaned;
+  }
+  return "";
+}
+
+function normalizeGender(raw: string): string {
+  const t = raw.trim().toLowerCase();
+  if (!t) return "";
+  if (/\b(girls?)\b/.test(t)) return "Girls";
+  if (/\b(boys?)\b/.test(t)) return "Boys";
+  if (/\b(women|woman|women'?s|ladies|female)\b/.test(t)) return "Women";
+  if (/\b(men|man|men'?s|male)\b/.test(t)) return "Men";
+  if (/\bunisex\b/.test(t)) return "Unisex";
+  return cleanAspectValue(raw);
+}
+
+function departmentFromGender(gender: string): string {
+  if (gender === "Women") return "Women";
+  if (gender === "Men") return "Men";
+  if (gender === "Girls") return "Girls";
+  if (gender === "Boys") return "Boys";
+  return "Unisex Adult";
+}
+
+function genderFromListing(
+  listing: ListingResult,
+  catKey: string,
+  aspects: Record<string, string[]> = {}
+): string {
+  const explicit =
+    aspects.Gender?.[0] ||
+    specificByNames(listing, ["Gender"]) ||
+    aspects.Department?.[0] ||
+    specificByNames(listing, ["Department"]);
+  const fromValue = normalizeGender(explicit);
+  if (fromValue) return fromValue;
+
+  if (catKey.startsWith("womens_")) return "Women";
+  if (catKey.startsWith("mens_")) return "Men";
+
+  const text = `${catKey} ${listing.title || ""} ${listing.item_type || ""}`.toLowerCase();
+  if (/\b(women|woman|ladies|female|girls?)\b/.test(text)) {
+    return /\b(girls?|kids?|youth|child)\b/.test(text) && !/\bwom(a|e)n/.test(text)
+      ? "Girls"
+      : "Women";
+  }
+  if (/\b(men|man|male|boys?)\b/.test(text)) {
+    return /\b(boys?|kids?|youth|child)\b/.test(text) && !/\bmen\b/.test(text) ? "Boys" : "Men";
+  }
+  return "";
+}
+
+function sizeFromListing(listing: ListingResult, aspects: Record<string, string[]>): string {
+  const fromField = cleanSize(listing.size);
+  if (fromField) return fromField;
+  if (aspects.Size?.[0]) return cleanSize(aspects.Size[0]);
+  const specs = listing.item_specifics || {};
+  for (const [k, v] of Object.entries(specs)) {
+    const n = k.trim().toLowerCase();
+    if (n !== "size" && n !== "us size" && n !== "size (women's)" && n !== "size (men's)") continue;
+    const cleaned = cleanSize(v);
+    if (cleaned) return cleaned;
+  }
+  return "";
+}
+
+function applySizeType(aspects: Record<string, string[]>, size: string): void {
+  if (aspects["Size Type"]?.length) return;
+  const sizeUpper = size.trim().toUpperCase();
+  if (!sizeUpper) return;
+  const isPetite =
+    /^\d+P$/.test(sizeUpper) ||
+    /^(XS|S|M|L|XL)P$/.test(sizeUpper) ||
+    sizeUpper.includes("PETITE");
+  const isPlus =
+    /^\d+X$/.test(sizeUpper) || /^\d+W$/.test(sizeUpper) || /^\d+W[-/]\d+W$/.test(sizeUpper);
+  if (isPetite) aspects["Size Type"] = ["Petites"];
+  else if (isPlus) aspects["Size Type"] = ["Plus"];
+  else aspects["Size Type"] = ["Regular"];
+}
+
+function hasAspect(aspects: Record<string, string[]>, key: string): boolean {
+  return (aspects[key] || []).some((v) => String(v || "").trim());
+}
+
 // Build the item-specifics (aspects) map from the listing. Values are kept as
 // full arrays here ("Cotton / Polyester" → both parts survive); once eBay's
 // aspect metadata arrives, enforceCardinality() trims single-value aspects.
@@ -373,48 +482,24 @@ export function buildAspects(listing: ListingResult, catKey: string): Record<str
     if (vals.length) aspects[k] = vals;
   };
 
+  // Model-provided specifics first, with Size/Color/Gender keys canonicalized
+  // so drafts looking for `aspects.Size` do not miss a lowercase `size`.
+  for (const [k, v] of Object.entries(listing.item_specifics || {})) {
+    if (!k || k.startsWith("---")) continue;
+    const name = canonicalAspectName(k);
+    if (hasAspect(aspects, name)) continue;
+    const vals = name === "Size" ? [cleanSize(v)].filter(Boolean) : splitAspectValues(v);
+    if (vals.length) aspects[name] = vals;
+  }
+
   putOne("Brand", String(listing.brand || "").trim());
-  putOne("Size", cleanSize(listing.size));
-  const normalizedSize = cleanSize(listing.size).trim();
+  const size = sizeFromListing(listing, aspects);
+  if (size) aspects.Size = [cleanAspectValue(size) || size];
+  applySizeType(aspects, size);
 
-const sizeUpper = normalizedSize.toUpperCase();
+  const colors = splitAspectValues(listing.color);
+  if (colors.length) aspects.Color = colors;
 
-// Petite: 14P, 12P, PL, MP, SP, XSP, Petite, etc.
-
-const isPetite =
-
-  /^\d+P$/.test(sizeUpper) ||
-
-  /^(XS|S|M|L|XL)P$/.test(sizeUpper) ||
-
-  sizeUpper.includes("PETITE");
-
-// Plus: 1X, 2X, 3X, 14W, 18W, 20W, etc.
-
-const isPlus =
-
-  /^\d+X$/.test(sizeUpper) ||
-
-  /^\d+W$/.test(sizeUpper) ||
-
-  /^\d+W[-/]\d+W$/.test(sizeUpper);
-
-if (isPetite) {
-
-  aspects["Size Type"] = ["Petites"];
-
-} else if (isPlus) {
-
-  aspects["Size Type"] = ["Plus"];
-
-} else if (normalizedSize) {
-
-  aspects["Size Type"] = ["Regular"];
-
-}
-
-
-  putMany("Color", listing.color);
   putMany("Material", listing.material);
   putOne("Type", String(listing.item_type || "").trim());
 
@@ -422,8 +507,11 @@ if (isPetite) {
   const cleanFeats = feats.map((f) => cleanAspectValue(String(f))).filter(Boolean).slice(0, 5);
   if (cleanFeats.length) aspects.Features = cleanFeats;
 
-  if (APPAREL_CATEGORIES.has(catKey) || catKey === "accessory") {
-    aspects.Department = [departmentForCategory(catKey)];
+  const apparel = APPAREL_CATEGORIES.has(catKey) || catKey === "accessory";
+  const gender = genderFromListing(listing, catKey, aspects);
+  if (gender) aspects.Gender = [gender];
+  if (apparel && !hasAspect(aspects, "Department")) {
+    aspects.Department = [gender ? departmentFromGender(gender) : departmentForCategory(catKey)];
   }
 
   // Measurements go to eBay aspects only when explicitly labeled — never the
@@ -435,12 +523,6 @@ if (isPetite) {
     if (parsed.rise && !aspects.Rise) aspects.Rise = [parsed.rise];
   }
 
-  // Merge in the model-provided item specifics (skip blanks + section labels).
-  for (const [k, v] of Object.entries(listing.item_specifics || {})) {
-    if (!k || k.startsWith("---")) continue;
-    const vals = splitAspectValues(v);
-    if (vals.length && !aspects[k]) aspects[k] = vals;
-  }
   return aspects;
 }
 
@@ -456,7 +538,7 @@ if (isPetite) {
 function pickDepartment(allowed: string[], listing: ListingResult, catKey: string): string {
   const text = `${catKey} ${listing.title || ""} ${listing.item_type || ""} ${
     listing.item_specifics?.Department || ""
-  }`.toLowerCase();
+  } ${listing.item_specifics?.Gender || ""}`.toLowerCase();
   const women = catKey.startsWith("womens_") || /\b(women|woman|ladies|female|girl)\b/.test(text);
   const men = catKey.startsWith("mens_") || /\b(men|man|male|boy)\b/.test(text);
   const pref = women
@@ -471,6 +553,21 @@ function pickDepartment(allowed: string[], listing: ListingResult, catKey: strin
   return allowed[0] || "";
 }
 
+function pickGender(allowed: string[], listing: ListingResult, catKey: string): string {
+  const g = genderFromListing(listing, catKey);
+  const pref =
+    g === "Women" || g === "Girls"
+      ? ["Women", "Women's", "Female", "Girls", g, "Unisex"]
+      : g === "Men" || g === "Boys"
+        ? ["Men", "Men's", "Male", "Boys", g, "Unisex"]
+        : ["Unisex", "Unisex Adult", "Unisex Adults", "Women", "Men"];
+  for (const p of pref) {
+    const m = matchAllowed(p, allowed);
+    if (m) return m;
+  }
+  return allowed[0] || g || "";
+}
+
 // Best free-text fill for a required aspect we don't already have, drawn from
 // the listing itself. eBay accepts any string for FREE_TEXT aspects.
 // "Unbranded"/"Multicolor" are eBay's own canonical values for genuinely
@@ -482,6 +579,7 @@ function freeTextDefault(name: string, listing: ListingResult): string {
   if (n.includes("brand")) return clean(listing.brand) || "Unbranded";
   if (n.includes("color")) return singleValue(listing.color) || "Multicolor";
   if (n.includes("shoe size") || n === "size") return cleanSize(listing.size);
+  if (n.includes("gender")) return genderFromListing(listing, String(listing.category || ""));
   if (n.includes("material")) return singleValue(listing.material);
   if (n.includes("style")) return clean(listing.item_specifics?.Style || listing.item_type);
   if (n.includes("type")) return clean(listing.item_type);
@@ -526,6 +624,7 @@ if (!a.required && !current.length) continue;
         ? ""
         : matchAllowed(ASPECT_DEFAULTS[a.name] || "", a.values) ||
           (a.name === "Department" ? pickDepartment(a.values, listing, catKey) : "") ||
+          (a.name === "Gender" ? pickGender(a.values, listing, catKey) : "") ||
           a.values[0] ||
           "";
       if (canonical) aspects[a.name] = [canonical];

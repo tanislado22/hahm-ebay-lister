@@ -133,6 +133,8 @@ Return ONLY valid JSON — no markdown, no code fences, no explanation. Use this
   "key_features": ["Up to 5 features"],
   "item_specifics": {
     "Style": "REQUIRED for clothing — overall style (Casual, Athletic, Formal, Vintage, Boho, Business Casual, Streetwear, Western, Preppy, Grunge, etc.)",
+    "Gender": "Women, Men, Unisex, Girls, or Boys — required for clothing",
+    "Department": "Women, Men, Unisex Adults, Girls, Boys, or Unisex Kids — required for clothing",
     "Type": "Specific item type (Pullover, Zip-Up, Button-Down, Slip-On, Tote, Crossbody, Figurine, Plate, etc.)",
     "Pattern": "Solid, Striped, Plaid, Floral, Animal Print, Graphic, Camo, Tie-Dye, Geometric, Paisley, Abstract, etc.",
     "Brand": "Maker/brand exactly as shown; use No Brand only if truly unbranded",

@@ -283,18 +283,31 @@ const conditionId =
 
   )[0] ?? 3000;
 const aspects = buildAspects(listing, catKey);
-const draftAspectEntries = [
 
-  ["Type", aspects.Type],
+// Seller Hub / File Exchange maps item specifics from `C:` columns. The
+// generic "Attribute Name N" pairs often never land in Size/Color/Gender.
+const CORE_ASPECT_ORDER = [
+  "Brand",
+  "Type",
+  "Department",
+  "Gender",
+  "Size Type",
+  "Size",
+  "Color",
+  "Material",
+];
+const coreNames = new Set(CORE_ASPECT_ORDER);
+const extraAspectEntries = Object.entries(aspects).filter(
+  ([name, values]) =>
+    !coreNames.has(name) && Array.isArray(values) && values.some((v) => String(v || "").trim())
+);
 
-  ["Department", aspects.Department],
-
-  ["Size", aspects.Size],
-
-  ["Color", aspects.Color],
-
-].filter(([, values]) => Array.isArray(values) && values.length > 0);
-
+function aspectCell(name: string): string {
+  const values = aspects[name];
+  return Array.isArray(values)
+    ? values.filter((v) => String(v || "").trim()).join("|")
+    : "";
+}
 
   const imageUrls = Array.isArray(body?.imageUrls) ? body.imageUrls : [];
 const headers = [
@@ -320,15 +333,8 @@ const headers = [
   "Description",
 
   "Format",
-...draftAspectEntries.flatMap((_, index) => [
-
-  `Attribute Name ${index + 1}`,
-
-  `Attribute Value ${index + 1}`,
-
-]),
-
-
+  ...CORE_ASPECT_ORDER.map((name) => `C:${name}`),
+  ...extraAspectEntries.map(([name]) => `C:${name}`),
 ];
 
 const row = [
@@ -354,15 +360,10 @@ const row = [
   listing?.description ?? body?.description ?? "Draft listing",
 
   "FixedPrice",
- 
-...draftAspectEntries.flatMap(([name, values]) => [
-
-  name,
-
- Array.isArray(values) ? values.join("|") : String(values ?? ""),
-
-]),
-
+  ...CORE_ASPECT_ORDER.map(aspectCell),
+  ...extraAspectEntries.map(([, values]) =>
+    Array.isArray(values) ? values.filter((v) => String(v || "").trim()).join("|") : ""
+  ),
 ];
 
   return [
