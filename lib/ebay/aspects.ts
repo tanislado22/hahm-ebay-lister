@@ -186,6 +186,31 @@ function matchSizeValue(raw: string, allowed: string[]): string | null {
   return null;
 }
 
+function sizeTokenKey(s: string): string {
+  return s.trim().toLowerCase().replace(/[\s/–—-]+/g, "");
+}
+
+// The Size value eBay will accept for a label such as "7/8".
+// Exact list matches win ("7/8"). A different spelling of the same size
+// ("7-8", "7 / 8") is returned in eBay's canonical form. Free-text Size
+// keeps the label. Returns null when this category cannot accept it.
+export function acceptedLabelSize(meta: AspectMeta[], raw: string): string | null {
+  const aspect = meta.find((a) => a.name.trim().toLowerCase() === "size");
+  if (!aspect) return null;
+  const label = raw.trim().replace(/\s*\/\s*/g, "/");
+  if (!label) return null;
+  if (!aspect.values.length) {
+    return aspect.mode === "SELECTION_ONLY" ? null : label;
+  }
+  const exact = matchSizeValue(label, aspect.values);
+  if (exact) return exact;
+  const want = sizeTokenKey(label);
+  for (const value of aspect.values) {
+    if (sizeTokenKey(value) === want) return value;
+  }
+  return null;
+}
+
 // Keep Size only when it is legal for THIS category. A value such as "7/8"
 // pulled from a sleeve tag, a measurement, or another garment's specifics is
 // dropped instead of being sent — that is what eBay rejects as 21920468.

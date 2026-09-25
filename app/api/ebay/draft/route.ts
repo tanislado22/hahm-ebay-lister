@@ -32,7 +32,8 @@ import {
   categoryAspects,
 
 } from "@/lib/ebay/taxonomy";
-import { sanitizeCategorySizes } from "@/lib/ebay/aspects";
+import { acceptedLabelSize, matchAllowed, sanitizeCategorySizes } from "@/lib/ebay/aspects";
+import type { AspectMeta } from "@/lib/ebay/taxonomy";
 const EBAY_FEED_BASE = "https://api.ebay.com/sell/feed/v1";
 async function createDraftFeedTask(accessToken: string) {
 
@@ -249,57 +250,119 @@ function csvEscape(value: unknown) {
 
 }
 
-async function buildDraftCsv(body: any, accessToken: string) {
+const LABEL_FRACTION_SIZE_RE = /^\d{1,2}\s*\/\s*\d{1,2}$/;
 
-
-
-  const listing = body?.listing ?? {};
-    const setup = await fetchAccountSetup(accessToken);
-  const suggestions = await suggestLeafCategories(
-
-  `${listing.category_hint || ""} ${listing.title || ""}`,
-
-  3
-
-);
-const categoryId = suggestions[0]?.id ?? listing?.category_id ?? "";
-
-const acceptedConds = await acceptedConditionIds(
-
-  categoryId,
-
-  accessToken
-
-);
-
-const catKey = String(listing.category || "other");
-
-const conditionId =
-
-  conditionIdsForGrade(
-
-    normalizeConditionInput(listing.condition),
-
-    acceptedConds,
-
-    catKey
-
-  )[0] ?? 3000;
-const aspects = buildAspects(listing, catKey);
-let sizeMeta: Awaited<ReturnType<typeof categoryAspects>> = [];
-if (categoryId) {
-  try {
-    sizeMeta = await categoryAspects(categoryId);
-  } catch {
-    sizeMeta = [];
+function alignAudienceAspects(
+  aspects: Record<string, string[]>,
+  meta: AspectMeta[],
+  categoryName: string
+): void {
+  const name = categoryName.toLowerCase();
+  const prefer = /\bgirls?\b/.test(name)
+    ? ["Girls", "Unisex Kids", "Kids"]
+    : /\bboys?\b/.test(name)
+      ? ["Boys", "Unisex Kids", "Kids"]
+      : /\bkids?|youth|children|child\b/.test(name)
+        ? ["Unisex Kids", "Girls", "Boys", "Kids"]
+        : /\bwomen|ladies\b/.test(name)
+          ? ["Women", "Women's"]
+          : [];
+  if (!prefer.length) return;
+  for (const aspectName of ["Department", "Gender"]) {
+    const aspect = meta.find((a) => a.name.toLowerCase() === aspectName.toLowerCase());
+    if (!aspect?.values.length) continue;
+    const current = aspects[aspectName]?.[0] || "";
+    if (current && matchAllowed(current, aspect.values)) continue;
+    for (const candidate of prefer) {
+      const matched = matchAllowed(candidate, aspect.values);
+      if (!matched) continue;
+      aspects[aspectName] = [matched];
+      break;
+    }
   }
 }
-const droppedSizes = sanitizeCategorySizes(aspects, sizeMeta);
-if (droppedSizes.length) {
-  console.warn(
-    `[ebay/draft] dropped size value(s) that are not valid for category ${categoryId || catKey}: ${droppedSizes.join(", ")}`
-  );
-}
+
+async function buildDraftCsv(body: any, accessToken: string) {
+  const listing = body?.listing ?? {};
+  await fetchAccountSetup(accessToken);
+  const catKey = String(listing.category || "other");
+  const aspects = buildAspects(listing, catKey);
+  const labelSize = String(listing.size || aspects.Size?.[0] || "").trim();
+  const fractionSize = LABEL_FRACTION_SIZE_RE.test(labelSize);
+
+  const baseQuery = `${listing.category_hint || ""} ${listing.title || ""}`.trim();
+  const suggestions = await suggestLeafCategories(baseQuery, fractionSize ? 5 : 3);
+  let candidates = suggestions;
+  if (fractionSize) {
+    const garment = String(
+      listing.item_type || listing.title || listing.category_hint || "clothing"
+    ).trim();
+    const extras = await Promise.all(
+      ["girls", "kids", "boys", "women"].map((dept) =>
+        suggestLeafCategories(`${dept} ${garment}`, 3)
+      )
+    );
+    const seen = new Set<string>();
+    candidates = [];
+    for (const candidate of [...suggestions, ...extras.flat()]) {
+      if (!candidate?.id || seen.has(candidate.id)) continue;
+      seen.add(candidate.id);
+      candidates.push(candidate);
+    }
+  }
+
+  let categoryId = "";
+  let categoryName = "";
+  let sizeMeta: AspectMeta[] = [];
+
+  if (fractionSize) {
+    for (const candidate of candidates) {
+      let meta: AspectMeta[] = [];
+      try {
+        meta = await categoryAspects(candidate.id);
+      } catch {
+        meta = [];
+      }
+      const formatted = acceptedLabelSize(meta, labelSize);
+      if (!formatted) continue;
+      categoryId = candidate.id;
+      categoryName = candidate.name;
+      sizeMeta = meta;
+      aspects.Size = [formatted];
+      break;
+    }
+  }
+
+  if (!categoryId) {
+    categoryId = candidates[0]?.id ?? listing?.category_id ?? "";
+    categoryName = candidates[0]?.name ?? "";
+    if (categoryId) {
+      try {
+        sizeMeta = await categoryAspects(categoryId);
+      } catch {
+        sizeMeta = [];
+      }
+    }
+  }
+
+  if (fractionSize && categoryName) {
+    alignAudienceAspects(aspects, sizeMeta, categoryName);
+  }
+
+  const acceptedConds = await acceptedConditionIds(categoryId, accessToken);
+  const conditionId =
+    conditionIdsForGrade(normalizeConditionInput(listing.condition), acceptedConds, catKey)[0] ??
+    3000;
+
+  const droppedSizes = sanitizeCategorySizes(aspects, sizeMeta);
+  if (droppedSizes.length) {
+    console.warn(
+      `[ebay/draft] dropped size value(s) that are not valid for category ${categoryId || catKey}: ${droppedSizes.join(", ")}`
+    );
+  }
+  if (fractionSize && !aspects.Size?.some((v) => String(v || "").trim())) {
+    aspects.Size = [labelSize.replace(/\s*\/\s*/, "/")];
+  }
 
 // Seller Hub / File Exchange maps item specifics from `C:` columns. The
 // generic "Attribute Name N" pairs often never land in Size/Color/Gender.

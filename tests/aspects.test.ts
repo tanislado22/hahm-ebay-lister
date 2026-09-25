@@ -8,6 +8,7 @@ import {
   splitAspectValues,
   canonicalizeAspectKeys,
   sanitizeCategorySizes,
+  acceptedLabelSize,
 } from "@/lib/ebay/aspects";
 import type { AspectMeta } from "@/lib/ebay/taxonomy";
 
@@ -132,6 +133,34 @@ describe("matchAllowed", () => {
   });
   test("null when nothing matches", () => {
     expect(matchAllowed("Purple", ["Red", "Blue"])).toBeNull();
+  });
+});
+
+describe("acceptedLabelSize", () => {
+  test("keeps 7/8 when the category lists it", () => {
+    const kids = [
+      meta({ name: "Size", mode: "SELECTION_ONLY", values: ["6", "7/8", "10"] }),
+    ];
+    expect(acceptedLabelSize(kids, "7/8")).toBe("7/8");
+  });
+
+  test("uses eBay's spelling when the label and the list differ only by separator", () => {
+    const kids = [
+      meta({ name: "Size", mode: "SELECTION_ONLY", values: ["6", "7-8", "10"] }),
+    ];
+    expect(acceptedLabelSize(kids, "7/8")).toBe("7-8");
+  });
+
+  test("returns null when a selection-only category does not allow the label", () => {
+    const womens = [
+      meta({ name: "Size", mode: "SELECTION_ONLY", values: ["XS", "S", "M", "L"] }),
+    ];
+    expect(acceptedLabelSize(womens, "7/8")).toBeNull();
+  });
+
+  test("keeps the label on a free-text Size aspect", () => {
+    const free = [meta({ name: "Size", mode: "FREE_TEXT", values: [] })];
+    expect(acceptedLabelSize(free, "7 / 8")).toBe("7/8");
   });
 });
 
