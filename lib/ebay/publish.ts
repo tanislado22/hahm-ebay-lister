@@ -24,6 +24,7 @@ import {
   canonicalizeAspectKeys,
   enforceCardinality,
   sanitizeNumericAspects,
+  sanitizeCategorySizes,
 } from "./aspects";
 import { fillRecommendedAspects } from "./aspectFill";
 import { extractProductIdentifiers, hasCatalogIdentifier, realBrand } from "./identifiers";
@@ -1424,6 +1425,12 @@ export async function publishListing(
         `[ebay/publish] sku=${sku} dropped non-numeric value(s) for numeric aspect(s): ${droppedNumeric.join(", ")}`
       );
     }
+  }
+  const droppedSizes = sanitizeCategorySizes(aspects, aspectMeta);
+  if (droppedSizes.length) {
+    console.warn(
+      `[ebay/publish] sku=${sku} dropped size value(s) that are not valid for category ${catId}: ${droppedSizes.join(", ")}`
+    );
   }
   const condCandidates = conditionCandidates(listing.condition, acceptedConds, catKey);
   const condition = condCandidates[0] || "USED_EXCELLENT";

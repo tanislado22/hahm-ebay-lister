@@ -7,6 +7,7 @@ import {
   matchAllowed,
   splitAspectValues,
   canonicalizeAspectKeys,
+  sanitizeCategorySizes,
 } from "@/lib/ebay/aspects";
 import type { AspectMeta } from "@/lib/ebay/taxonomy";
 
@@ -131,6 +132,59 @@ describe("matchAllowed", () => {
   });
   test("null when nothing matches", () => {
     expect(matchAllowed("Purple", ["Red", "Blue"])).toBeNull();
+  });
+});
+
+describe("sanitizeCategorySizes", () => {
+  const womensTop = [
+    meta({
+      name: "Size",
+      mode: "SELECTION_ONLY",
+      values: ["XS", "S", "M", "L", "XL", "8", "10"],
+    }),
+    meta({ name: "Color", values: ["Black", "Red"] }),
+  ];
+
+  test("drops a fraction size that is not in the category list", () => {
+    const aspects: Record<string, string[]> = { Size: ["7/8"], Color: ["Black"] };
+    expect(sanitizeCategorySizes(aspects, womensTop)).toEqual(["Size"]);
+    expect(aspects.Size).toBeUndefined();
+    expect(aspects.Color).toEqual(["Black"]);
+  });
+
+  test("keeps a size the category actually allows, including word aliases", () => {
+    const aspects: Record<string, string[]> = { Size: ["Large"] };
+    expect(sanitizeCategorySizes(aspects, womensTop)).toEqual([]);
+    expect(aspects.Size).toEqual(["L"]);
+  });
+
+  test("keeps 7/8 only when this category lists it", () => {
+    const kids = [
+      meta({ name: "Size", mode: "SELECTION_ONLY", values: ["6", "7/8", "10"] }),
+    ];
+    const aspects: Record<string, string[]> = { Size: ["7/8"] };
+    expect(sanitizeCategorySizes(aspects, kids)).toEqual([]);
+    expect(aspects.Size).toEqual(["7/8"]);
+  });
+
+  test("removes size aspects that belong to a different garment", () => {
+    const aspects: Record<string, string[]> = {
+      Size: ["M"],
+      "Ring Size": ["7"],
+      "Shoe Size": ["8"],
+    };
+    const dropped = sanitizeCategorySizes(aspects, womensTop);
+    expect(dropped.sort()).toEqual(["Ring Size", "Shoe Size"]);
+    expect(aspects.Size).toEqual(["M"]);
+    expect(aspects["Ring Size"]).toBeUndefined();
+    expect(aspects["Shoe Size"]).toBeUndefined();
+  });
+
+  test("drops a bare fraction when the category schema is unavailable", () => {
+    const aspects: Record<string, string[]> = { Size: ["7/8"], "Waist Size": ["32"] };
+    expect(sanitizeCategorySizes(aspects, [])).toEqual(["Size"]);
+    expect(aspects.Size).toBeUndefined();
+    expect(aspects["Waist Size"]).toEqual(["32"]);
   });
 });
 

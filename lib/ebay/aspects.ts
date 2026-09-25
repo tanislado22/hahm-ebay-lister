@@ -124,6 +124,128 @@ export function sanitizeNumericAspects(
   return dropped;
 }
 
+function isSizeAspectName(name: string): boolean {
+  const n = name.toLowerCase();
+  return n.includes("size") && !n.includes("size type");
+}
+
+// The structured Size specific (not Waist Size, Ring Size, Image Size, …).
+// eBay rejects anything outside the category's list with error 21920468.
+function isPrimarySizeAspect(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return (
+    n === "size" ||
+    n === "us size" ||
+    n === "uk size" ||
+    n === "eu size" ||
+    n === "shoe size" ||
+    n === "size (women's)" ||
+    n === "size (men's)"
+  );
+}
+
+// "7/8" is a sleeve length or a measurement scrap, not a garment size.
+// Kids categories that really allow "7/8" keep it only when it is on eBay's list.
+const BARE_FRACTION_SIZE_RE = /^\d{1,2}\s*\/\s*\d{1,2}$/;
+
+const SIZE_WORD_ALIASES: Record<string, string[]> = {
+  "extra small": ["XS"],
+  "x-small": ["XS"],
+  xsmall: ["XS"],
+  small: ["S"],
+  medium: ["M"],
+  med: ["M"],
+  large: ["L"],
+  "extra large": ["XL"],
+  "x-large": ["XL"],
+  xlarge: ["XL"],
+  "xx-large": ["XXL"],
+  xxlarge: ["XXL"],
+  "2xl": ["XXL", "2XL"],
+  "3xl": ["XXXL", "3XL"],
+  "one size": ["One Size"],
+};
+
+function sizeCandidates(raw: string): string[] {
+  const t = raw.trim().replace(/\s+/g, " ");
+  const out = [t];
+  const stripped = t.replace(/^(?:us|uk|eu|women'?s|men'?s|size)\s+/i, "").trim();
+  if (stripped && stripped !== t) out.push(stripped);
+  const collapsed = t.replace(/\s*[x×]\s*/gi, "x");
+  if (collapsed !== t) out.push(collapsed);
+  const aliases = SIZE_WORD_ALIASES[t.toLowerCase()];
+  if (aliases) out.push(...aliases);
+  return out;
+}
+
+function matchSizeValue(raw: string, allowed: string[]): string | null {
+  for (const candidate of sizeCandidates(raw)) {
+    const matched = matchAllowed(candidate, allowed);
+    if (matched) return matched;
+  }
+  return null;
+}
+
+// Keep Size only when it is legal for THIS category. A value such as "7/8"
+// pulled from a sleeve tag, a measurement, or another garment's specifics is
+// dropped instead of being sent — that is what eBay rejects as 21920468.
+// Size aspects the category does not define (Ring Size on a blouse, Shoe Size
+// on a dress) are removed so one item cannot inherit another's size fields.
+// Returns the aspect names that were removed.
+export function sanitizeCategorySizes(
+  aspects: Record<string, string[]>,
+  meta: AspectMeta[]
+): string[] {
+  const dropped: string[] = [];
+  const byName = new Map(meta.map((a) => [a.name.toLowerCase(), a]));
+
+  for (const key of Object.keys(aspects)) {
+    if (!isSizeAspectName(key)) continue;
+    const aspectMeta = byName.get(key.toLowerCase());
+
+    if (meta.length && !aspectMeta) {
+      delete aspects[key];
+      dropped.push(key);
+      continue;
+    }
+
+    const current = (aspects[key] || []).map((v) => String(v || "").trim()).filter(Boolean);
+    if (!current.length) {
+      delete aspects[key];
+      continue;
+    }
+
+    const allowed = aspectMeta?.values ?? [];
+    const primary = isPrimarySizeAspect(key);
+    const selectionOnly = aspectMeta?.mode === "SELECTION_ONLY";
+
+    if (allowed.length && (primary || selectionOnly)) {
+      const matched: string[] = [];
+      for (const v of current) {
+        const m = matchSizeValue(v, allowed);
+        if (m && !matched.includes(m)) matched.push(m);
+      }
+      if (matched.length) aspects[key] = matched;
+      else {
+        delete aspects[key];
+        dropped.push(key);
+      }
+      continue;
+    }
+
+    if (primary) {
+      const kept = current.filter((v) => !BARE_FRACTION_SIZE_RE.test(v));
+      if (kept.length) aspects[key] = kept;
+      else {
+        delete aspects[key];
+        dropped.push(key);
+      }
+    }
+  }
+
+  return dropped;
+}
+
 // Match a value against eBay's allowed list, case-insensitively and tolerating
 // singular/plural (so "Unisex Adult" resolves to the valid "Unisex Adults").
 // Returns the canonical allowed value, or null if there's no match.

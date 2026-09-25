@@ -29,7 +29,10 @@ import {
 
   acceptedConditionIds,
 
+  categoryAspects,
+
 } from "@/lib/ebay/taxonomy";
+import { sanitizeCategorySizes } from "@/lib/ebay/aspects";
 const EBAY_FEED_BASE = "https://api.ebay.com/sell/feed/v1";
 async function createDraftFeedTask(accessToken: string) {
 
@@ -283,6 +286,20 @@ const conditionId =
 
   )[0] ?? 3000;
 const aspects = buildAspects(listing, catKey);
+let sizeMeta: Awaited<ReturnType<typeof categoryAspects>> = [];
+if (categoryId) {
+  try {
+    sizeMeta = await categoryAspects(categoryId);
+  } catch {
+    sizeMeta = [];
+  }
+}
+const droppedSizes = sanitizeCategorySizes(aspects, sizeMeta);
+if (droppedSizes.length) {
+  console.warn(
+    `[ebay/draft] dropped size value(s) that are not valid for category ${categoryId || catKey}: ${droppedSizes.join(", ")}`
+  );
+}
 
 // Seller Hub / File Exchange maps item specifics from `C:` columns. The
 // generic "Attribute Name N" pairs often never land in Size/Color/Gender.
