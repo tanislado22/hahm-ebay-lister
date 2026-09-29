@@ -17,6 +17,7 @@ import {
   type AspectMeta,
 } from "./taxonomy";
 import {
+  acceptedLabelSize,
   clipAspectValue,
   cleanAspectValue,
   splitAspectValues,
@@ -29,7 +30,7 @@ import {
 import { fillRecommendedAspects } from "./aspectFill";
 import { extractProductIdentifiers, hasCatalogIdentifier, realBrand } from "./identifiers";
 import { parseMeasurements } from "@/lib/measurements";
-import { APPAREL_CATEGORIES, PANTS_CATEGORIES } from "@/lib/categories";
+import { APPAREL_CATEGORIES, PANTS_CATEGORIES, SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
 import type { ListingResult } from "@/lib/types";
 
 // ── Constants (from the Python script) ───────────────────────────────────────
@@ -446,6 +447,90 @@ function sizeFromListing(listing: ListingResult, aspects: Record<string, string[
     if (cleaned) return cleaned;
   }
   return "";
+}
+
+// "32x30", "32 x 30", "32W x 30L", and "W32 L30" are the same jeans size.
+function waistInseamKey(raw: string): string | null {
+  const t = raw.trim().toLowerCase().replace(/×/g, "x").replace(/\s+/g, "");
+  const patterns = [/^(\d{2})w?x(\d{2})l?$/, /^(\d{2})w\/(\d{2})l?$/, /^w(\d{2})(?:x|\/)?l(\d{2})$/];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m) return `${m[1]}x${m[2]}`;
+  }
+  return null;
+}
+
+function isStructuredSizeName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return (
+    n === "size" ||
+    n === "us size" ||
+    n === "uk size" ||
+    n === "eu size" ||
+    n === "shoe size" ||
+    n === "us shoe size" ||
+    n === "size (women's)" ||
+    n === "size (men's)" ||
+    /^us shoe size\b/.test(n)
+  );
+}
+
+function sizeAspectForCategory(meta: AspectMeta[]): AspectMeta | undefined {
+  const exact = meta.find((a) => a.name.trim().toLowerCase() === "size");
+  if (exact) return exact;
+  return meta.find((a) => a.required && isStructuredSizeName(a.name));
+}
+
+// eBay's spelling when the category list contains this size; otherwise null.
+function canonicalListingSize(aspect: AspectMeta, raw: string): string | null {
+  const labeled = acceptedLabelSize([{ ...aspect, name: "Size" }], raw);
+  if (labeled) return labeled;
+  const want = waistInseamKey(raw);
+  if (!want) return null;
+  for (const value of aspect.values) {
+    if (waistInseamKey(value) === want) return value;
+  }
+  return null;
+}
+
+// sanitizeCategorySizes removes Size when the value is not an exact allowed
+// string. Omitting it is what AddFixedPriceItem rejects as 21919303 ("The
+// item specific Size is missing") even though ItemGroup.size is filled.
+// Put that field back on the category's size aspect. A list match uses eBay's
+// own spelling; a waist×inseam size such as 32x30 is still sent when the
+// category requires Size and no equivalent is listed.
+export function ensureListingSizeSpecific(
+  aspects: Record<string, string[]>,
+  meta: AspectMeta[],
+  listing: ListingResult,
+  catKey: string
+): void {
+  const raw = cleanSize(listing.size);
+  if (!raw) return;
+
+  const target = sizeAspectForCategory(meta);
+  if (!target) return;
+  const nameIsSize = target.name.trim().toLowerCase() === "size";
+  const clothing = SIZE_REQUIRED_CATEGORIES.has(catKey);
+  if (!target.required && !(clothing && nameIsSize)) return;
+
+  const existingKey = Object.keys(aspects).find(
+    (k) => k.toLowerCase() === target.name.toLowerCase()
+  );
+  if (existingKey && (aspects[existingKey] || []).some((v) => String(v || "").trim())) return;
+
+  const canonical = canonicalListingSize(target, raw);
+  // "7/8" stays dropped unless this category's Size list actually allows it.
+  if (!canonical && /^\d{1,2}\s*\/\s*\d{1,2}$/.test(raw)) return;
+  const freeText = target.mode !== "SELECTION_ONLY";
+  // A jeans size such as 32x30 belongs on Size, not on a shoe-size aspect.
+  const waistInseam = waistInseamKey(raw) !== null && !/shoe size/.test(target.name.toLowerCase());
+  const value = canonical || (freeText || waistInseam ? raw : "");
+  const clipped = clipAspectValue(value, target.maxLength);
+  if (!clipped) return;
+
+  if (existingKey && existingKey !== target.name) delete aspects[existingKey];
+  aspects[target.name] = [clipped];
 }
 
 function applySizeType(aspects: Record<string, string[]>, size: string): void {
@@ -1432,6 +1517,7 @@ export async function publishListing(
       `[ebay/publish] sku=${sku} dropped size value(s) that are not valid for category ${catId}: ${droppedSizes.join(", ")}`
     );
   }
+  ensureListingSizeSpecific(aspects, aspectMeta, listing, catKey);
   const condCandidates = conditionCandidates(listing.condition, acceptedConds, catKey);
   const condition = condCandidates[0] || "USED_EXCELLENT";
   console.log(
@@ -1662,6 +1748,11 @@ const tradingXml = `<?xml version="1.0" encoding="utf-8"?>
       "inventory item",
       sku
     );
+  // Temporary: confirm the ItemSpecifics payload for a publish (e.g. SKU 2801).
+  console.log(
+    `[ebay/publish] sku=${sku} listing.size=${JSON.stringify(listing.size ?? "")} ItemSpecifics=${JSON.stringify(aspects)}`
+  );
+
 const useTradingApi = process.env.EBAY_PUBLISH_MODE === "trading";
 
 if (useTradingApi) {

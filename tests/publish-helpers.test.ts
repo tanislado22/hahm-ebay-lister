@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { buildAspects, sanitizeEbayImageUrls, validListingPrice } from "@/lib/ebay/publish";
+import {
+  buildAspects,
+  ensureListingSizeSpecific,
+  sanitizeEbayImageUrls,
+  validListingPrice,
+} from "@/lib/ebay/publish";
 import { prioritizeAspects } from "@/lib/ebay/aspectFill";
 import type { AspectMeta } from "@/lib/ebay/taxonomy";
 import type { ListingResult } from "@/lib/types";
@@ -79,6 +84,103 @@ describe("buildAspects", () => {
     expect(women.Gender).toEqual(["Women"]);
     const men = buildAspects(listing({ size: "32x30", color: "Indigo" }), "mens_jeans");
     expect(men.Gender).toEqual(["Men"]);
+  });
+});
+
+describe("ensureListingSizeSpecific", () => {
+  const listing = (size: string): ListingResult => ({
+    title: "Express Jeans",
+    description: "d",
+    size,
+    category: "mens_jeans",
+  });
+  const sizeAspect = (over: Partial<AspectMeta> = {}): AspectMeta => ({
+    name: "Size",
+    required: true,
+    usage: "REQUIRED",
+    mode: "SELECTION_ONLY",
+    cardinality: "SINGLE",
+    values: [],
+    ...over,
+  });
+
+  test("sends ItemGroup size when the category requires Size and the value was dropped", () => {
+    const aspects: Record<string, string[]> = { Brand: ["Express"] };
+    ensureListingSizeSpecific(
+      aspects,
+      [sizeAspect({ values: ["28", "30", "32", "34"] })],
+      listing("32x30"),
+      "mens_jeans"
+    );
+    expect(aspects.Size).toEqual(["32x30"]);
+    expect(aspects.Brand).toEqual(["Express"]);
+  });
+
+  test("uses eBay's spelling when the allowed list has the same waist and inseam", () => {
+    const aspects: Record<string, string[]> = {};
+    ensureListingSizeSpecific(
+      aspects,
+      [sizeAspect({ values: ["32 x 30", "32 x 32", "34 x 30"] })],
+      listing("32x30"),
+      "mens_jeans"
+    );
+    expect(aspects.Size).toEqual(["32 x 30"]);
+  });
+
+  test("maps 32x30 onto a labeled waist/inseam value", () => {
+    const aspects: Record<string, string[]> = {};
+    ensureListingSizeSpecific(
+      aspects,
+      [sizeAspect({ values: ["30W x 30L", "32W x 30L", "32W x 32L"] })],
+      listing("32x30"),
+      "mens_jeans"
+    );
+    expect(aspects.Size).toEqual(["32W x 30L"]);
+  });
+
+  test("does not replace a Size that already survived validation", () => {
+    const aspects: Record<string, string[]> = { Size: ["L"] };
+    ensureListingSizeSpecific(
+      aspects,
+      [sizeAspect({ values: ["S", "M", "L"] })],
+      listing("L"),
+      "mens_top"
+    );
+    expect(aspects.Size).toEqual(["L"]);
+  });
+
+  test("does not restore a fraction size the category does not allow", () => {
+    const aspects: Record<string, string[]> = {};
+    ensureListingSizeSpecific(
+      aspects,
+      [sizeAspect({ values: ["XS", "S", "M", "L"] })],
+      listing("7/8"),
+      "womens_top"
+    );
+    expect(aspects.Size).toBeUndefined();
+  });
+
+  test("maps the size field onto a different required size aspect name", () => {
+    const aspects: Record<string, string[]> = {};
+    ensureListingSizeSpecific(
+      aspects,
+      [
+        sizeAspect({
+          name: "US Shoe Size",
+          values: ["9", "10", "10.5", "11"],
+        }),
+      ],
+      listing("10.5"),
+      "mens_shoes"
+    );
+    expect(aspects["US Shoe Size"]).toEqual(["10.5"]);
+    expect(aspects.Size).toBeUndefined();
+  });
+
+  test("leaves non-clothing categories without a Size aspect unchanged", () => {
+    const aspects: Record<string, string[]> = { Brand: ["Kodak"] };
+    ensureListingSizeSpecific(aspects, [], listing("32x30"), "camera");
+    expect(aspects).toEqual({ Brand: ["Kodak"] });
   });
 });
 
