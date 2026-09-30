@@ -26,6 +26,7 @@ import {
   enforceCardinality,
   sanitizeNumericAspects,
   sanitizeCategorySizes,
+  parseWaistInseam,
 } from "./aspects";
 import { fillRecommendedAspects } from "./aspectFill";
 import { extractProductIdentifiers, hasCatalogIdentifier, realBrand } from "./identifiers";
@@ -438,99 +439,191 @@ function genderFromListing(
 function sizeFromListing(listing: ListingResult, aspects: Record<string, string[]>): string {
   const fromField = cleanSize(listing.size);
   if (fromField) return fromField;
-  if (aspects.Size?.[0]) return cleanSize(aspects.Size[0]);
+  if (aspects.Size?.[0]) {
+    const cleaned = cleanSize(aspects.Size[0]);
+    if (cleaned) return cleaned;
+  }
   const specs = listing.item_specifics || {};
   for (const [k, v] of Object.entries(specs)) {
-    const n = k.trim().toLowerCase();
-    if (n !== "size" && n !== "us size" && n !== "size (women's)" && n !== "size (men's)") continue;
+    if (k.trim().toLowerCase() !== "size") continue;
     const cleaned = cleanSize(v);
+    if (cleaned) return cleaned;
+  }
+  for (const [k, v] of Object.entries(specs)) {
+    if (!isStructuredSizeName(k)) continue;
+    const cleaned = cleanSize(v);
+    if (cleaned) return cleaned;
+  }
+  for (const [k, vals] of Object.entries(aspects)) {
+    if (!isStructuredSizeName(k)) continue;
+    const cleaned = cleanSize(vals?.[0]);
     if (cleaned) return cleaned;
   }
   return "";
 }
 
-// "32x30", "32 x 30", "32W x 30L", and "W32 L30" are the same jeans size.
 function waistInseamKey(raw: string): string | null {
-  const t = raw.trim().toLowerCase().replace(/×/g, "x").replace(/\s+/g, "");
-  const patterns = [/^(\d{2})w?x(\d{2})l?$/, /^(\d{2})w\/(\d{2})l?$/, /^w(\d{2})(?:x|\/)?l(\d{2})$/];
-  for (const re of patterns) {
-    const m = t.match(re);
-    if (m) return `${m[1]}x${m[2]}`;
-  }
-  return null;
+  const parts = parseWaistInseam(raw);
+  return parts ? `${parts.waist}x${parts.inseam}` : null;
 }
 
+// The garment/shoe size field for this category — not Waist Size, Ring Size,
+// Image Size, or Size Type. Includes "US Shoe Size (Men's)" and "Size (Women's)".
 function isStructuredSizeName(name: string): boolean {
-  const n = name.trim().toLowerCase();
+  const n = name.trim().toLowerCase().replace(/’/g, "'");
+  if (n.includes("size type")) return false;
+  if (/\bshoe size\b/.test(n)) return true;
+  if (n === "size" || n === "us size" || n === "uk size" || n === "eu size") return true;
+  return /^size\s*\(/.test(n);
+}
+
+function looksLikeShoeSize(raw: string): boolean {
+  if (waistInseamKey(raw)) return false;
+  const t = raw.trim();
+  if (/[a-z]/i.test(t) && !/^(?:us|uk|eu|eur|women|men|ladies|girls?|boys?|kids?|unisex|size|shoe|sz)\b/i.test(t)) {
+    return false;
+  }
+  return /\d/.test(t);
+}
+
+function preferStructuredSize(aspects: AspectMeta[], raw: string): AspectMeta {
+  const name = (a: AspectMeta) => a.name.trim().toLowerCase();
+  if (looksLikeShoeSize(raw)) {
+    const us = aspects.find((a) => /^us shoe size\b/.test(name(a)));
+    if (us) return us;
+    const shoe = aspects.find((a) => /\bshoe size\b/.test(name(a)));
+    if (shoe) return shoe;
+  }
   return (
-    n === "size" ||
-    n === "us size" ||
-    n === "uk size" ||
-    n === "eu size" ||
-    n === "shoe size" ||
-    n === "us shoe size" ||
-    n === "size (women's)" ||
-    n === "size (men's)" ||
-    /^us shoe size\b/.test(n)
+    aspects.find((a) => name(a) === "size") ||
+    aspects.find((a) => /^size\b/.test(name(a))) ||
+    aspects[0]
   );
 }
 
-function sizeAspectForCategory(meta: AspectMeta[]): AspectMeta | undefined {
-  const exact = meta.find((a) => a.name.trim().toLowerCase() === "size");
-  if (exact) return exact;
-  return meta.find((a) => a.required && isStructuredSizeName(a.name));
+// Prefer the required size aspect whose allowed list actually accepts this
+// value. A generic optional "Size" must not hide "US Shoe Size (Men's)".
+function sizeAspectForCategory(meta: AspectMeta[], raw: string): AspectMeta | undefined {
+  const structured = meta.filter((a) => isStructuredSizeName(a.name));
+  if (!structured.length) return undefined;
+  const required = structured.filter((a) => a.required);
+  const accepts = (a: AspectMeta) => Boolean(canonicalListingSize(a, raw));
+  const matchingRequired = required.filter(accepts);
+  if (matchingRequired.length) return preferStructuredSize(matchingRequired, raw);
+  const matching = structured.filter(accepts);
+  if (matching.length) return preferStructuredSize(matching, raw);
+  if (required.length) return preferStructuredSize(required, raw);
+  return preferStructuredSize(structured, raw);
 }
 
-// eBay's spelling when the category list contains this size; otherwise null.
+// eBay's spelling when this aspect's allowed list contains the size.
+function listedSize(aspect: AspectMeta, raw: string): string | null {
+  return acceptedLabelSize([{ ...aspect, name: "Size" }], raw);
+}
+
+function sizeRegion(name: string): string {
+  const n = name.toLowerCase();
+  if (/\buk\b/.test(n)) return "uk";
+  if (/\b(?:eu|eur)\b/.test(n)) return "eu";
+  if (/\bus\b/.test(n)) return "us";
+  return "";
+}
+
 function canonicalListingSize(aspect: AspectMeta, raw: string): string | null {
-  const labeled = acceptedLabelSize([{ ...aspect, name: "Size" }], raw);
+  const labeled = listedSize(aspect, raw);
   if (labeled) return labeled;
   const want = waistInseamKey(raw);
-  if (!want) return null;
-  for (const value of aspect.values) {
-    if (waistInseamKey(value) === want) return value;
-  }
-  return null;
+  if (!want || /shoe size/.test(aspect.name.toLowerCase())) return null;
+  const waist = listedSize(aspect, want.split("x")[0]);
+  return waist;
 }
 
-// sanitizeCategorySizes removes Size when the value is not an exact allowed
-// string. Omitting it is what AddFixedPriceItem rejects as 21919303 ("The
-// item specific Size is missing") even though ItemGroup.size is filled.
-// Put that field back on the category's size aspect. A list match uses eBay's
-// own spelling; a waist×inseam size such as 32x30 is still sent when the
-// category requires Size and no equivalent is listed.
+// When Size only accepts the waist ("32") and the tag says "32x30", keep the
+// inseam on the category's Inseam aspect instead of dropping it.
+function placeSplitInseam(
+  aspects: Record<string, string[]>,
+  meta: AspectMeta[],
+  raw: string,
+  placed: string
+): void {
+  const want = waistInseamKey(raw);
+  if (!want || waistInseamKey(placed)) return;
+  const [waist, inseam] = want.split("x");
+  if (placed.replace(/\D/g, "") !== waist) return;
+  const aspect = meta.find((a) => a.name.trim().toLowerCase() === "inseam");
+  if (!aspect) return;
+  const key = Object.keys(aspects).find((k) => k.toLowerCase() === aspect.name.toLowerCase());
+  if (key && (aspects[key] || []).some((v) => String(v || "").trim())) return;
+  const matched = listedSize(aspect, inseam) || (aspect.mode !== "SELECTION_ONLY" ? inseam : "");
+  const clipped = clipAspectValue(matched, aspect.maxLength);
+  if (!clipped) return;
+  aspects[aspect.name] = [clipped];
+}
+
+// sanitizeCategorySizes removes Size when the value is not an allowed string.
+// Omitting it is what AddFixedPriceItem rejects as 21919303 ("The item specific
+// Size is missing") even though the listing size is filled. Sending that raw
+// value anyway is what eBay rejects as 21920468 when it is not in the category
+// list. Put the size on the aspect this category actually requires, using
+// eBay's own spelling. A waist×inseam tag uses the combined value when the
+// list has one, otherwise the listed waist.
 export function ensureListingSizeSpecific(
   aspects: Record<string, string[]>,
   meta: AspectMeta[],
   listing: ListingResult,
   catKey: string
 ): void {
-  const raw = cleanSize(listing.size);
+  const raw = sizeFromListing(listing, aspects);
   if (!raw) return;
 
-  const target = sizeAspectForCategory(meta);
+  const target = sizeAspectForCategory(meta, raw);
   if (!target) return;
-  const nameIsSize = target.name.trim().toLowerCase() === "size";
   const clothing = SIZE_REQUIRED_CATEGORIES.has(catKey);
-  if (!target.required && !(clothing && nameIsSize)) return;
+  if (!target.required && !clothing) return;
 
   const existingKey = Object.keys(aspects).find(
     (k) => k.toLowerCase() === target.name.toLowerCase()
   );
-  if (existingKey && (aspects[existingKey] || []).some((v) => String(v || "").trim())) return;
+  if (existingKey && (aspects[existingKey] || []).some((v) => String(v || "").trim())) {
+    fillOtherRequiredSizes(aspects, meta, raw, target.name);
+    placeSplitInseam(aspects, meta, raw, String(aspects[existingKey][0] || ""));
+    return;
+  }
 
   const canonical = canonicalListingSize(target, raw);
-  // "7/8" stays dropped unless this category's Size list actually allows it.
+  // "7/8" stays dropped unless this category's size list actually allows it.
   if (!canonical && /^\d{1,2}\s*\/\s*\d{1,2}$/.test(raw)) return;
-  const freeText = target.mode !== "SELECTION_ONLY";
-  // A jeans size such as 32x30 belongs on Size, not on a shoe-size aspect.
-  const waistInseam = waistInseamKey(raw) !== null && !/shoe size/.test(target.name.toLowerCase());
-  const value = canonical || (freeText || waistInseam ? raw : "");
+  const value = canonical || (target.mode !== "SELECTION_ONLY" ? raw : "");
   const clipped = clipAspectValue(value, target.maxLength);
   if (!clipped) return;
 
   if (existingKey && existingKey !== target.name) delete aspects[existingKey];
   aspects[target.name] = [clipped];
+  fillOtherRequiredSizes(aspects, meta, raw, target.name);
+  placeSplitInseam(aspects, meta, raw, clipped);
+}
+
+// A category can require more than one size aspect (Size and US Shoe Size).
+// Fill every required one this value legally matches. Never copy a US size
+// onto UK/EU — those scales are not interchangeable.
+function fillOtherRequiredSizes(
+  aspects: Record<string, string[]>,
+  meta: AspectMeta[],
+  raw: string,
+  placedName: string
+): void {
+  const placedRegion = sizeRegion(placedName);
+  for (const aspect of meta) {
+    if (!aspect.required || !isStructuredSizeName(aspect.name)) continue;
+    if (aspect.name.toLowerCase() === placedName.toLowerCase()) continue;
+    const region = sizeRegion(aspect.name);
+    if (placedRegion && region && placedRegion !== region) continue;
+    const key = Object.keys(aspects).find((k) => k.toLowerCase() === aspect.name.toLowerCase());
+    if (key && (aspects[key] || []).some((v) => String(v || "").trim())) continue;
+    const value = canonicalListingSize(aspect, raw);
+    const clipped = value ? clipAspectValue(value, aspect.maxLength) : "";
+    if (clipped) aspects[aspect.name] = [clipped];
+  }
 }
 
 function applySizeType(aspects: Record<string, string[]>, size: string): void {
@@ -697,7 +790,9 @@ if (!a.required && !current.length) continue;
       // legitimately carry several).
       const valid: string[] = [];
       for (const v of current) {
-        const m = matchAllowed(v, a.values);
+        const m = isSizeAspect(a.name)
+          ? acceptedLabelSize([{ ...a, name: "Size" }], v)
+          : matchAllowed(v, a.values);
         if (m && !valid.includes(m)) valid.push(m);
       }
       if (valid.length) {

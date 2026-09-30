@@ -22,6 +22,7 @@ import {
   conditionIdsForGrade,
   buildAspects,
 defaultPackageWeightAndSize,
+  ensureListingSizeSpecific,
 } from "@/lib/ebay/publish";
 import {
 
@@ -360,9 +361,7 @@ async function buildDraftCsv(body: any, accessToken: string) {
       `[ebay/draft] dropped size value(s) that are not valid for category ${categoryId || catKey}: ${droppedSizes.join(", ")}`
     );
   }
-  if (fractionSize && !aspects.Size?.some((v) => String(v || "").trim())) {
-    aspects.Size = [labelSize.replace(/\s*\/\s*/, "/")];
-  }
+  ensureListingSizeSpecific(aspects, sizeMeta, listing, catKey);
 
 // Seller Hub / File Exchange maps item specifics from `C:` columns. The
 // generic "Attribute Name N" pairs often never land in Size/Color/Gender.

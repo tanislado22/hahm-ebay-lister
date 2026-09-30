@@ -187,6 +187,42 @@ describe("sanitizeCategorySizes", () => {
     expect(aspects.Size).toEqual(["L"]);
   });
 
+  test("maps a prefixed word size onto the category's standard value", () => {
+    const aspects: Record<string, string[]> = { Size: ["Women's Medium"], Color: ["Navy"] };
+    expect(sanitizeCategorySizes(aspects, womensTop)).toEqual([]);
+    expect(aspects.Size).toEqual(["M"]);
+    expect(aspects.Color).toEqual(["Navy"]);
+  });
+
+  test("maps 0XL onto the closest listed plus or alpha size", () => {
+    const withZeroX = [
+      meta({ name: "Size", mode: "SELECTION_ONLY", values: ["L", "XL", "0X", "1X"] }),
+    ];
+    const zeroX: Record<string, string[]> = { Size: ["0XL"] };
+    expect(sanitizeCategorySizes(zeroX, withZeroX)).toEqual([]);
+    expect(zeroX.Size).toEqual(["0X"]);
+
+    const alphaOnly = [
+      meta({ name: "Size", mode: "SELECTION_ONLY", values: ["S", "M", "L", "XL"] }),
+    ];
+    const alpha: Record<string, string[]> = { Size: ["0XL"] };
+    expect(sanitizeCategorySizes(alpha, alphaOnly)).toEqual([]);
+    expect(alpha.Size).toEqual(["XL"]);
+  });
+
+  test("maps a half size onto eBay's decimal shoe size", () => {
+    const shoes = [
+      meta({
+        name: "US Shoe Size",
+        mode: "SELECTION_ONLY",
+        values: ["9", "10", "10.5", "11"],
+      }),
+    ];
+    const aspects: Record<string, string[]> = { "US Shoe Size": ["10 1/2"] };
+    expect(sanitizeCategorySizes(aspects, shoes)).toEqual([]);
+    expect(aspects["US Shoe Size"]).toEqual(["10.5"]);
+  });
+
   test("keeps 7/8 only when this category lists it", () => {
     const kids = [
       meta({ name: "Size", mode: "SELECTION_ONLY", values: ["6", "7/8", "10"] }),

@@ -5,6 +5,7 @@ import {
   sanitizeEbayImageUrls,
   validListingPrice,
 } from "@/lib/ebay/publish";
+import { sanitizeCategorySizes } from "@/lib/ebay/aspects";
 import { prioritizeAspects } from "@/lib/ebay/aspectFill";
 import type { AspectMeta } from "@/lib/ebay/taxonomy";
 import type { ListingResult } from "@/lib/types";
@@ -104,16 +105,32 @@ describe("ensureListingSizeSpecific", () => {
     ...over,
   });
 
-  test("sends ItemGroup size when the category requires Size and the value was dropped", () => {
+  test("uses the listed waist when Size does not allow the combined jeans size", () => {
     const aspects: Record<string, string[]> = { Brand: ["Express"] };
     ensureListingSizeSpecific(
       aspects,
-      [sizeAspect({ values: ["28", "30", "32", "34"] })],
+      [
+        sizeAspect({ values: ["28", "30", "32", "34"] }),
+        sizeAspect({ name: "Inseam", required: false, mode: "FREE_TEXT", values: [] }),
+      ],
       listing("32x30"),
       "mens_jeans"
     );
-    expect(aspects.Size).toEqual(["32x30"]);
+    expect(aspects.Size).toEqual(["32"]);
+    expect(aspects.Inseam).toEqual(["30"]);
     expect(aspects.Brand).toEqual(["Express"]);
+  });
+
+  test("does not send a jeans size a letter-size category does not allow", () => {
+    const aspects: Record<string, string[]> = { Color: ["Black"] };
+    ensureListingSizeSpecific(
+      aspects,
+      [sizeAspect({ values: ["XS", "S", "M", "L"] })],
+      listing("32x30"),
+      "womens_top"
+    );
+    expect(aspects.Size).toBeUndefined();
+    expect(aspects.Color).toEqual(["Black"]);
   });
 
   test("uses eBay's spelling when the allowed list has the same waist and inseam", () => {
@@ -175,6 +192,23 @@ describe("ensureListingSizeSpecific", () => {
     );
     expect(aspects["US Shoe Size"]).toEqual(["10.5"]);
     expect(aspects.Size).toBeUndefined();
+  });
+
+  test("puts a half size on the required US Shoe Size field for that category", () => {
+    const aspects: Record<string, string[]> = { Size: ["10 1/2"], Color: ["White"] };
+    const meta = [
+      sizeAspect({ name: "Size", required: false, values: ["S", "M", "L"] }),
+      sizeAspect({
+        name: "US Shoe Size (Men's)",
+        required: true,
+        values: ["9", "10", "10.5", "11"],
+      }),
+    ];
+    sanitizeCategorySizes(aspects, meta);
+    ensureListingSizeSpecific(aspects, meta, listing("10 1/2"), "mens_shoes");
+    expect(aspects["US Shoe Size (Men's)"]).toEqual(["10.5"]);
+    expect(aspects.Size).toBeUndefined();
+    expect(aspects.Color).toEqual(["White"]);
   });
 
   test("leaves non-clothing categories without a Size aspect unchanged", () => {

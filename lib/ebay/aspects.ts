@@ -149,39 +149,125 @@ function isPrimarySizeAspect(name: string): boolean {
 const BARE_FRACTION_SIZE_RE = /^\d{1,2}\s*\/\s*\d{1,2}$/;
 
 const SIZE_WORD_ALIASES: Record<string, string[]> = {
-  "extra small": ["XS"],
-  "x-small": ["XS"],
+  "extra small": ["XS", "X-Small"],
+  "x-small": ["XS", "X-Small"],
   xsmall: ["XS"],
+  xs: ["XS", "X-Small", "Extra Small"],
   small: ["S"],
   medium: ["M"],
   med: ["M"],
   large: ["L"],
-  "extra large": ["XL"],
-  "x-large": ["XL"],
+  "extra large": ["XL", "X-Large"],
+  "x-large": ["XL", "X-Large"],
   xlarge: ["XL"],
-  "xx-large": ["XXL"],
-  xxlarge: ["XXL"],
-  "2xl": ["XXL", "2XL"],
-  "3xl": ["XXXL", "3XL"],
+  xl: ["XL", "X-Large", "Extra Large"],
+  "xx-large": ["XXL", "2XL"],
+  xxlarge: ["XXL", "2XL"],
+  xxl: ["XXL", "2XL", "2X"],
+  "2xl": ["XXL", "2XL", "2X"],
+  "2x": ["2X", "2XL", "XXL"],
+  "3xl": ["XXXL", "3XL", "3X"],
+  xxxl: ["XXXL", "3XL", "3X"],
+  "3x": ["3X", "3XL", "XXXL"],
+  "4xl": ["4XL", "4X"],
+  "4x": ["4X", "4XL"],
+  "5xl": ["5XL", "5X"],
+  "0xl": ["0X", "XL", "1X"],
+  "0x": ["0X", "0XL", "XL"],
+  "1xl": ["1X", "1XL", "XL"],
+  "1x": ["1X", "1XL"],
+  xxs: ["XXS", "2XS"],
+  "2xs": ["2XS", "XXS"],
   "one size": ["One Size"],
+  os: ["One Size"],
+  osfa: ["One Size"],
+  "one size fits all": ["One Size"],
+  "one size fits most": ["One Size"],
 };
+
+// "32x30", "32 x 30", "32W x 30L", and "W32 L30" are the same jeans size.
+export function parseWaistInseam(raw: string): { waist: string; inseam: string } | null {
+  const t = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/×/g, "x")
+    .replace(/\s+/g, "");
+  const patterns = [/^(\d{2})w?x(\d{2})l?$/, /^(\d{2})w\/(\d{2})l?$/, /^w(\d{2})(?:x|\/)?l(\d{2})$/];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m) return { waist: m[1], inseam: m[2] };
+  }
+  return null;
+}
+
+const SIZE_PREFIX_RE =
+  /^(?:us|uk|eu|eur|usa|women'?s|men'?s|womens|mens|ladies'?|girls?|boys?|kids?|youth|unisex|shoe|sz|size)\s*[:\-]?\s+/i;
+
+function stripSizePrefixes(raw: string): string {
+  let s = raw.trim();
+  for (let i = 0; i < 4; i++) {
+    const next = s.replace(SIZE_PREFIX_RE, "").trim();
+    if (!next || next === s) break;
+    s = next;
+  }
+  return s.replace(/\s+(?:us|uk|eu|eur)$/i, "").trim();
+}
+
+function halfSizeVariants(seed: string): string[] {
+  const out: string[] = [];
+  const dec = seed.match(/^(\d{1,2})\.5$/);
+  if (dec) out.push(`${dec[1]} 1/2`, `${dec[1]}-1/2`, `${dec[1]}½`);
+  const frac = seed.match(/^(\d{1,2})\s*(?:-|\s)?\s*(?:1\s*\/\s*2|½)$/);
+  if (frac) out.push(`${frac[1]}.5`, `${frac[1]} 1/2`, `${frac[1]}-1/2`);
+  return out;
+}
+
+function pushUnique(out: string[], value: string): void {
+  const v = value.trim();
+  if (!v || out.some((x) => x.toLowerCase() === v.toLowerCase())) return;
+  out.push(v);
+}
 
 function sizeCandidates(raw: string): string[] {
   const t = raw.trim().replace(/\s+/g, " ");
-  const out = [t];
-  const stripped = t.replace(/^(?:us|uk|eu|women'?s|men'?s|size)\s+/i, "").trim();
-  if (stripped && stripped !== t) out.push(stripped);
-  const collapsed = t.replace(/\s*[x×]\s*/gi, "x");
-  if (collapsed !== t) out.push(collapsed);
-  const aliases = SIZE_WORD_ALIASES[t.toLowerCase()];
-  if (aliases) out.push(...aliases);
+  const seeds = [t];
+  const stripped = stripSizePrefixes(t);
+  if (stripped && stripped.toLowerCase() !== t.toLowerCase()) seeds.push(stripped);
+  for (const seed of [t, stripped]) {
+    if (!seed) continue;
+    const collapsed = seed.replace(/\s*[x×]\s*/gi, "x");
+    if (collapsed.toLowerCase() !== seed.toLowerCase()) seeds.push(collapsed);
+  }
+  const out: string[] = [];
+  for (const seed of seeds) {
+    pushUnique(out, seed);
+    const aliases = SIZE_WORD_ALIASES[seed.toLowerCase()];
+    if (aliases) for (const alias of aliases) pushUnique(out, alias);
+    for (const half of halfSizeVariants(seed)) pushUnique(out, half);
+  }
   return out;
 }
 
 function matchSizeValue(raw: string, allowed: string[]): string | null {
-  for (const candidate of sizeCandidates(raw)) {
+  if (!allowed.length) return null;
+  const candidates = sizeCandidates(raw);
+  for (const candidate of candidates) {
     const matched = matchAllowed(candidate, allowed);
     if (matched) return matched;
+  }
+  for (const candidate of candidates) {
+    const want = sizeTokenKey(candidate);
+    if (!want) continue;
+    for (const value of allowed) {
+      if (sizeTokenKey(value) === want) return value;
+    }
+  }
+  const parts = parseWaistInseam(raw);
+  if (parts) {
+    for (const value of allowed) {
+      const other = parseWaistInseam(value);
+      if (other && other.waist === parts.waist && other.inseam === parts.inseam) return value;
+    }
   }
   return null;
 }
@@ -310,7 +396,9 @@ export function canonicalizeAspectKeys(
     const vals = aspects[a.name];
     const matched: string[] = [];
     for (const v of vals) {
-      const m = matchAllowed(v, a.values);
+      const m = isSizeAspectName(a.name)
+        ? matchSizeValue(v, a.values)
+        : matchAllowed(v, a.values);
       if (m && !matched.includes(m)) matched.push(m);
     }
     if (matched.length) {
