@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  alignSizeTypeWithSize,
   buildAspects,
   ensureListingSizeSpecific,
   sanitizeEbayImageUrls,
@@ -215,6 +216,112 @@ describe("ensureListingSizeSpecific", () => {
     const aspects: Record<string, string[]> = { Brand: ["Kodak"] };
     ensureListingSizeSpecific(aspects, [], listing("32x30"), "camera");
     expect(aspects).toEqual({ Brand: ["Kodak"] });
+  });
+});
+
+describe("alignSizeTypeWithSize", () => {
+  const listing = (size: string): ListingResult => ({
+    title: "Plus Coat",
+    description: "d",
+    size,
+    category: "womens_coat",
+  });
+  const sizeAspect = (over: Partial<AspectMeta> = {}): AspectMeta => ({
+    name: "Size",
+    required: true,
+    usage: "REQUIRED",
+    mode: "SELECTION_ONLY",
+    cardinality: "SINGLE",
+    values: ["S", "M", "L", "XL", "1X", "3XL", "4XL", "5XL"],
+    ...over,
+  });
+  const typeAspect = (
+    values: string[],
+    dependencies?: AspectMeta["dependencies"]
+  ): AspectMeta => ({
+    name: "Size Type",
+    required: false,
+    usage: "RECOMMENDED",
+    mode: "SELECTION_ONLY",
+    cardinality: "SINGLE",
+    values,
+    dependencies,
+  });
+
+  test("replaces Regular with the Size Type the category allows for 4XL", () => {
+    const aspects: Record<string, string[]> = { Size: ["4XL"], "Size Type": ["Regular"], Color: ["Black"] };
+    const meta = [
+      sizeAspect({
+        dependencies: [
+          { value: "4XL", appliesTo: [{ aspectName: "Size Type", values: ["Plus"] }] },
+          { value: "M", appliesTo: [{ aspectName: "Size Type", values: ["Regular"] }] },
+        ],
+      }),
+      typeAspect(["Regular", "Plus", "Big & Tall"]),
+    ];
+    alignSizeTypeWithSize(aspects, meta, "womens_coat");
+    expect(aspects["Size Type"]).toEqual(["Plus"]);
+    expect(aspects.Size).toEqual(["4XL"]);
+    expect(aspects.Color).toEqual(["Black"]);
+  });
+
+  test("uses Big & Tall when that is the plus type this category allows", () => {
+    const aspects: Record<string, string[]> = { Size: ["4XL"], "Size Type": ["Regular"] };
+    alignSizeTypeWithSize(
+      aspects,
+      [
+        sizeAspect({
+          dependencies: [
+            { value: "4XL", appliesTo: [{ aspectName: "Size Type", values: ["Big & Tall"] }] },
+          ],
+        }),
+        typeAspect(["Regular", "Big & Tall"]),
+      ],
+      "mens_coat"
+    );
+    expect(aspects["Size Type"]).toEqual(["Big & Tall"]);
+    expect(aspects.Size).toEqual(["4XL"]);
+  });
+
+  test("picks a plus Size Type for similar sizes from the category list", () => {
+    const allowed = ["Regular", "Plus"];
+    for (const size of ["3XL", "5XL", "1X", "4X"]) {
+      const aspects: Record<string, string[]> = { Size: [size], "Size Type": ["Regular"] };
+      alignSizeTypeWithSize(aspects, [sizeAspect(), typeAspect(allowed)], "womens_top");
+      expect(aspects["Size Type"]).toEqual(["Plus"]);
+      expect(aspects.Size).toEqual([size]);
+    }
+  });
+
+  test("mens plus sizes prefer Big & Tall when the category allows both", () => {
+    const aspects: Record<string, string[]> = { Size: ["4XL"], "Size Type": ["Regular"] };
+    alignSizeTypeWithSize(
+      aspects,
+      [sizeAspect(), typeAspect(["Regular", "Plus", "Big & Tall"])],
+      "mens_coat"
+    );
+    expect(aspects["Size Type"]).toEqual(["Big & Tall"]);
+  });
+
+  test("keeps Regular for a standard size and for a 32x30 waist split", () => {
+    const regular: Record<string, string[]> = { Size: ["M"], "Size Type": ["Regular"], Brand: ["Gap"] };
+    const meta = [sizeAspect({ values: ["S", "M", "L"] }), typeAspect(["Regular", "Plus"])];
+    alignSizeTypeWithSize(regular, meta, "womens_top");
+    expect(regular["Size Type"]).toEqual(["Regular"]);
+    expect(regular.Brand).toEqual(["Gap"]);
+
+    const jeans: Record<string, string[]> = { "Size Type": ["Regular"], Brand: ["Express"] };
+    const jeansMeta = [
+      sizeAspect({ values: ["28", "30", "32", "34"] }),
+      sizeAspect({ name: "Inseam", required: false, mode: "FREE_TEXT", values: [] }),
+      typeAspect(["Regular", "Plus", "Big & Tall"]),
+    ];
+    ensureListingSizeSpecific(jeans, jeansMeta, listing("32x30"), "mens_jeans");
+    alignSizeTypeWithSize(jeans, jeansMeta, "mens_jeans");
+    expect(jeans.Size).toEqual(["32"]);
+    expect(jeans.Inseam).toEqual(["30"]);
+    expect(jeans["Size Type"]).toEqual(["Regular"]);
+    expect(jeans.Brand).toEqual(["Express"]);
   });
 });
 

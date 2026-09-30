@@ -26,6 +26,14 @@ export type AspectMode = "FREE_TEXT" | "SELECTION_ONLY";
 export type AspectUsage = "REQUIRED" | "RECOMMENDED" | "OPTIONAL";
 export type AspectCardinality = "SINGLE" | "MULTI";
 
+// eBay ties some aspect values to other aspects. A Size of "4XL" is often
+// valid only when Size Type is "Plus" or "Big & Tall", and error 21920468
+// fires when the pair does not match the category's matrix.
+export interface AspectValueDependency {
+  value: string;
+  appliesTo: { aspectName: string; values: string[] }[];
+}
+
 export interface AspectMeta {
   name: string;
   required: boolean;
@@ -41,6 +49,7 @@ export interface AspectMeta {
   dataType?: string; // e.g. "STRING" | "NUMBER" | "DATE"
   format?: string; // e.g. "int32" | "double"
   values: string[]; // eBay's allowed/suggested values (full list for SELECTION_ONLY)
+  dependencies?: AspectValueDependency[];
 }
 
 export interface CategorySuggestion {
@@ -123,6 +132,29 @@ export async function suggestLeafCategory(query: string): Promise<string | null>
   return suggestions[0]?.id ?? null;
 }
 
+function parseAspectValues(rawValues: unknown): {
+  values: string[];
+  dependencies?: AspectValueDependency[];
+} {
+  const values: string[] = [];
+  const dependencies: AspectValueDependency[] = [];
+  for (const raw of (Array.isArray(rawValues) ? rawValues : []) as any[]) {
+    const value = String(raw?.localizedValue ?? "").trim();
+    if (!value) continue;
+    values.push(value);
+    const appliesTo: { aspectName: string; values: string[] }[] = [];
+    for (const constraint of raw?.valueConstraints ?? []) {
+      const aspectName = String(constraint?.applicableForLocalizedAspectName ?? "").trim();
+      const allowed = (constraint?.applicableForLocalizedAspectValues ?? [])
+        .map((v: unknown) => String(v ?? "").trim())
+        .filter(Boolean);
+      if (aspectName && allowed.length) appliesTo.push({ aspectName, values: allowed });
+    }
+    if (appliesTo.length) dependencies.push({ value, appliesTo });
+  }
+  return dependencies.length ? { values, dependencies } : { values };
+}
+
 const aspectCache = new Map<string, AspectMeta[]>();
 
 // Required + optional aspects for a leaf category, with eBay's allowed values.
@@ -155,9 +187,7 @@ export async function categoryAspects(categoryId: string): Promise<AspectMeta[]>
         maxLength: Number.isFinite(maxLen) && maxLen > 0 ? maxLen : undefined,
         dataType: con?.aspectDataType ? String(con.aspectDataType) : undefined,
         format: con?.aspectFormat ? String(con.aspectFormat) : undefined,
-        values: (a?.aspectValues ?? [])
-          .map((v: any) => String(v?.localizedValue ?? "").trim())
-          .filter(Boolean),
+        ...parseAspectValues(a?.aspectValues),
       });
     }
     aspectCache.set(categoryId, out);

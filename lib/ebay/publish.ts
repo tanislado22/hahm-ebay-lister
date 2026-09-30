@@ -626,18 +626,197 @@ function fillOtherRequiredSizes(
   }
 }
 
+// Plus / petite / tall vs regular. XXL and 2XL stay regular unless the
+// category matrix says otherwise — 3XL, 4XL, 1X, 18W and the like do not.
+function sizeTypeFamily(size: string): "plus" | "petite" | "tall" | "regular" {
+  const compact = size.trim().toUpperCase().replace(/\s+/g, "");
+  if (!compact) return "regular";
+  if (compact.includes("PETITE") || /^(?:XXS|XS|S|M|L|XL|\d{1,2})P$/.test(compact)) return "petite";
+  if (/^\d+W$/.test(compact) || /^\d+W[-/]\d+W$/.test(compact)) return "plus";
+  if (compact.includes("TALL") || /^(?:XS|S|M|L|XL|XXL|\dX)T$/.test(compact)) return "tall";
+  const token = compact.replace(/-/g, "");
+  if (/^(?:[0-9]|1[0-2])X$/.test(token)) return "plus";
+  if (/^(?:0|1|[3-9]|1[0-2])XL$/.test(token)) return "plus";
+  if (/^X{3,}L$/.test(token)) return "plus";
+  return "regular";
+}
+
+function sizeTypeMatchesFamily(typeName: string, family: ReturnType<typeof sizeTypeFamily>): boolean {
+  const n = typeName.trim().toLowerCase();
+  if (family === "plus") return /plus/.test(n) || (/big/.test(n) && /tall/.test(n));
+  if (family === "petite") return /petite/.test(n);
+  if (family === "tall") return /tall/.test(n);
+  return /regular/.test(n) || /standard/.test(n);
+}
+
+function snapToAllowedSizeType(wanted: string, allowed: string[]): string | null {
+  const raw = wanted.trim();
+  if (!raw) return null;
+  if (!allowed.length) return raw;
+  const exact = matchAllowed(raw, allowed);
+  if (exact) return exact;
+  const w = raw.toLowerCase();
+  const find = (re: RegExp) => allowed.find((a) => re.test(a));
+  if (/plus/.test(w)) return find(/plus/i) || null;
+  if (/petite/.test(w)) return find(/petite/i) || null;
+  if (/big/.test(w) && /tall/.test(w)) {
+    return allowed.find((a) => /big/i.test(a) && /tall/i.test(a)) || null;
+  }
+  if (/^tall$/.test(w)) return find(/^tall$/i) || null;
+  if (/regular/.test(w)) return find(/regular/i) || null;
+  return null;
+}
+
+function pickPreferredSizeType(
+  options: string[],
+  family: ReturnType<typeof sizeTypeFamily>,
+  catKey: string
+): string | null {
+  if (!options.length) return null;
+  const mens = catKey.startsWith("mens_");
+  const score = (name: string) => {
+    const n = name.toLowerCase();
+    if (family === "plus") {
+      if (mens && /big/.test(n) && /tall/.test(n)) return 0;
+      if (/^plus$/.test(n)) return mens ? 1 : 0;
+      if (/plus/.test(n)) return mens ? 2 : 1;
+      if (/big/.test(n) && /tall/.test(n)) return 3;
+      return 4;
+    }
+    if (family === "petite") return /petite/.test(n) ? 0 : 1;
+    if (family === "tall") {
+      if (/^tall$/.test(n)) return 0;
+      if (/big/.test(n)) return 1;
+      return 2;
+    }
+    return /^regular$/.test(n) ? 0 : 1;
+  };
+  return [...options].sort((a, b) => score(a) - score(b) || a.localeCompare(b))[0];
+}
+
+function placedStructuredSize(
+  aspects: Record<string, string[]>,
+  meta: AspectMeta[]
+): { name: string; value: string } | null {
+  const names = [
+    ...meta.filter((a) => isStructuredSizeName(a.name)).map((a) => a.name),
+    "Size",
+  ];
+  const seen = new Set<string>();
+  for (const name of names) {
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const found = Object.keys(aspects).find((k) => k.toLowerCase() === key);
+    const value = found && (aspects[found] || []).map((v) => String(v || "").trim()).find(Boolean);
+    if (value) return { name: found || name, value };
+  }
+  return null;
+}
+
+function dependencyValues(
+  meta: AspectMeta[],
+  aspectName: string,
+  value: string,
+  otherAspect: string
+): string[] | null {
+  const aspect = meta.find((a) => a.name.trim().toLowerCase() === aspectName.trim().toLowerCase());
+  const dep = aspect?.dependencies?.find((d) => d.value.toLowerCase() === value.toLowerCase());
+  const rule = dep?.appliesTo.find((x) => x.aspectName.trim().toLowerCase() === otherAspect.toLowerCase());
+  return rule?.values.length ? rule.values : null;
+}
+
+// Size Type values whose own matrix lists sizes and does not include this one.
+function sizeTypesThatExclude(
+  meta: AspectMeta[],
+  sizeAspectName: string,
+  sizeValue: string
+): Set<string> {
+  const excluded = new Set<string>();
+  const typeMeta = meta.find((a) => a.name.trim().toLowerCase() === "size type");
+  if (!typeMeta?.dependencies?.length) return excluded;
+  const want = sizeValue.toLowerCase();
+  for (const dep of typeMeta.dependencies) {
+    const rule = dep.appliesTo.find((x) => {
+      const n = x.aspectName.trim().toLowerCase();
+      return n === sizeAspectName.trim().toLowerCase() || n === "size";
+    });
+    if (!rule?.values.length) continue;
+    if (!rule.values.some((v) => v.toLowerCase() === want)) excluded.add(dep.value.toLowerCase());
+  }
+  return excluded;
+}
+
+function writeSizeType(aspects: Record<string, string[]>, canonicalName: string, value: string): void {
+  for (const key of Object.keys(aspects)) {
+    if (key.toLowerCase() === "size type" && key !== canonicalName) delete aspects[key];
+  }
+  aspects[canonicalName] = [value];
+}
+
+// eBay error 21920468: "The Size Type you selected is not compatible with the
+// Size you entered." Regular + 4XL is the common case. The legal partner is
+// whatever this category's Size / Size Type matrix allows (Plus in one leaf,
+// Big & Tall in another) — not one hardcoded label.
+export function alignSizeTypeWithSize(
+  aspects: Record<string, string[]>,
+  meta: AspectMeta[],
+  catKey = ""
+): void {
+  const typeMeta = meta.find((a) => a.name.trim().toLowerCase() === "size type");
+  if (!typeMeta) return;
+  const placed = placedStructuredSize(aspects, meta);
+  if (!placed) return;
+
+  const allowed = typeMeta.values;
+  const family = sizeTypeFamily(placed.value);
+  const named = dependencyValues(meta, placed.name, placed.value, "Size Type");
+  const excluded = sizeTypesThatExclude(meta, placed.name, placed.value);
+
+  let choice = "";
+  if (named?.length) {
+    const snapped = named
+      .map((value) => snapToAllowedSizeType(value, allowed))
+      .filter((value): value is string => Boolean(value));
+    const unique = snapped.filter((value, i) => snapped.indexOf(value) === i);
+    choice = pickPreferredSizeType(unique, family, catKey) || "";
+  }
+  if (!choice) {
+    const pool = (allowed.length ? allowed : []).filter(
+      (value) => !excluded.has(value.toLowerCase()) && sizeTypeMatchesFamily(value, family)
+    );
+    const currentKey = Object.keys(aspects).find((k) => k.toLowerCase() === "size type");
+    const current = currentKey ? String(aspects[currentKey]?.[0] || "").trim() : "";
+    const currentAllowed =
+      !!current &&
+      sizeTypeMatchesFamily(current, family) &&
+      (!allowed.length || Boolean(snapToAllowedSizeType(current, allowed))) &&
+      !excluded.has(current.toLowerCase());
+    if (currentAllowed) {
+      const snapped = snapToAllowedSizeType(current, allowed);
+      if (snapped && snapped !== current) writeSizeType(aspects, typeMeta.name, snapped);
+      return;
+    }
+    choice = pickPreferredSizeType(pool, family, catKey) || "";
+  }
+  if (!choice) return;
+  const currentKey = Object.keys(aspects).find((k) => k.toLowerCase() === "size type");
+  const current = currentKey ? String(aspects[currentKey]?.[0] || "").trim() : "";
+  if (current !== choice) {
+    console.warn(
+      `[ebay/publish] Size Type ${JSON.stringify(current || "(none)")} is not compatible with Size ${JSON.stringify(placed.value)} — using ${JSON.stringify(choice)}`
+    );
+  }
+  writeSizeType(aspects, typeMeta.name, choice);
+}
+
 function applySizeType(aspects: Record<string, string[]>, size: string): void {
   if (aspects["Size Type"]?.length) return;
-  const sizeUpper = size.trim().toUpperCase();
-  if (!sizeUpper) return;
-  const isPetite =
-    /^\d+P$/.test(sizeUpper) ||
-    /^(XS|S|M|L|XL)P$/.test(sizeUpper) ||
-    sizeUpper.includes("PETITE");
-  const isPlus =
-    /^\d+X$/.test(sizeUpper) || /^\d+W$/.test(sizeUpper) || /^\d+W[-/]\d+W$/.test(sizeUpper);
-  if (isPetite) aspects["Size Type"] = ["Petites"];
-  else if (isPlus) aspects["Size Type"] = ["Plus"];
+  const family = sizeTypeFamily(size);
+  if (!size.trim()) return;
+  if (family === "petite") aspects["Size Type"] = ["Petites"];
+  else if (family === "plus") aspects["Size Type"] = ["Plus"];
+  else if (family === "tall") aspects["Size Type"] = ["Tall"];
   else aspects["Size Type"] = ["Regular"];
 }
 
@@ -1613,6 +1792,7 @@ export async function publishListing(
     );
   }
   ensureListingSizeSpecific(aspects, aspectMeta, listing, catKey);
+  alignSizeTypeWithSize(aspects, aspectMeta, catKey);
   const condCandidates = conditionCandidates(listing.condition, acceptedConds, catKey);
   const condition = condCandidates[0] || "USED_EXCELLENT";
   console.log(

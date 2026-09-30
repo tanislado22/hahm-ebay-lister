@@ -23,6 +23,7 @@ import {
   buildAspects,
 defaultPackageWeightAndSize,
   ensureListingSizeSpecific,
+  alignSizeTypeWithSize,
 } from "@/lib/ebay/publish";
 import {
 
@@ -362,6 +363,7 @@ async function buildDraftCsv(body: any, accessToken: string) {
     );
   }
   ensureListingSizeSpecific(aspects, sizeMeta, listing, catKey);
+  alignSizeTypeWithSize(aspects, sizeMeta, catKey);
 
 // Seller Hub / File Exchange maps item specifics from `C:` columns. The
 // generic "Attribute Name N" pairs often never land in Size/Color/Gender.
