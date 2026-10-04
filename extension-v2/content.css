@@ -1,0 +1,29 @@
+.vinted-assist-v2 {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483646;
+  width: 320px;
+  max-height: 50vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #ccc;
+  border-radius: 12px;
+  background: #fff;
+  color: #222;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  font: 13px/1.4 system-ui, sans-serif;
+}
+
+.vinted-assist-v2 button {
+  font: inherit;
+  margin: 0 8px 8px 0;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.vinted-assist-v2 pre {
+  white-space: pre-wrap;
+  margin: 0;
+  font: 12px/1.4 ui-monospace, monospace;
+}

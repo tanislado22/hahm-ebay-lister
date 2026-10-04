@@ -81,4 +81,22 @@ async function migrate(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS vinted_ready_snapshot (
+      workspace_key TEXT PRIMARY KEY,
+      sku TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      price TEXT NOT NULL DEFAULT '',
+      brand TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT '',
+      item_type TEXT NOT NULL DEFAULT '',
+      size TEXT NOT NULL DEFAULT '',
+      color TEXT NOT NULL DEFAULT '',
+      condition TEXT NOT NULL DEFAULT '',
+      photos JSONB NOT NULL DEFAULT '[]',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 }

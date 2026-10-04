@@ -1300,6 +1300,7 @@ const draftAll = async () => {
       .filter((group) => group.sku.length > 0);
     const items = selected.map((group) => ({
       sku: group.sku,
+      groupId: group.id,
       listing: group.listing,
       ebayItemId: group.listingId ?? null,
       publishedOnEbay: group.postStatus === "posted",

@@ -4,12 +4,15 @@ import { setVintedCurrentSku, upsertVintedReady } from "@/lib/inventory/links";
 import { workspaceKey } from "@/lib/inventory/workspace";
 import { prepareVintedFields } from "@/lib/vinted/prepare";
 import { skuForVintedPrepare } from "@/lib/sku";
+import { buildReadySnapshot } from "@/lib/vinted/snapshot";
+import { photosForGroupId, replaceVintedReadySnapshot } from "@/lib/vinted/snapshot-store";
 import type { ListingResult } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 interface PrepareItem {
   sku?: string;
+  groupId?: string;
   listing?: ListingResult;
   ebayItemId?: string | null;
   publishedOnEbay?: boolean;
@@ -45,8 +48,11 @@ export async function POST(req: NextRequest) {
       const sku = skuForVintedPrepare(item.sku);
       if (!sku || !item.listing?.title) continue;
       if (items.length === 1) {
-        currentSku = sku;
-        await setVintedCurrentSku(workspace, sku);
+        const photos = item.groupId ? await photosForGroupId(item.groupId) : [];
+        const snapshot = buildReadySnapshot({ sku, listing: item.listing, photos });
+        currentSku = snapshot.sku;
+        await setVintedCurrentSku(workspace, snapshot.sku);
+        await replaceVintedReadySnapshot(workspace, snapshot);
       }
       const fields = prepareVintedFields(sku, item.listing);
       await upsertVintedReady({
