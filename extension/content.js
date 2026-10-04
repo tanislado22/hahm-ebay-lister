@@ -52,7 +52,7 @@ async function loadMessage(message) {
   return response.body;
 }
 
-async function attachPhotos(photoCount, log) {
+async function attachPhotos(photoCount, sku, log) {
   if (!photoCount) {
     log.push("Photos: this Ready item has no saved photos.");
     return;
@@ -67,7 +67,7 @@ async function attachPhotos(photoCount, log) {
   }
   const transfer = new DataTransfer();
   for (let index = 0; index < photoCount; index += 1) {
-    const body = await loadMessage({ type: "load-photo", index });
+    const body = await loadMessage({ type: "load-photo", index, sku });
     const photo = body.photo;
     transfer.items.add(new File([base64ToBlob(photo.data, photo.mediaType)], photo.name, { type: photo.mediaType }));
   }
@@ -106,7 +106,7 @@ function fillText(label, aliases, value, log) {
 async function fillNikeItem(log) {
   const item = await loadMessage({ type: "load-assist" });
   log.push(`SKU ${item.sku}`);
-  await attachPhotos(item.photoCount || 0, log);
+  await attachPhotos(item.photoCount || 0, item.sku, log);
   fillText("Title", ["title", "what are you selling", "tell buyers"], item.title, log);
   fillText(
     "Description",

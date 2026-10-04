@@ -11,7 +11,12 @@ async function settings() {
 async function assistGet(query) {
   const { appUrl, appSecret } = await settings();
   const response = await fetch(`${appUrl}/api/vinted/assist?${query}`, {
-    headers: { "x-app-secret": appSecret },
+    cache: "no-store",
+    headers: {
+      "x-app-secret": appSecret,
+      "cache-control": "no-cache",
+      pragma: "no-cache",
+    },
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || !body.ok) {
@@ -22,11 +27,11 @@ async function assistGet(query) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "load-assist" && message?.type !== "load-photo") return;
-  const query =
-    message.type === "load-photo"
-      ? `photo=${encodeURIComponent(message.index)}`
-      : "";
-  assistGet(query)
+  const params = new URLSearchParams();
+  if (message.sku) params.set("sku", String(message.sku));
+  if (message.type === "load-photo") params.set("photo", String(message.index));
+  params.set("t", String(Date.now()));
+  assistGet(params.toString())
     .then((body) => sendResponse({ ok: true, body }))
     .catch((error) => sendResponse({ ok: false, error: error.message }));
   return true;

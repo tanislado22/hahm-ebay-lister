@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import { getSql } from "@/lib/db";
-import { getVintedCurrentSku, listListings, type PlatformListing } from "@/lib/inventory/links";
+import {
+  getLatestVintedCurrent,
+  getVintedCurrentSku,
+  listListings,
+  type PlatformListing,
+} from "@/lib/inventory/links";
 import { workspaceKey } from "@/lib/inventory/workspace";
 import {
   formatVintedCategoryPath,
@@ -13,6 +18,16 @@ import type { VintedPrepared } from "@/lib/vinted/prepare";
 export const dynamic = "force-dynamic";
 
 const MAX_PHOTOS = 20;
+
+function assistJson(body: unknown, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+      Pragma: "no-cache",
+    },
+  });
+}
 
 interface StoredPhoto {
   mediaType?: string;
@@ -58,30 +73,36 @@ export async function GET(req: NextRequest) {
   const denied = guardApiRequest(req);
   if (denied) return denied;
 
-  const workspace = workspaceKey(
-    req.nextUrl.searchParams.get("workMode") || "store",
-    req.nextUrl.searchParams.get("clientId")
-  );
-  if (!workspace) {
-    return NextResponse.json({ ok: false, error: "Select a client first." }, { status: 400 });
-  }
+  const explicitSku = req.nextUrl.searchParams.get("sku")?.trim() || "";
+  const workModeParam = req.nextUrl.searchParams.get("workMode");
 
   try {
+    let workspace: string | null = null;
+    let sku = explicitSku;
+    if (workModeParam) {
+      workspace = workspaceKey(workModeParam, req.nextUrl.searchParams.get("clientId"));
+      if (!workspace) {
+        return assistJson({ ok: false, error: "Select a client first." }, 400);
+      }
+      if (!sku) sku = (await getVintedCurrentSku(workspace)) || "";
+    } else {
+      const latest = await getLatestVintedCurrent();
+      workspace = latest?.workspaceKey ?? null;
+      if (!sku) sku = latest?.sku ?? "";
+    }
+    if (!workspace || !sku) {
+      return assistJson(
+        { ok: false, error: "Prepare one item for Vinted in Listing Writer first." },
+        404
+      );
+    }
+
     const maps = await listVintedCategoryMaps();
     const listings = await listListings(workspace);
     const ready = listings.filter((listing) => listing.vintedStatus === "ready");
-    const sku = req.nextUrl.searchParams.get("sku")?.trim() || (await getVintedCurrentSku(workspace)) || "";
-    const chosen = sku ? ready.find((listing) => listing.sku === sku) : undefined;
+    const chosen = ready.find((listing) => listing.sku === sku);
     if (!chosen) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: sku
-            ? `No Ready item with SKU ${sku}.`
-            : "Prepare one item for Vinted in Listing Writer first.",
-        },
-        { status: 404 }
-      );
+      return assistJson({ ok: false, error: `No Ready item with SKU ${sku}.` }, 404);
     }
 
     const prepared = chosen.prepared;
@@ -92,11 +113,12 @@ export async function GET(req: NextRequest) {
       const photos = await photosForSku(chosen.sku);
       const photo = photos[index];
       if (!Number.isInteger(index) || index < 0 || !photo?.data) {
-        return NextResponse.json({ ok: false, error: "That photo is not on this item." }, { status: 404 });
+        return assistJson({ ok: false, error: "That photo is not on this item." }, 404);
       }
       const mediaType = photo.mediaType || "image/jpeg";
-      return NextResponse.json({
+      return assistJson({
         ok: true,
+        sku: chosen.sku,
         photo: {
           name: photoName(chosen.sku, index, mediaType),
           mediaType,
@@ -112,7 +134,7 @@ export async function GET(req: NextRequest) {
       console.error("[vinted/assist] photos", error);
     }
 
-    return NextResponse.json({
+    return assistJson({
       ok: true,
       sku: chosen.sku,
       title: prepared?.title || chosen.vintedTitle || "",
@@ -125,6 +147,6 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     console.error("[vinted/assist]", error);
-    return NextResponse.json({ ok: false, error: "Could not load the Vinted assist item." }, { status: 500 });
+    return assistJson({ ok: false, error: "Could not load the Vinted assist item." }, 500);
   }
 }

@@ -90,6 +90,22 @@ export async function getVintedCurrentSku(workspaceKey: string): Promise<string 
   return sku || null;
 }
 
+export async function getLatestVintedCurrent(): Promise<{ workspaceKey: string; sku: string } | null> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const rows = await sql`
+    SELECT workspace_key, sku
+    FROM vinted_current_item
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `;
+  const row = rows[0] as { workspace_key?: string; sku?: string } | undefined;
+  const workspaceKey = String(row?.workspace_key || "").trim();
+  const sku = String(row?.sku || "").trim();
+  if (!workspaceKey || !sku) return null;
+  return { workspaceKey, sku };
+}
+
 export async function listListings(workspace: string): Promise<PlatformListing[]> {
   const sql = getSql();
   await ensureInventoryTables();
