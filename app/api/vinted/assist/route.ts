@@ -40,6 +40,12 @@ function photoName(sku: string, index: number, mediaType: string): string {
   return `${safe}-${index + 1}.${ext}`;
 }
 
+function photosInJob(raw: unknown): StoredPhoto[] {
+  const data = typeof raw === "string" ? JSON.parse(raw) : raw;
+  const photos = (data as { photos?: StoredPhoto[] } | null)?.photos;
+  return Array.isArray(photos) ? photos.filter((photo) => photo?.data).slice(0, MAX_PHOTOS) : [];
+}
+
 async function photosForSku(sku: string): Promise<StoredPhoto[]> {
   const sql = getSql();
   const rows = await sql`
@@ -47,13 +53,13 @@ async function photosForSku(sku: string): Promise<StoredPhoto[]> {
     FROM jobs
     WHERE data->'group'->>'sku' = ${sku}
     ORDER BY updated_at DESC
-    LIMIT 1
+    LIMIT 20
   `;
-  if (rows.length === 0) return [];
-  const raw = (rows[0] as Record<string, unknown>).data;
-  const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-  const photos = (data as { photos?: StoredPhoto[] } | null)?.photos;
-  return Array.isArray(photos) ? photos.filter((photo) => photo?.data).slice(0, MAX_PHOTOS) : [];
+  for (const row of rows) {
+    const photos = photosInJob((row as Record<string, unknown>).data);
+    if (photos.length > 0) return photos;
+  }
+  return [];
 }
 
 function categoryFor(listing: PlatformListing, maps: { itemType: string; path: string[] }[]) {

@@ -694,7 +694,7 @@ setManualGroups((prev) => [
 
       id: newId(),
 
-      sku: `${binPrefix.trim()}-${String.fromCharCode(65 + skuOffset + i)}`,
+      sku: buildSku(binPrefix, skuOffset + i),
 
 
 
@@ -801,7 +801,7 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
 
       const nextGroups: ItemGroup[] = merged.map((g, i) => ({
         id: newId(),
-     sku: `${binPrefix.trim()}-${String.fromCharCode(65 + skuOffset + i)}`,
+     sku: buildSku(binPrefix, skuOffset + i),
         name: g.name,
         clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
         photoIds: g.photoIds,
@@ -826,9 +826,11 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
     );
 
   const renameSku = (groupId: string, sku: string) =>
-    setGroups((prev) =>
-      prev.map((g) => (g.id === groupId ? { ...g, sku } : g))
-    );
+    setGroups((prev) => {
+      const next = prev.map((g) => (g.id === groupId ? { ...g, sku } : g));
+      groupsRef.current = next;
+      return next;
+    });
 
   const movePhoto = (photoId: string, toGroupId: string | "orphans") => {
     setGroups((prev) =>
@@ -1288,21 +1290,39 @@ const draftAll = async () => {
 
 };
   const prepareVintedGroups = async (groupIds: string[]) => {
-    const items = groupIds
+    const selected = groupIds
       .map((id) => groupsRef.current.find((group) => group.id === id))
       .filter((group): group is ItemGroup => Boolean(group?.listing && group.vintedStatus !== "published"))
-      .map((group) => ({
-        sku: group.sku,
-        listing: group.listing,
-        ebayItemId: group.listingId ?? null,
-        publishedOnEbay: group.postStatus === "posted",
-      }));
+      .map((group) => ({ ...group, sku: group.sku.trim() }));
+    const items = selected.map((group) => ({
+      sku: group.sku,
+      listing: group.listing,
+      ebayItemId: group.listingId ?? null,
+      publishedOnEbay: group.postStatus === "posted",
+    }));
     if (items.length === 0) {
       alert("Write the listings first. Published Vinted items are left as they are.");
       return;
     }
     setVintedPreparing(true);
     try {
+      const clientId = workMode === "client" ? selectedClientId : null;
+      for (const group of selected) {
+        const groupPhotos = group.photoIds
+          .map((id) => photos.find((photo) => photo.id === id))
+          .filter((photo): photo is Photo => Boolean(photo?.data));
+        const saved = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: group.id,
+            workMode,
+            clientId,
+            data: { group, photos: groupPhotos },
+          }),
+        });
+        if (!saved.ok) throw new Error(`Could not save photos for SKU ${group.sku}.`);
+      }
       const res = await apiPost("/api/vinted/prepare", {
         workMode,
         clientId: workMode === "client" ? selectedClientId : null,

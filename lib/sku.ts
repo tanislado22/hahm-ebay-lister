@@ -23,12 +23,12 @@ export function nextSuffix(index: number): string {
   return letters.reverse().join("");
 }
 
-// Build the full item SKU for the Nth item in a bin. With no prefix, fall back
-// to a plain letter so items still have a stable, unique reference.
-export function buildSku(prefix: string, _index: number): string {
-
-  return sanitizeSku(prefix);
-
+// Build the full item SKU for the Nth item in a bin. With no prefix, use only
+// the letter (A, B, C). A blank bin must not become "-A".
+export function buildSku(prefix: string, index: number): string {
+  const bin = sanitizeSku(prefix);
+  const letter = nextSuffix(Math.max(0, index));
+  return bin ? `${bin}-${letter}` : letter;
 }
 
 // Inverse of nextSuffix: "A"→0, "Z"→25, "AA"→26. Returns -1 for non-letters.
