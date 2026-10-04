@@ -1316,6 +1316,14 @@ const draftAll = async () => {
           skus.has(group.sku) ? { ...group, vintedStatus: "ready" } : group
         )
       );
+      if (items.length === 1) {
+        try {
+          const clientKey = workMode === "client" ? selectedClientId || "" : "";
+          window.localStorage.setItem(`vintedCurrentSku:${workMode}:${clientKey}`, items[0].sku);
+        } catch {
+          /* storage unavailable */
+        }
+      }
     } catch (error) {
       alert((error as Error).message);
     } finally {

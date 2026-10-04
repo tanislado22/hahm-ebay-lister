@@ -128,6 +128,13 @@ export function VintedQueue() {
           const photos = Array.isArray(data.photos) ? (data.photos as Photo[]) : [];
           photosBySku.set(group.sku, photos);
         }
+        let currentSku = "";
+        try {
+          const clientKey = workspace.workMode === "client" ? workspace.clientId || "" : "";
+          currentSku = window.localStorage.getItem(`vintedCurrentSku:${workspace.workMode}:${clientKey}`) || "";
+        } catch {
+          currentSku = "";
+        }
         const queue = (listingJson.listings as StoredListing[])
           .filter((listing) => listing.vintedStatus === "ready" || listing.vintedStatus === "published")
           .map((listing) => ({
@@ -152,6 +159,8 @@ export function VintedQueue() {
             photos: photosBySku.get(listing.sku) ?? [],
           }))
           .sort((a, b) => {
+            if (currentSku && a.sku === currentSku) return -1;
+            if (currentSku && b.sku === currentSku) return 1;
             if (a.vintedStatus === b.vintedStatus) return a.sku.localeCompare(b.sku);
             return a.vintedStatus === "ready" ? -1 : 1;
           });
