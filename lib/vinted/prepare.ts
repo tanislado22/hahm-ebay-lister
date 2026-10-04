@@ -1,4 +1,5 @@
 import type { ListingResult } from "@/lib/types";
+import { formatVintedCategoryPath, resolveVintedCategory } from "@/lib/vinted/category-map";
 
 export interface VintedPrepared {
   sku: string;
@@ -6,6 +7,7 @@ export interface VintedPrepared {
   description: string;
   brand: string;
   category: string;
+  vintedCategory: string;
   size: string;
   color: string;
   condition: string;
@@ -36,12 +38,20 @@ function priceText(value: ListingResult["suggested_price"]): string {
 
 export function prepareVintedFields(sku: string, listing: ListingResult): VintedPrepared {
   const conditionRaw = (listing.condition ?? "").trim();
+  const bucket = (listing.category || "").trim();
+  const match = resolveVintedCategory({
+    title: listing.title,
+    brand: listing.brand,
+    itemType: listing.item_type,
+    bucket,
+  });
   return {
     sku: sku.trim(),
     title: (listing.title ?? "").trim(),
     description: (listing.description ?? "").trim(),
     brand: (listing.brand ?? "").trim(),
     category: (listing.category || listing.category_hint || "").trim(),
+    vintedCategory: match ? formatVintedCategoryPath(match.path) : "",
     size: (listing.size ?? "").trim(),
     color: asText(listing.color),
     condition: CONDITION_LABELS[conditionRaw] ?? conditionRaw,

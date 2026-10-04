@@ -63,4 +63,14 @@ async function migrate(): Promise<void> {
       UNIQUE (platform, external_event_id)
     )
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS vinted_category_maps (
+      id TEXT PRIMARY KEY,
+      item_type TEXT NOT NULL UNIQUE,
+      vinted_path TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 }

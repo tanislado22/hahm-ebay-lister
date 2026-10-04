@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Listing Writer Vinted Assist",
+  "version": "0.1.0",
+  "description": "Fills the open Vinted sell form from your Listing Writer queue. Does not press Sell.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://www.vinted.com/*", "https://*.vinted.com/*"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_title": "Vinted assist settings"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.vinted.com/*", "https://*.vinted.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

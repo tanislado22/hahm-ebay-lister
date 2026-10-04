@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api-client";
 import type { ItemGroup, Photo, VintedStatus } from "@/lib/types";
+import { formatVintedCategoryPath, resolveVintedCategory } from "@/lib/vinted/category-map";
 import type { VintedPrepared } from "@/lib/vinted/prepare";
 
 interface StoredListing {
@@ -37,6 +38,20 @@ interface QueueItem {
 }
 
 const VINTED_NEW_ITEM = "https://www.vinted.com/items/new";
+
+function withVintedCategory(fields: VintedPrepared): VintedPrepared {
+  const current = { ...fields, vintedCategory: fields.vintedCategory || "" };
+  if (current.vintedCategory) return current;
+  const match = resolveVintedCategory({
+    title: current.title,
+    brand: current.brand,
+    bucket: current.category,
+  });
+  return {
+    ...current,
+    vintedCategory: match ? formatVintedCategoryPath(match.path) : "",
+  };
+}
 
 function workspaceFromStorage(): { workMode: "store" | "client"; clientId: string | null } {
   try {
@@ -120,17 +135,20 @@ export function VintedQueue() {
             vintedStatus: listing.vintedStatus,
             vintedListingUrl: listing.vintedListingUrl,
             publishedOnEbay: listing.publishedOnEbay,
-            fields: listing.prepared ?? {
-              sku: listing.sku,
-              title: listing.vintedTitle || listing.ebayTitle || "",
-              description: "",
-              brand: "",
-              category: "",
-              size: "",
-              color: "",
-              condition: "",
-              price: "",
-            },
+            fields: withVintedCategory(
+              listing.prepared ?? {
+                sku: listing.sku,
+                title: listing.vintedTitle || listing.ebayTitle || "",
+                description: "",
+                brand: "",
+                category: "",
+                vintedCategory: "",
+                size: "",
+                color: "",
+                condition: "",
+                price: "",
+              }
+            ),
             photos: photosBySku.get(listing.sku) ?? [],
           }))
           .sort((a, b) => {
@@ -229,8 +247,8 @@ export function VintedQueue() {
         </a>
       </div>
       <p className="field-hint">
-        Work one item at a time. Opening Vinted does not publish anything. Mark an item published
-        after you post it yourself.
+        Work one item at a time. Vinted category is the path the assist extension tries to select.
+        It is separate from the source category. Opening Vinted does not publish anything.
       </p>
       {loading && <p>Loading prepared items…</p>}
       {error && (
@@ -272,7 +290,8 @@ export function VintedQueue() {
                 ["title", "Title"],
                 ["description", "Description"],
                 ["brand", "Brand"],
-                ["category", "Category"],
+                ["vintedCategory", "Vinted category"],
+                ["category", "Source category"],
                 ["size", "Size"],
                 ["color", "Color"],
                 ["condition", "Condition"],
