@@ -65,6 +65,10 @@ interface ListingsViewProps {
   onPostAll: () => void;
   onDraftAll: () => void;
   onSoldCompsAll: () => void;
+  onPrepareAll: () => void;
+  onPrepareVinted: (groupId: string) => void;
+  onMarkVintedPublished: (groupId: string, url: string) => void;
+  vintedPreparing: boolean;
   onBack: () => void;
 }
 
@@ -84,6 +88,10 @@ export function ListingsView({
   onPostAll,
   onDraftAll,
   onSoldCompsAll,
+  onPrepareAll,
+  onPrepareVinted,
+  onMarkVintedPublished,
+  vintedPreparing,
   onBack,
 }: ListingsViewProps) {
   const done = groups.filter((g) => g.status === "done").length;
@@ -93,6 +101,9 @@ export function ListingsView({
   const posting = groups.some((g) => g.postStatus === "posting");
   const readyToPost = groups.filter(
     (g) => g.status === "done" && g.postStatus !== "posted"
+  ).length;
+  const readyToPrepare = groups.filter(
+    (g) => g.status === "done" && g.listing && g.vintedStatus !== "published"
   ).length;
   const allDone = writing === 0 && done > 0;
 
@@ -162,6 +173,20 @@ export function ListingsView({
 
         </div>
       )}
+      <div className="post-all-bar">
+        <span>Prepare items for Vinted. Publishing on Vinted stays manual.</span>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={onPrepareAll}
+          disabled={vintedPreparing || readyToPrepare === 0}
+        >
+          {vintedPreparing ? "Preparing…" : "Prepare All for Vinted"}
+        </button>
+        <a className="btn btn-ghost" href="/vinted">
+          Vinted queue
+        </a>
+      </div>
 <button
 
   type="button"
@@ -200,6 +225,8 @@ export function ListingsView({
             onReorderPhoto={onReorderPhoto}
             onRemovePhoto={onRemovePhoto}
             onDelete={onDelete}
+            onPrepareVinted={onPrepareVinted}
+            onMarkVintedPublished={onMarkVintedPublished}
           />
         ))}
       </div>

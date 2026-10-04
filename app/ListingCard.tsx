@@ -64,8 +64,8 @@ interface ListingCardProps {
   onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
 onRemovePhoto: (photoId: string) => void;
 onDelete: (groupId: string) => void;
-
-
+onPrepareVinted: (groupId: string) => void;
+onMarkVintedPublished: (groupId: string, url: string) => void;
 }
 
 export function ListingCard({
@@ -80,6 +80,8 @@ export function ListingCard({
   onReorderPhoto,
   onRemovePhoto,
   onDelete,
+  onPrepareVinted,
+  onMarkVintedPublished,
 }: ListingCardProps) {
   const [open, setOpen] = useState(true);
   const listing = group.listing;
@@ -369,6 +371,17 @@ const keyword = [
               </span>
             )}
             {group.status === "idle" && "Waiting…"}
+          </span>
+          <span className="platform-badges">
+            <span>eBay: {group.postStatus === "posted" ? "Published" : "Not Published"}</span>
+            <span>
+              Vinted:{" "}
+              {group.vintedStatus === "published"
+                ? "Published"
+                : group.vintedStatus === "ready"
+                  ? "Ready"
+                  : "Not Prepared"}
+            </span>
           </span>
         </div>
         {group.status === "error" ? (
@@ -980,6 +993,57 @@ const keyword = [
             </div>
           ) : (
             <p className="post-hint">Connect eBay (top of page) to post this listing.</p>
+          )}
+
+          {group.status === "done" && listing && (
+            <div className="post-row">
+              <p className="post-result">
+                Vinted:{" "}
+                {group.vintedStatus === "published"
+                  ? "Published"
+                  : group.vintedStatus === "ready"
+                    ? "Ready"
+                    : "Not Prepared"}
+                {group.vintedStatus === "published" && group.vintedListingUrl ? (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <a href={group.vintedListingUrl} target="_blank" rel="noopener noreferrer">
+                      View listing ↗
+                    </a>
+                  </>
+                ) : null}
+              </p>
+              {group.vintedStatus !== "published" && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => onPrepareVinted(group.id)}
+                >
+                  Prepare for Vinted
+                </button>
+              )}
+              {group.vintedStatus === "ready" && (
+                <>
+                  <a className="btn btn-ghost" href="/vinted">
+                    Open Vinted queue
+                  </a>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      const url = window.prompt(
+                        "Paste the Vinted listing URL if you have it. Leave blank to mark published without a URL."
+                      );
+                      if (url === null) return;
+                      onMarkVintedPublished(group.id, url.trim());
+                    }}
+                  >
+                    Mark as Published
+                  </button>
+                </>
+              )}
+            </div>
           )}
         </div>
       )}

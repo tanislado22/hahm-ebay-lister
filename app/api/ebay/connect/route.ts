@@ -113,13 +113,13 @@ if (!connectionKey) {
 
 
 if (workMode === "client") {
-
-
-
   await saveEbayConnection(connectionKey, sealed);
-
-
-
+} else {
+  try {
+    await saveEbayConnection(connectionKey, sealed);
+  } catch (err) {
+    console.error("[ebay/connect] could not persist store connection for sale alerts", err);
+  }
 }
     const res = NextResponse.json({ ok: true });
 

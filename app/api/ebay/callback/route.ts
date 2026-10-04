@@ -8,6 +8,7 @@ import {
   connectionFromToken,
   sealConnection,
 } from "@/lib/ebay/session";
+import { saveEbayConnection } from "@/lib/ebay/client-connections";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,11 @@ export async function GET(req: NextRequest) {
     const sealed = await sealConnection(
       connectionFromToken(token.refresh_token, token.refresh_token_expires_in)
     );
+    try {
+      await saveEbayConnection("store", sealed);
+    } catch (err) {
+      console.error("[ebay/callback] could not persist store connection for sale alerts", err);
+    }
     const res = NextResponse.redirect(appUrl(req, "/?ebay=connected"));
     res.cookies.set(EBAY_COOKIE, sealed, {
       httpOnly: true,

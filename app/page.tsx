@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiPost } from "@/lib/api-client";
+import { accessHeaders, apiPost } from "@/lib/api-client";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { resizeImage } from "@/lib/resize";
 import { buildSku } from "@/lib/sku";
@@ -17,6 +17,7 @@ import type {
   ListingResult,
   Photo,
   SortResponse,
+  VintedStatus,
 } from "@/lib/types";
 
 type Step = "upload" | "review" | "listings";
@@ -97,6 +98,7 @@ export default function Home() {
   const [skuStart, setSkuStart] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [ebayConnected, setEbayConnected] = useState(false);
+  const [vintedPreparing, setVintedPreparing] = useState(false);
   const [workMode, setWorkMode] = useState<"store" | "client">("store");
   const [clientName, setClientName] = useState("");
   const [clients, setClients] = useState<{ id: string; name: string; active: boolean }[]>([]);
@@ -357,6 +359,34 @@ if (!selectedClientSaveReadyRef.current) {
   (group) => group.status === "done" && group.listing
 
 );
+
+        try {
+          const linkParams = new URLSearchParams({ workMode });
+          if (clientId) linkParams.set("clientId", clientId);
+          const linkResponse = await fetch(`/api/vinted/listings?${linkParams.toString()}`, {
+            cache: "no-store",
+            signal: controller.signal,
+            headers: accessHeaders(),
+          });
+          if (linkResponse.ok) {
+            const linkResult = await linkResponse.json();
+            const listings = Array.isArray(linkResult.listings) ? linkResult.listings : [];
+            const bySku = new Map<string, { vintedStatus?: VintedStatus; vintedListingUrl?: string | null }>();
+            for (const listing of listings) {
+              if (listing?.sku) bySku.set(String(listing.sku), listing);
+            }
+            for (const group of restoredGroups) {
+              const link = bySku.get(group.sku);
+              if (!link?.vintedStatus) continue;
+              group.vintedStatus = link.vintedStatus;
+              if (link.vintedListingUrl) group.vintedListingUrl = link.vintedListingUrl;
+            }
+          }
+        } catch (error) {
+          if ((error as Error).name !== "AbortError") {
+            console.error("Failed to load Vinted statuses:", error);
+          }
+        }
 
 setStep(
 
@@ -1114,6 +1144,23 @@ const deleteAll = async () => {
         }
         if (!data?.success) throw new Error(data?.error || "eBay rejected the listing.");
         const allWarnings = [...uploadWarnings, ...(data.warnings ?? [])];
+        try {
+          const linkRes = await apiPost("/api/inventory/ebay-published", {
+            workMode,
+            clientId: workMode === "client" ? selectedClientId : null,
+            sku: group.sku,
+            ebayItemId: data.listingId,
+            ebayTitle: group.listing.title,
+          });
+          const linkData = (await readJson(linkRes)) as { ok?: boolean };
+          if (!linkData?.ok) {
+            allWarnings.push(
+              "Posted to eBay, but the SKU link for sale alerts was not saved."
+            );
+          }
+        } catch {
+          allWarnings.push("Posted to eBay, but the SKU link for sale alerts was not saved.");
+        }
         setGroups((prev) =>
           prev.map((g) =>
             g.id === groupId
@@ -1136,7 +1183,7 @@ const deleteAll = async () => {
         );
       }
     },
-    [photoMap]
+    [photoMap, workMode, selectedClientId]
   );
 const draftGroup = async (groupId: string) => {
 
@@ -1240,6 +1287,72 @@ const draftAll = async () => {
   window.dispatchEvent(new CustomEvent("sold-comps-all"));
 
 };
+  const prepareVintedGroups = async (groupIds: string[]) => {
+    const items = groupIds
+      .map((id) => groupsRef.current.find((group) => group.id === id))
+      .filter((group): group is ItemGroup => Boolean(group?.listing && group.vintedStatus !== "published"))
+      .map((group) => ({
+        sku: group.sku,
+        listing: group.listing,
+        ebayItemId: group.listingId ?? null,
+        publishedOnEbay: group.postStatus === "posted",
+      }));
+    if (items.length === 0) {
+      alert("Write the listings first. Published Vinted items are left as they are.");
+      return;
+    }
+    setVintedPreparing(true);
+    try {
+      const res = await apiPost("/api/vinted/prepare", {
+        workMode,
+        clientId: workMode === "client" ? selectedClientId : null,
+        items,
+      });
+      const data = (await readJson(res)) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) throw new Error(data.error || "Could not prepare Vinted items.");
+      const skus = new Set(items.map((item) => item.sku));
+      setGroups((prev) =>
+        prev.map((group) =>
+          skus.has(group.sku) ? { ...group, vintedStatus: "ready" } : group
+        )
+      );
+    } catch (error) {
+      alert((error as Error).message);
+    } finally {
+      setVintedPreparing(false);
+    }
+  };
+  const prepareAllVinted = () => {
+    const ids = groupsRef.current
+      .filter((group) => group.status === "done" && group.listing && group.vintedStatus !== "published")
+      .map((group) => group.id);
+    void prepareVintedGroups(ids);
+  };
+  const markVintedPublished = async (groupId: string, url: string) => {
+    const group = groupsRef.current.find((item) => item.id === groupId);
+    if (!group) return;
+    try {
+      const res = await apiPost("/api/vinted/status", {
+        workMode,
+        clientId: workMode === "client" ? selectedClientId : null,
+        sku: group.sku,
+        vintedStatus: "published",
+        vintedListingUrl: url || null,
+        vintedTitle: group.listing?.title ?? group.name,
+      });
+      const data = (await readJson(res)) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) throw new Error(data.error || "Could not mark the Vinted listing.");
+      setGroups((prev) =>
+        prev.map((item) =>
+          item.id === groupId
+            ? { ...item, vintedStatus: "published", vintedListingUrl: url || undefined }
+            : item
+        )
+      );
+    } catch (error) {
+      alert((error as Error).message);
+    }
+  };
   const usableGroups = useMemo(
     () => groups.filter((g) => g.photoIds.length > 0),
     [groups]
@@ -1682,6 +1795,10 @@ const draftAll = async () => {
           onPostAll={postAll}
           onDraftAll={draftAll}
           onSoldCompsAll={soldCompsAll}
+          onPrepareAll={prepareAllVinted}
+          onPrepareVinted={(groupId) => void prepareVintedGroups([groupId])}
+          onMarkVintedPublished={(groupId, url) => void markVintedPublished(groupId, url)}
+          vintedPreparing={vintedPreparing}
           onBack={() => setStep("review")}
         />
       )}

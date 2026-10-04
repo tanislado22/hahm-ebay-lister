@@ -58,6 +58,8 @@ export type ItemStatus = "idle" | "writing" | "done" | "error";
 
 export type PostStatus = "idle" | "posting" | "posted" | "error";
 
+export type VintedStatus = "not_prepared" | "ready" | "published";
+
 // Market price check from active eBay comps (see lib/ebay/comps.ts). Advisory:
 // shown beside the AI's estimate so the seller prices with real data in view.
 export interface CompsSummary {
@@ -92,4 +94,6 @@ export interface ItemGroup {
   postError?: string;
   // Non-fatal quality warnings from the last publish (e.g. schema unavailable)
   postWarnings?: string[];
+  vintedStatus?: VintedStatus;
+  vintedListingUrl?: string;
 }

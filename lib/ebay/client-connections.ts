@@ -140,6 +140,20 @@ export async function getEbayConnection(
 
 }
 
+export async function listEbayConnections(): Promise<
+  { connectionKey: string; sealedConnection: string }[]
+> {
+  const sql = await ensureEbayConnectionsTable();
+  const rows = await sql`
+    SELECT connection_key, sealed_connection
+    FROM ebay_connections
+  `;
+  return rows.map((row) => ({
+    connectionKey: String(row.connection_key ?? ""),
+    sealedConnection: String(row.sealed_connection ?? ""),
+  }));
+}
+
 export async function deleteEbayConnection(
 
   connectionKey: string

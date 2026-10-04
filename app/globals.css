@@ -1077,3 +1077,58 @@ textarea {
 .model-hint {
   font-style: italic;
 }
+
+a.btn {
+  text-decoration: none;
+}
+
+.platform-badges {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+
+.platform-badges span {
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  background: var(--color-surface-sunk);
+  border: 1px solid var(--color-border);
+}
+
+.vinted-fields {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem;
+}
+
+.vinted-fields label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.vinted-fields input,
+.vinted-fields textarea {
+  font: inherit;
+  font-weight: 450;
+  width: 100%;
+}
+
+.review-list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.review-list li {
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+}
+

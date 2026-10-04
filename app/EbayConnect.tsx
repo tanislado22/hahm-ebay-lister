@@ -63,7 +63,10 @@ const r = await fetch(`/api/ebay/status?${params.toString()}`, {
   const disconnect = async () => {
     setBusy(true);
     try {
-      await apiPost("/api/ebay/disconnect", {});
+      await apiPost("/api/ebay/disconnect", {
+        workMode,
+        clientId: workMode === "client" ? selectedClientId : null,
+      });
       await refresh();
       setNotice({ ok: true, msg: "Disconnected from eBay." });
     } finally {

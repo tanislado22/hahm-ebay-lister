@@ -27,12 +27,39 @@ function saveCode(code: string): void {
   }
 }
 
+export function accessHeaders(): Record<string, string> {
+  const code = storedCode();
+  return code ? { "x-app-secret": code } : {};
+}
+
 export function clearAccessCode(): void {
   try {
     window.localStorage.removeItem(STORAGE_KEY);
   } catch {
     /* noop */
   }
+}
+
+export async function apiGet(path: string): Promise<Response> {
+  let code = storedCode();
+  const run = (current: string | null) => {
+    const headers: Record<string, string> = {};
+    if (current) headers["x-app-secret"] = current;
+    return fetch(path, { method: "GET", headers, cache: "no-store" });
+  };
+  let res = await run(code);
+  for (let attempt = 0; attempt < 2 && res.status === 401; attempt++) {
+    const entered = window.prompt(
+      attempt === 0
+        ? "Enter your access code. This is the APP_SECRET you set in Vercel (Settings → Environment Variables) — not your Anthropic API key."
+        : "That didn't match the APP_SECRET set in Vercel — try again:"
+    );
+    if (!entered || !entered.trim()) return res;
+    code = entered.trim();
+    res = await run(code);
+    if (res.status !== 401) saveCode(code);
+  }
+  return res;
 }
 
 async function doFetch(path: string, body: unknown, code: string | null): Promise<Response> {
