@@ -66,7 +66,7 @@ interface ListingsViewProps {
   onDraftAll: () => void;
   onSoldCompsAll: () => void;
   onPrepareAll: () => void;
-  onPrepareVinted: (groupId: string) => void;
+  onPrepareVinted: (groupId: string, sku: string) => void;
   onMarkVintedPublished: (groupId: string, url: string) => void;
   vintedPreparing: boolean;
   onBack: () => void;

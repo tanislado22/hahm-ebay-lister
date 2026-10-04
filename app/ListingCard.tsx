@@ -64,7 +64,7 @@ interface ListingCardProps {
   onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
 onRemovePhoto: (photoId: string) => void;
 onDelete: (groupId: string) => void;
-onPrepareVinted: (groupId: string) => void;
+onPrepareVinted: (groupId: string, sku: string) => void;
 onMarkVintedPublished: (groupId: string, url: string) => void;
 }
 
@@ -1018,7 +1018,7 @@ const keyword = [
                 <button
                   type="button"
                   className="btn btn-ghost"
-                  onClick={() => onPrepareVinted(group.id)}
+                  onClick={() => onPrepareVinted(group.id, group.sku)}
                 >
                   Prepare for Vinted
                 </button>

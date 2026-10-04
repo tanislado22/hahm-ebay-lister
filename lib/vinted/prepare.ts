@@ -36,6 +36,20 @@ function priceText(value: ListingResult["suggested_price"]): string {
   return n.toFixed(2);
 }
 
+export function photosForPreparedSku<T extends { data?: string }>(
+  jobs: { sku: string; photos: T[] }[],
+  sku: string
+): T[] {
+  const wanted = sku.trim();
+  if (!wanted) return [];
+  for (const job of jobs) {
+    if (job.sku.trim() !== wanted) continue;
+    const photos = job.photos.filter((photo) => Boolean(photo?.data));
+    if (photos.length > 0) return photos;
+  }
+  return [];
+}
+
 export function prepareVintedFields(sku: string, listing: ListingResult): VintedPrepared {
   const conditionRaw = (listing.condition ?? "").trim();
   const bucket = (listing.category || "").trim();

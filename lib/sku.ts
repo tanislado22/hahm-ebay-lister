@@ -31,6 +31,12 @@ export function buildSku(prefix: string, index: number): string {
   return bin ? `${bin}-${letter}` : letter;
 }
 
+// The SKU typed on the selected item. An empty value stays empty so a blank
+// bin is never saved as "-A".
+export function skuForVintedPrepare(groupSku: string | null | undefined): string {
+  return String(groupSku ?? "").trim();
+}
+
 // Inverse of nextSuffix: "A"→0, "Z"→25, "AA"→26. Returns -1 for non-letters.
 export function suffixToIndex(suffix: string): number {
   const s = (suffix || "").toUpperCase();

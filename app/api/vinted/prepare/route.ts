@@ -3,6 +3,7 @@ import { guardApiRequest } from "@/lib/api-guard";
 import { setVintedCurrentSku, upsertVintedReady } from "@/lib/inventory/links";
 import { workspaceKey } from "@/lib/inventory/workspace";
 import { prepareVintedFields } from "@/lib/vinted/prepare";
+import { skuForVintedPrepare } from "@/lib/sku";
 import type { ListingResult } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -39,9 +40,14 @@ export async function POST(req: NextRequest) {
 
   try {
     let prepared = 0;
+    let currentSku = "";
     for (const item of items) {
-      const sku = item.sku?.trim() ?? "";
+      const sku = skuForVintedPrepare(item.sku);
       if (!sku || !item.listing?.title) continue;
+      if (items.length === 1) {
+        currentSku = sku;
+        await setVintedCurrentSku(workspace, sku);
+      }
       const fields = prepareVintedFields(sku, item.listing);
       await upsertVintedReady({
         workspaceKey: workspace,
@@ -58,11 +64,7 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (prepared === 1 && items.length === 1) {
-      const sku = items[0]?.sku?.trim() ?? "";
-      if (sku) await setVintedCurrentSku(workspace, sku);
-    }
-    return NextResponse.json({ ok: true, prepared });
+    return NextResponse.json({ ok: true, prepared, sku: currentSku });
   } catch (error) {
     console.error("[vinted/prepare]", error);
     return NextResponse.json({ ok: false, error: "Could not prepare Vinted items." }, { status: 500 });

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { accessHeaders, apiPost } from "@/lib/api-client";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { resizeImage } from "@/lib/resize";
-import { buildSku } from "@/lib/sku";
+import { buildSku, skuForVintedPrepare } from "@/lib/sku";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
 import { ModelSelector } from "./ModelSelector";
@@ -1289,11 +1289,15 @@ const draftAll = async () => {
   window.dispatchEvent(new CustomEvent("sold-comps-all"));
 
 };
-  const prepareVintedGroups = async (groupIds: string[]) => {
+  const prepareVintedGroups = async (groupIds: string[], selectedSku?: string) => {
     const selected = groupIds
       .map((id) => groupsRef.current.find((group) => group.id === id))
       .filter((group): group is ItemGroup => Boolean(group?.listing && group.vintedStatus !== "published"))
-      .map((group) => ({ ...group, sku: group.sku.trim() }));
+      .map((group) => ({
+        ...group,
+        sku: skuForVintedPrepare(groupIds.length === 1 && selectedSku !== undefined ? selectedSku : group.sku),
+      }))
+      .filter((group) => group.sku.length > 0);
     const items = selected.map((group) => ({
       sku: group.sku,
       listing: group.listing,
@@ -1301,7 +1305,7 @@ const draftAll = async () => {
       publishedOnEbay: group.postStatus === "posted",
     }));
     if (items.length === 0) {
-      alert("Write the listings first. Published Vinted items are left as they are.");
+      alert("Each item needs a written listing and a SKU. Published Vinted items are left as they are.");
       return;
     }
     setVintedPreparing(true);
@@ -1824,7 +1828,7 @@ const draftAll = async () => {
           onDraftAll={draftAll}
           onSoldCompsAll={soldCompsAll}
           onPrepareAll={prepareAllVinted}
-          onPrepareVinted={(groupId) => void prepareVintedGroups([groupId])}
+          onPrepareVinted={(groupId, sku) => void prepareVintedGroups([groupId], sku)}
           onMarkVintedPublished={(groupId, url) => void markVintedPublished(groupId, url)}
           vintedPreparing={vintedPreparing}
           onBack={() => setStep("review")}

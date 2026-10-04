@@ -13,7 +13,7 @@ import {
   resolveVintedCategory,
 } from "@/lib/vinted/category-map";
 import { listVintedCategoryMaps } from "@/lib/vinted/category-maps";
-import type { VintedPrepared } from "@/lib/vinted/prepare";
+import { photosForPreparedSku, type VintedPrepared } from "@/lib/vinted/prepare";
 
 export const dynamic = "force-dynamic";
 
@@ -40,10 +40,11 @@ function photoName(sku: string, index: number, mediaType: string): string {
   return `${safe}-${index + 1}.${ext}`;
 }
 
-function photosInJob(raw: unknown): StoredPhoto[] {
+function jobPhotos(raw: unknown): { sku: string; photos: StoredPhoto[] } {
   const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-  const photos = (data as { photos?: StoredPhoto[] } | null)?.photos;
-  return Array.isArray(photos) ? photos.filter((photo) => photo?.data).slice(0, MAX_PHOTOS) : [];
+  const record = data as { group?: { sku?: string }; photos?: StoredPhoto[] } | null;
+  const photos = Array.isArray(record?.photos) ? record.photos : [];
+  return { sku: String(record?.group?.sku ?? ""), photos };
 }
 
 async function photosForSku(sku: string): Promise<StoredPhoto[]> {
@@ -55,11 +56,8 @@ async function photosForSku(sku: string): Promise<StoredPhoto[]> {
     ORDER BY updated_at DESC
     LIMIT 20
   `;
-  for (const row of rows) {
-    const photos = photosInJob((row as Record<string, unknown>).data);
-    if (photos.length > 0) return photos;
-  }
-  return [];
+  const jobs = rows.map((row) => jobPhotos((row as Record<string, unknown>).data));
+  return photosForPreparedSku(jobs, sku).slice(0, MAX_PHOTOS);
 }
 
 function categoryFor(listing: PlatformListing, maps: { itemType: string; path: string[] }[]) {
