@@ -1,5 +1,3 @@
-const SELL_LABEL = /^(sell|publish|upload item)$/i;
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -39,29 +37,6 @@ function findField(aliases) {
     if (match && match.type !== "file") return match;
   }
   return null;
-}
-
-function optionNodes() {
-  return [...document.querySelectorAll("button, a, [role='button'], [role='option'], li, label")]
-    .filter(visible)
-    .map((el) => ({ el, text: clean(el.innerText || el.textContent) }))
-    .filter((entry) => entry.text && entry.text.length <= 80 && !SELL_LABEL.test(entry.text));
-}
-
-function clickLabel(text) {
-  const wanted = text.toLowerCase();
-  const options = optionNodes();
-  let hits = options.filter((entry) => entry.text.toLowerCase() === wanted);
-  if (hits.length === 0) {
-    hits = options.filter((entry) => entry.text.toLowerCase().includes(wanted));
-    hits.sort((a, b) => a.text.length - b.text.length);
-    if (hits.length > 1 && hits[0].text.length === hits[1].text.length) hits = [];
-  }
-  if (hits.length === 0) {
-    return { ok: false, options: [...new Set(options.map((entry) => entry.text))].slice(0, 18) };
-  }
-  hits[0].el.click();
-  return { ok: true, chosen: hits[0].text };
 }
 
 function base64ToBlob(data, mediaType) {
@@ -104,31 +79,13 @@ async function attachPhotos(photoCount, log) {
   else log.push(`Photos: the page did not keep the files (${kept} of ${photoCount}). Upload them yourself.`);
 }
 
-async function selectCategory(path, log) {
-  if (!path?.length) {
-    log.push("Category: this item has no Vinted category path.");
-    return;
-  }
-  let opened = { ok: false, options: [] };
-  for (const label of ["Category", "Select a category", "Choose a category"]) {
-    opened = clickLabel(label);
-    if (opened.ok) break;
-  }
-  if (!opened.ok) {
-    log.push("Category: could not open the category picker.");
-    return;
-  }
-  await sleep(700);
-  for (const step of path) {
-    const clicked = clickLabel(step);
-    if (!clicked.ok) {
-      log.push(`Category: stopped at “${step}”. Visible choices: ${clicked.options.join(", ") || "none"}`);
-      return;
-    }
-    log.push(`Category: chose ${clicked.chosen}`);
-    await sleep(700);
-  }
-  log.push(`Category: finished ${path.join(" › ")}`);
+function descriptionWithSku(description, sku) {
+  const body = String(description || "").replace(/\s+$/u, "");
+  const code = String(sku || "").trim();
+  if (!code) return body;
+  const line = `SKU: ${code}`;
+  if (!body || body === line || body.endsWith(`\n${line}`)) return body || line;
+  return `${body}\n${line}`;
 }
 
 function fillText(label, aliases, value, log) {
@@ -149,13 +106,17 @@ function fillText(label, aliases, value, log) {
 async function fillNikeItem(log) {
   const item = await loadMessage({ type: "load-assist" });
   log.push(`SKU ${item.sku}`);
-  log.push(item.vintedCategory ? `Vinted category: ${item.vintedCategory}` : "Vinted category: none");
   await attachPhotos(item.photoCount || 0, log);
-  await selectCategory(item.vintedCategoryPath || [], log);
   fillText("Title", ["title", "what are you selling", "tell buyers"], item.title, log);
-  fillText("Description", ["description", "describe your item", "describe"], item.description, log);
+  fillText(
+    "Description",
+    ["description", "describe your item", "describe"],
+    descriptionWithSku(item.description, item.sku),
+    log
+  );
+  if (item.sku) log.push(`Description: added SKU: ${item.sku}`);
   fillText("Price", ["price"], String(item.price || "").replace(/[^0-9.]/g, ""), log);
-  log.push("Sell was not pressed. Review the form and publish it yourself.");
+  log.push("Sell was not pressed. Choose the Vinted category yourself.");
 }
 
 function mountPanel() {
