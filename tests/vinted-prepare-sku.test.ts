@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { buildSku, skuForVintedPrepare } from "@/lib/sku";
-import { photosForPreparedSku, prepareVintedFields } from "@/lib/vinted/prepare";
+import { descriptionWithRealSku, photosForPreparedSku, prepareVintedFields } from "@/lib/vinted/prepare";
 import type { ListingResult } from "@/lib/types";
 
-const listing = { title: "Diesel jacket" } as ListingResult;
+const listing = {
+  title: "Diesel jacket",
+  description: "Blue Diesel jacket\nSKU: -A",
+} as ListingResult;
 
 describe("Prepare for Vinted uses the selected item SKU", () => {
   test("stores sku 2830 and finds that item's photos", () => {
@@ -14,6 +17,8 @@ describe("Prepare for Vinted uses the selected item SKU", () => {
     expect(selectedSku).toBe("2830");
     expect(ready.sku).toBe("2830");
     expect(latestSku).toBe("2830");
+    expect(ready.description).toBe("Blue Diesel jacket\nSKU: 2830");
+    expect(descriptionWithRealSku(listing.description, selectedSku).endsWith("SKU: 2830")).toBe(true);
 
     const photos = photosForPreparedSku(
       [
@@ -34,6 +39,8 @@ describe("Prepare for Vinted uses the selected item SKU", () => {
 
   test("keeps any other selected SKU unchanged", () => {
     expect(skuForVintedPrepare(" K75-B ")).toBe("K75-B");
-    expect(prepareVintedFields(skuForVintedPrepare(" K75-B "), listing).sku).toBe("K75-B");
+    const ready = prepareVintedFields(skuForVintedPrepare(" K75-B "), listing);
+    expect(ready.sku).toBe("K75-B");
+    expect(ready.description.endsWith("SKU: K75-B")).toBe(true);
   });
 });

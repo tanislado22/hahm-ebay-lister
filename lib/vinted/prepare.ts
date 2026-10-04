@@ -50,7 +50,19 @@ export function photosForPreparedSku<T extends { data?: string }>(
   return [];
 }
 
+export function descriptionWithRealSku(description: string, sku: string): string {
+  const code = sku.trim();
+  const lines = String(description ?? "").replace(/\s+$/u, "").split("\n");
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+  if (lines.length > 0 && /^SKU:\s*\S+\s*$/u.test(lines[lines.length - 1].trim())) lines.pop();
+  const body = lines.join("\n").replace(/\s+$/u, "");
+  if (!code) return body;
+  const line = `SKU: ${code}`;
+  return body ? `${body}\n${line}` : line;
+}
+
 export function prepareVintedFields(sku: string, listing: ListingResult): VintedPrepared {
+  const code = sku.trim();
   const conditionRaw = (listing.condition ?? "").trim();
   const bucket = (listing.category || "").trim();
   const match = resolveVintedCategory({
@@ -60,9 +72,9 @@ export function prepareVintedFields(sku: string, listing: ListingResult): Vinted
     bucket,
   });
   return {
-    sku: sku.trim(),
+    sku: code,
     title: (listing.title ?? "").trim(),
-    description: (listing.description ?? "").trim(),
+    description: descriptionWithRealSku(listing.description ?? "", code),
     brand: (listing.brand ?? "").trim(),
     category: (listing.category || listing.category_hint || "").trim(),
     vintedCategory: match ? formatVintedCategoryPath(match.path) : "",

@@ -80,12 +80,14 @@ async function attachPhotos(photoCount, sku, log) {
 }
 
 function descriptionWithSku(description, sku) {
-  const body = String(description || "").replace(/\s+$/u, "");
   const code = String(sku || "").trim();
+  const lines = String(description || "").replace(/\s+$/u, "").split("\n");
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+  if (lines.length > 0 && /^SKU:\s*\S+\s*$/u.test(lines[lines.length - 1].trim())) lines.pop();
+  const body = lines.join("\n").replace(/\s+$/u, "");
   if (!code) return body;
   const line = `SKU: ${code}`;
-  if (!body || body === line || body.endsWith(`\n${line}`)) return body || line;
-  return `${body}\n${line}`;
+  return body ? `${body}\n${line}` : line;
 }
 
 function fillText(label, aliases, value, log) {
