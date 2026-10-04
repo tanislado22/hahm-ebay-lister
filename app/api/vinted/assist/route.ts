@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import { getSql } from "@/lib/db";
-import { listListings, type PlatformListing } from "@/lib/inventory/links";
+import { getVintedCurrentSku, listListings, type PlatformListing } from "@/lib/inventory/links";
 import { workspaceKey } from "@/lib/inventory/workspace";
 import {
   formatVintedCategoryPath,
@@ -17,14 +17,6 @@ const MAX_PHOTOS = 20;
 interface StoredPhoto {
   mediaType?: string;
   data?: string;
-}
-
-function isNike(listing: PlatformListing): boolean {
-  const prepared = listing.prepared;
-  const text = [prepared?.brand, prepared?.title, listing.vintedTitle, listing.ebayTitle]
-    .filter(Boolean)
-    .join(" ");
-  return /nike/i.test(text);
 }
 
 function photoName(sku: string, index: number, mediaType: string): string {
@@ -78,16 +70,16 @@ export async function GET(req: NextRequest) {
     const maps = await listVintedCategoryMaps();
     const listings = await listListings(workspace);
     const ready = listings.filter((listing) => listing.vintedStatus === "ready");
-    const sku = req.nextUrl.searchParams.get("sku")?.trim();
-    const match = (req.nextUrl.searchParams.get("match") || "nike").toLowerCase();
-    const chosen = sku
-      ? ready.find((listing) => listing.sku === sku)
-      : match === "nike"
-        ? ready.find(isNike)
-        : ready[0];
+    const sku = req.nextUrl.searchParams.get("sku")?.trim() || (await getVintedCurrentSku(workspace)) || "";
+    const chosen = sku ? ready.find((listing) => listing.sku === sku) : undefined;
     if (!chosen) {
       return NextResponse.json(
-        { ok: false, error: sku ? `No Ready item with SKU ${sku}.` : "No Ready Nike item." },
+        {
+          ok: false,
+          error: sku
+            ? `No Ready item with SKU ${sku}.`
+            : "Prepare one item for Vinted in Listing Writer first.",
+        },
         { status: 404 }
       );
     }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
-import { upsertVintedReady } from "@/lib/inventory/links";
+import { setVintedCurrentSku, upsertVintedReady } from "@/lib/inventory/links";
 import { workspaceKey } from "@/lib/inventory/workspace";
 import { prepareVintedFields } from "@/lib/vinted/prepare";
 import type { ListingResult } from "@/lib/types";
@@ -57,6 +57,10 @@ export async function POST(req: NextRequest) {
         { ok: false, error: "Each item needs a SKU and a written listing." },
         { status: 400 }
       );
+    }
+    if (prepared === 1 && items.length === 1) {
+      const sku = items[0]?.sku?.trim() ?? "";
+      if (sku) await setVintedCurrentSku(workspace, sku);
     }
     return NextResponse.json({ ok: true, prepared });
   } catch (error) {

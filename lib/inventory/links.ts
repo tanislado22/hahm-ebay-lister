@@ -66,6 +66,30 @@ function mapListing(row: Record<string, unknown>): PlatformListing {
   };
 }
 
+export async function setVintedCurrentSku(workspaceKey: string, sku: string): Promise<void> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  await sql`
+    INSERT INTO vinted_current_item (workspace_key, sku, updated_at)
+    VALUES (${workspaceKey}, ${sku}, NOW())
+    ON CONFLICT (workspace_key) DO UPDATE SET
+      sku = EXCLUDED.sku,
+      updated_at = NOW()
+  `;
+}
+
+export async function getVintedCurrentSku(workspaceKey: string): Promise<string | null> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const rows = await sql`
+    SELECT sku
+    FROM vinted_current_item
+    WHERE workspace_key = ${workspaceKey}
+  `;
+  const sku = String((rows[0] as { sku?: string } | undefined)?.sku || "").trim();
+  return sku || null;
+}
+
 export async function listListings(workspace: string): Promise<PlatformListing[]> {
   const sql = getSql();
   await ensureInventoryTables();

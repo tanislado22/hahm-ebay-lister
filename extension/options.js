@@ -27,5 +27,5 @@ document.getElementById("save").addEventListener("click", async () => {
     return;
   }
   await chrome.storage.local.set({ appUrl: url, appSecret: secret });
-  status.textContent = "Saved. Open Vinted’s sell page and use Fill Ready Nike item.";
+  status.textContent = "Saved. Open Vinted’s sell page and use Fill Ready Vinted item.";
 });

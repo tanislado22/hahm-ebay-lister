@@ -24,8 +24,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "load-assist" && message?.type !== "load-photo") return;
   const query =
     message.type === "load-photo"
-      ? `match=nike&photo=${encodeURIComponent(message.index)}`
-      : "match=nike";
+      ? `photo=${encodeURIComponent(message.index)}`
+      : "";
   assistGet(query)
     .then((body) => sendResponse({ ok: true, body }))
     .catch((error) => sendResponse({ ok: false, error: error.message }));

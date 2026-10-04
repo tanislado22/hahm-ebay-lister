@@ -115,7 +115,6 @@ async function fillNikeItem(log) {
     log
   );
   if (item.sku) log.push(`Description: added SKU: ${item.sku}`);
-  fillText("Price", ["price"], String(item.price || "").replace(/[^0-9.]/g, ""), log);
   log.push("Sell was not pressed. Choose the Vinted category yourself.");
 }
 
@@ -126,8 +125,8 @@ function mountPanel() {
   panel.className = "vinted-assist";
   panel.innerHTML = `
     <strong>Listing Writer assist</strong>
-    <p>Fills the Ready Nike item. It does not press Sell.</p>
-    <button type="button" id="vinted-assist-fill">Fill Ready Nike item</button>
+    <p>Fills the current Ready Vinted item. It does not press Sell.</p>
+    <button type="button" id="vinted-assist-fill">Fill Ready Vinted item</button>
     <pre id="vinted-assist-log"></pre>
   `;
   document.body.appendChild(panel);
