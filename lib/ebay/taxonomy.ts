@@ -59,13 +59,35 @@ export interface CategorySuggestion {
 
 // ── App token (client-credentials), cached in the warm lambda ────────────────
 
+// Item aspects require the application scope metadata.insights in addition to
+// the public base scope. Both are client-credentials scopes, so the seller
+// does not re-authorize. Category suggestions need only the base scope.
+const EBAY_APP_SCOPE = "https://api.ebay.com/oauth/api_scope";
+const EBAY_ASPECTS_SCOPE = "https://api.ebay.com/oauth/api_scope/metadata.insights";
+
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
-// Exported for other read-only eBay APIs that accept the same client-credentials
-// scope (e.g. Browse-API comp searches).
-export async function appToken(): Promise<string> {
-  const now = Date.now();
-  if (cachedToken && cachedToken.expiresAt > now + 60_000) return cachedToken.token;
+function summarizeEbayError(body: string): string {
+  try {
+    const data = JSON.parse(body);
+    const errors = Array.isArray(data?.errors) ? data.errors : [];
+    if (errors.length) {
+      return errors
+        .map((e: { errorId?: number; message?: string }) =>
+          `${e?.errorId ?? "?"} ${e?.message ?? ""}`.trim()
+        )
+        .join("; ");
+    }
+    if (data?.error) return `${data.error}: ${data.error_description ?? ""}`.trim();
+  } catch {
+    /* token and taxonomy errors are JSON; keep a short raw snippet otherwise */
+  }
+  return body.replace(/\s+/g, " ").slice(0, 300);
+}
+
+async function requestAppToken(
+  scope: string
+): Promise<{ ok: true; token: string; expiresIn: number } | { ok: false; status: number; body: string }> {
   const creds = getEbayCreds();
   const resp = await fetch(EBAY_TOKEN_URL, {
     method: "POST",
@@ -75,17 +97,43 @@ export async function appToken(): Promise<string> {
     },
     body: new URLSearchParams({
       grant_type: "client_credentials",
-      scope: "https://api.ebay.com/oauth/api_scope",
+      scope,
     }).toString(),
   });
-  if (!resp.ok) throw new Error(`eBay app token failed (${resp.status})`);
-  const data = (await resp.json()) as { access_token: string; expires_in: number };
-  cachedToken = { token: data.access_token, expiresAt: now + data.expires_in * 1000 };
-  return data.access_token;
+  const body = await resp.text();
+  if (!resp.ok) return { ok: false, status: resp.status, body };
+  const data = JSON.parse(body) as { access_token?: string; expires_in?: number };
+  if (!data.access_token || !data.expires_in) {
+    return { ok: false, status: resp.status, body };
+  }
+  return { ok: true, token: data.access_token, expiresIn: data.expires_in };
+}
+
+// Exported for other read-only eBay APIs that accept the same client-credentials
+// scope (e.g. Browse-API comp searches).
+export async function appToken(): Promise<string> {
+  const now = Date.now();
+  if (cachedToken && cachedToken.expiresAt > now + 60_000) return cachedToken.token;
+  let result = await requestAppToken(`${EBAY_APP_SCOPE} ${EBAY_ASPECTS_SCOPE}`);
+  if (!result.ok && /invalid_scope/i.test(result.body)) {
+    console.warn(
+      `[ebay/taxonomy] app token rejected metadata.insights (HTTP ${result.status}); retrying with the base scope only`
+    );
+    result = await requestAppToken(EBAY_APP_SCOPE);
+  }
+  if (!result.ok) {
+    console.warn(
+      `[ebay/taxonomy] app token failed (HTTP ${result.status}): ${summarizeEbayError(result.body)}`
+    );
+    throw new Error(`eBay app token failed (${result.status})`);
+  }
+  cachedToken = { token: result.token, expiresAt: now + result.expiresIn * 1000 };
+  return result.token;
 }
 
 async function taxGet(path: string): Promise<any | null> {
   const token = await appToken();
+  const operation = path.split("?")[0];
   const resp = await fetch(
     `${EBAY_TAX_BASE}/category_tree/${EBAY_CATEGORY_TREE_ID}/${path}`,
     {
@@ -96,8 +144,18 @@ async function taxGet(path: string): Promise<any | null> {
       },
     }
   );
-  if (!resp.ok) return null;
-  return resp.json().catch(() => null);
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    console.warn(
+      `[ebay/taxonomy] ${operation} failed (HTTP ${resp.status}): ${summarizeEbayError(body)}`
+    );
+    return null;
+  }
+  const data = await resp.json().catch(() => null);
+  if (!data) {
+    console.warn(`[ebay/taxonomy] ${operation} returned an unreadable body (HTTP ${resp.status})`);
+  }
+  return data;
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
@@ -122,7 +180,8 @@ export async function suggestLeafCategories(
       if (out.length >= limit) break;
     }
     return out;
-  } catch {
+  } catch (e) {
+    console.warn(`[ebay/taxonomy] category suggestions failed: ${(e as Error).message}`);
     return [];
   }
 }
@@ -166,6 +225,9 @@ export async function categoryAspects(categoryId: string): Promise<AspectMeta[]>
     const data = await taxGet(
       `get_item_aspects_for_category?category_id=${encodeURIComponent(categoryId)}`
     );
+    // A failed call returns null. Caching that as "no aspects" would stick for
+    // the life of the process and keep publishing without a schema.
+    if (!data) return [];
     const out: AspectMeta[] = [];
     for (const a of data?.aspects ?? []) {
       const con = a?.aspectConstraint ?? {};
@@ -192,7 +254,10 @@ export async function categoryAspects(categoryId: string): Promise<AspectMeta[]>
     }
     aspectCache.set(categoryId, out);
     return out;
-  } catch {
+  } catch (e) {
+    console.warn(
+      `[ebay/taxonomy] item aspects failed for category ${categoryId}: ${(e as Error).message}`
+    );
     return [];
   }
 }
