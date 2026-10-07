@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
+import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
+import { buildStoredZip, vintedPhotoFileName, vintedPhotoZipName } from "@/lib/vinted/photo-zip";
 
 const TITLE_LIMIT = 80;
 
@@ -87,6 +89,8 @@ export function ListingCard({
   const listing = group.listing;
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [zoomedPhoto, setZoomedPhoto] = useState<Photo | null>(null);
+  const [preparingVintedPhotos, setPreparingVintedPhotos] = useState(false);
+  const [vintedPhotoError, setVintedPhotoError] = useState<string | null>(null);
   const cover = photoById(group.photoIds[0]);
 useEffect(() => {
 
@@ -103,6 +107,36 @@ useEffect(() => {
   }, [listing?.item_specifics]);
 
   const titleLen = listing?.title?.length ?? 0;
+
+  const downloadVintedPhotos = async () => {
+    const photos = group.photoIds
+      .map((id) => photoById(id))
+      .filter((photo): photo is Photo => Boolean(photo?.data));
+    if (photos.length === 0) {
+      setVintedPhotoError("This item has no photos to download.");
+      return;
+    }
+    setPreparingVintedPhotos(true);
+    setVintedPhotoError(null);
+    try {
+      const files = [];
+      for (let index = 0; index < photos.length; index += 1) {
+        const copy = await optimizePhotoCopy(photos[index].data, photos[index].mediaType);
+        files.push({ name: vintedPhotoFileName(group.sku, index), data: copy });
+      }
+      const zip = buildStoredZip(files);
+      const url = URL.createObjectURL(new Blob([zip], { type: "application/zip" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = vintedPhotoZipName(group.sku);
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch (error) {
+      setVintedPhotoError((error as Error).message || "Could not prepare the photos.");
+    } finally {
+      setPreparingVintedPhotos(false);
+    }
+  };
 
   // eBay's size standardization blocks apparel/footwear listings that are
   // missing a Size, so flag those for the seller before they post.
@@ -1023,6 +1057,15 @@ const keyword = [
                   Prepare for Vinted
                 </button>
               )}
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={preparingVintedPhotos || group.photoIds.length === 0}
+                onClick={() => void downloadVintedPhotos()}
+              >
+                {preparingVintedPhotos ? "Preparing photos…" : "Download Vinted Photos"}
+              </button>
+              {vintedPhotoError ? <p className="post-result err">{vintedPhotoError}</p> : null}
               {group.vintedStatus === "ready" && (
                 <>
                   <a className="btn btn-ghost" href="/vinted">

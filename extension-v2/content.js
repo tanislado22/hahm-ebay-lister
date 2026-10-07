@@ -1,7 +1,3 @@
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function clean(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -47,67 +43,21 @@ function findField(aliases) {
   return null;
 }
 
-function clickChoice(value) {
-  const wanted = clean(value).toLowerCase();
-  if (!wanted) return false;
-  const inputs = [...document.querySelectorAll('input[type="radio"], input[type="checkbox"]')];
-  const match = inputs.find((input) => {
-    const text = clean(labelFor(input)?.textContent).toLowerCase();
-    return text === wanted;
-  });
-  if (!match) return false;
-  match.click();
-  return true;
-}
-
-function base64ToBlob(data, mediaType) {
-  const binary = atob(data);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mediaType || "image/jpeg" });
-}
-
 async function loadMessage(message) {
   const response = await chrome.runtime.sendMessage(message);
   if (!response?.ok) throw new Error(response?.error || "The extension could not reach your app.");
   return response.body;
 }
 
-function fileInput() {
-  return [...document.querySelectorAll('input[type="file"]')].find((el) => {
-    const accept = (el.getAttribute("accept") || "").toLowerCase();
-    return !accept || accept.includes("image");
-  });
-}
-
-async function attachPhotos(item, log) {
-  const input = fileInput();
-  if (!input) {
-    log.push("Photos: no file selector was found on this page.");
-    return;
-  }
-  const transfer = new DataTransfer();
-  const photoCount = item.photoCount || 0;
-  for (let index = 0; index < photoCount; index += 1) {
-    const body = await loadMessage({
-      type: "load-photo",
-      index,
-      sku: item.sku,
-      updatedAt: item.updatedAt,
-    });
-    if (body.sku && body.sku !== item.sku) {
-      throw new Error(`Photo ${index + 1} belongs to SKU ${body.sku}, not ${item.sku}.`);
-    }
-    const photo = body.photo;
-    transfer.items.add(new File([base64ToBlob(photo.data, photo.mediaType)], photo.name, { type: photo.mediaType }));
-  }
-  input.files = transfer.files;
-  input.dispatchEvent(new Event("change", { bubbles: true }));
-  await sleep(600);
-  const kept = input.files?.length || 0;
-  if (!photoCount) log.push("Photos: cleared. This item has no saved photos.");
-  else if (kept === photoCount) log.push(`Photos: attached ${kept} file(s) for SKU ${item.sku}.`);
-  else log.push(`Photos: the page kept ${kept} of ${photoCount}. Upload them yourself.`);
+function descriptionWithSku(description, sku) {
+  const code = String(sku || "").trim();
+  const lines = String(description || "").replace(/\s+$/u, "").split("\n");
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+  if (lines.length > 0 && /^SKU:\s*\S+\s*$/u.test(lines[lines.length - 1].trim())) lines.pop();
+  const body = lines.join("\n").replace(/\s+$/u, "");
+  if (!code) return body;
+  const line = `SKU: ${code}`;
+  return body ? `${body}\n${line}` : line;
 }
 
 function fillField(label, aliases, value, log) {
@@ -124,19 +74,13 @@ function fillField(label, aliases, value, log) {
 async function fillReadyItem(log) {
   const item = await loadMessage({ type: "load-ready" });
   log.push(`SKU ${item.sku}`);
-  await attachPhotos(item, log);
   fillField("Title", ["title", "what are you selling", "tell buyers"], item.title, log);
-  fillField("Description", ["description", "describe your item", "describe"], item.description, log);
-  fillField("Price", ["price"], item.price, log);
-  fillField("Brand", ["brand"], item.brand, log);
-  fillField("Category", ["category"], item.category, log);
-  fillField("Size", ["size"], item.size, log);
-  if (!clickChoice(item.condition)) fillField("Condition", ["condition"], item.condition, log);
-  else log.push("Condition: selected.");
-  const colors = String(item.color || "").split(",").map((part) => part.trim()).filter(Boolean);
-  const selectedColors = colors.filter((color) => clickChoice(color));
-  if (selectedColors.length === colors.length && colors.length > 0) log.push("Color: selected.");
-  else fillField("Color", ["color", "colour"], item.color, log);
+  fillField(
+    "Description",
+    ["description", "describe your item", "describe"],
+    descriptionWithSku(item.description, item.sku),
+    log
+  );
   log.push("Sell was not pressed.");
 }
 
@@ -147,7 +91,7 @@ function mountPanel() {
   panel.className = "vinted-assist vinted-assist-v2";
   panel.innerHTML = `
     <strong>Listing Writer Vinted V2</strong>
-    <p>Fills the one item you just prepared. It does not press Sell.</p>
+    <p>Fills the title and description, including the SKU. It does not upload photos or press Sell.</p>
     <button type="button" id="vinted-assist-fill">Fill Ready Vinted item</button>
     <pre id="vinted-assist-log"></pre>
   `;

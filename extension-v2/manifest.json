@@ -4,7 +4,11 @@
   "version": "2.0.0",
   "description": "Fills the open Vinted sell form from the one item you just prepared. Does not press Sell.",
   "permissions": ["storage"],
-  "host_permissions": ["https://www.vinted.com/*", "https://*.vinted.com/*"],
+  "host_permissions": [
+    "https://www.vinted.com/*",
+    "https://*.vinted.com/*",
+    "https://hahm-ebay-lister-tau-one.vercel.app/*"
+  ],
   "optional_host_permissions": ["https://*/*"],
   "background": {
     "service_worker": "background.js"

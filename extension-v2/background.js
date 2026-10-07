@@ -1,11 +1,12 @@
+const APP_URL = "https://hahm-ebay-lister-tau-one.vercel.app";
+
 async function settings() {
-  const saved = await chrome.storage.local.get(["appUrl", "appSecret"]);
-  const appUrl = String(saved.appUrl || "").replace(/\/$/, "");
+  const saved = await chrome.storage.local.get(["appSecret"]);
   const appSecret = String(saved.appSecret || "");
-  if (!appUrl || !appSecret) {
-    throw new Error("Open the extension settings and save your app URL and access code.");
+  if (!appSecret) {
+    throw new Error("Open the extension settings and save your access code.");
   }
-  return { appUrl, appSecret };
+  return { appUrl: APP_URL, appSecret };
 }
 
 async function assistGet(query) {
