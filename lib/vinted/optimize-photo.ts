@@ -2,10 +2,11 @@ const TARGET_BYTES = 2 * 1024 * 1024;
 const HARD_MAX_BYTES = 7 * 1024 * 1024;
 const QUALITIES = [0.92, 0.9, 0.88, 0.86];
 
-function base64ToBytes(data: string): Uint8Array {
+function base64ToBytes(data: string): Uint8Array<ArrayBuffer> {
   const payload = data.includes(",") ? data.slice(data.indexOf(",") + 1) : data;
   const binary = atob(payload);
-  const bytes = new Uint8Array(binary.length);
+  const buffer = new ArrayBuffer(binary.length);
+  const bytes = new Uint8Array(buffer);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }

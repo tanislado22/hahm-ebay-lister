@@ -125,7 +125,9 @@ useEffect(() => {
         files.push({ name: vintedPhotoFileName(group.sku, index), data: copy });
       }
       const zip = buildStoredZip(files);
-      const url = URL.createObjectURL(new Blob([zip], { type: "application/zip" }));
+      const zipBuffer = new ArrayBuffer(zip.byteLength);
+      new Uint8Array(zipBuffer).set(zip);
+      const url = URL.createObjectURL(new Blob([zipBuffer], { type: "application/zip" }));
       const link = document.createElement("a");
       link.href = url;
       link.download = vintedPhotoZipName(group.sku);
