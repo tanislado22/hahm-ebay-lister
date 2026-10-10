@@ -4,8 +4,8 @@ import { decideEbaySale } from "@/lib/ebay/sale-decision";
 import { accessTokenFromCookie } from "@/lib/ebay/session";
 import { findListingForEbaySale } from "@/lib/inventory/links";
 import { claimSaleEvent, finishSaleEvent } from "@/lib/inventory/sale-events";
-import { ebaySaleNotice } from "@/lib/telegram/ebay-sale";
-import { deliverConfirmedSale } from "@/lib/telegram/notices";
+import { ebaySaleNotice, isNewTelegramSale } from "@/lib/telegram/ebay-sale";
+import { deliverConfirmedSale, suppressTelegramSale } from "@/lib/telegram/notices";
 import { sendPlatformSaleAlert } from "@/lib/whatsapp/send";
 
 const LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -70,7 +70,14 @@ export async function runEbaySalesCheck(): Promise<EbaySalesCheckResult> {
         );
         try {
           const notice = ebaySaleNotice(line, lookup);
-          if (notice) {
+          if (notice && !isNewTelegramSale(line.createdAt)) {
+            await suppressTelegramSale({
+              platform: "ebay",
+              externalEventId,
+              sku: notice.sku,
+              title: notice.title,
+            });
+          } else if (notice) {
             const delivery = await deliverConfirmedSale({
               platform: "ebay",
               externalEventId,

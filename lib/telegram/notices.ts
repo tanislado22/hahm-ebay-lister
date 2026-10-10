@@ -68,17 +68,73 @@ async function finishTelegramNotice(
 ): Promise<void> {
   const sql = getSql();
   await ensureInventoryTables();
+  if (input.status === "sent") {
+    await sql`
+      UPDATE telegram_sale_notices
+      SET status = 'sent', detail = ${input.detail ?? null}, sent_at = NOW(), updated_at = NOW()
+      WHERE id = ${id}
+    `;
+    return;
+  }
   await sql`
     UPDATE telegram_sale_notices
-    SET
-      status = ${input.status},
-      detail = ${input.detail ?? null},
-      sent_at = CASE
-        WHEN ${input.status === "sent"} THEN NOW()
-        ELSE sent_at
-      END,
-      updated_at = NOW()
+    SET status = 'failed', detail = ${input.detail ?? null}, updated_at = NOW()
     WHERE id = ${id}
+      AND sent_at IS NULL
+  `;
+}
+
+async function skuAlreadyAnnounced(sku: string): Promise<boolean> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const rows = await sql`
+    SELECT id
+    FROM telegram_sale_notices
+    WHERE sku = ${sku}
+      AND sent_at IS NOT NULL
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+// Remember an old or repeated sale so later cron runs do not send it.
+export async function suppressTelegramSale(input: {
+  platform: SalePlatform;
+  externalEventId: string;
+  sku: string;
+  title: string;
+}): Promise<void> {
+  const sku = input.sku.trim();
+  const title = input.title.trim();
+  const externalEventId = input.externalEventId.trim();
+  if (!sku || !title || !externalEventId) return;
+  const sql = getSql();
+  await ensureInventoryTables();
+  const id = crypto.randomUUID();
+  await sql`
+    INSERT INTO telegram_sale_notices (
+      id, platform, external_event_id, sku, title, status, detail, sent_at, created_at, updated_at
+    )
+    VALUES (
+      ${id},
+      ${input.platform},
+      ${externalEventId},
+      ${sku},
+      ${title},
+      'suppressed',
+      'Older than the Telegram notification cutoff',
+      NOW(),
+      NOW(),
+      NOW()
+    )
+    ON CONFLICT (platform, external_event_id) DO UPDATE
+    SET
+      status = CASE
+        WHEN telegram_sale_notices.status = 'sent' THEN telegram_sale_notices.status
+        ELSE 'suppressed'
+      END,
+      sent_at = COALESCE(telegram_sale_notices.sent_at, NOW()),
+      updated_at = NOW()
   `;
 }
 
@@ -92,6 +148,10 @@ export async function deliverConfirmedSale(input: {
   const title = input.title.trim();
   const externalEventId = input.externalEventId.trim();
   if (!sku || !title || !externalEventId) return "missing";
+  if (await skuAlreadyAnnounced(sku)) {
+    await suppressTelegramSale({ platform: input.platform, externalEventId, sku, title });
+    return "duplicate";
+  }
 
   const claim = await claimTelegramNotice({
     platform: input.platform,

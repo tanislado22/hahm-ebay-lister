@@ -30,6 +30,12 @@ export function middleware(request: NextRequest) {
   // the inline <script> tags it generates during SSR (hydration, RSC payload).
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
+  // Keep the cron credential available to route handlers if the runtime drops
+  // the Authorization header while applying these overridden request headers.
+  const authorization = request.headers.get("authorization") ?? "";
+  if (authorization.startsWith("Bearer ") && !requestHeaders.get("x-cron-secret")) {
+    requestHeaders.set("x-cron-secret", authorization.slice("Bearer ".length).trim());
+  }
 
   const response = NextResponse.next({
     request: { headers: requestHeaders },

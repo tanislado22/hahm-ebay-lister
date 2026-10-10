@@ -10,10 +10,12 @@ export interface EbaySaleLine {
   legacyItemId: string;
   cancelled: boolean;
   paymentStatus: string;
+  createdAt: string;
 }
 
 interface EbayOrderJson {
   orderId?: string;
+  creationDate?: string;
   orderPaymentStatus?: string;
   cancelStatus?: { cancelState?: string };
   lineItems?: {
@@ -51,6 +53,7 @@ export async function fetchRecentOrderLines(
       const cancelState = order.cancelStatus?.cancelState ?? "";
       const cancelled = cancelState === "CANCELED" || cancelState === "CANCELLED";
       const paymentStatus = (order.orderPaymentStatus ?? "").trim();
+      const createdAt = (order.creationDate ?? "").trim();
       const orderId = order.orderId ?? "";
       for (const item of order.lineItems ?? []) {
         if (!orderId || !item.lineItemId) continue;
@@ -62,6 +65,7 @@ export async function fetchRecentOrderLines(
           legacyItemId: (item.legacyItemId ?? "").trim(),
           cancelled,
           paymentStatus,
+          createdAt,
         });
       }
     }

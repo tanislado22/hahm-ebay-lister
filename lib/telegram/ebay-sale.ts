@@ -1,3 +1,14 @@
+// Sales created before this moment were already announced, or are old orders
+// from the 7-day eBay lookup. They are recorded and not sent again.
+export const TELEGRAM_SALE_CUTOFF_ISO = "2026-10-10T19:39:00.000Z";
+
+export function isNewTelegramSale(createdAt: string): boolean {
+  const cutoff = Date.parse(process.env.TELEGRAM_NOTIFY_AFTER || TELEGRAM_SALE_CUTOFF_ISO);
+  const created = Date.parse(createdAt);
+  if (!Number.isFinite(cutoff) || !Number.isFinite(created)) return false;
+  return created >= cutoff;
+}
+
 export function isConfirmedEbaySale(line: { cancelled: boolean; paymentStatus: string }): boolean {
   if (line.cancelled) return false;
   const status = line.paymentStatus.trim().toUpperCase();

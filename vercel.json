@@ -3,6 +3,18 @@
     {
       "path": "/api/cron/ebay-sales",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/ebay-ended",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/ebay-ended",
+      "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/cron/ebay-ended",
+      "schedule": "0 1 * * *"
     }
   ]
 }

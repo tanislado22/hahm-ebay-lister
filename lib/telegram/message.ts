@@ -25,6 +25,35 @@ export function enlargeSkuDigits(sku: string): string {
     .join("");
 }
 
+export function endedListingMessage(sku: string, title: string): string {
+  const item = escapeTelegramHtml(displayTitle(title));
+  return [
+    "🛑 <b>ARTÍCULO RETIRADO DE EBAY</b>",
+    "",
+    SEPARATOR,
+    "",
+    "🏷️ <b>ARTÍCULO</b>",
+    item,
+    "",
+    SEPARATOR,
+    "",
+    "📦 <b>NÚMERO DE SKU</b>",
+    skuBlock(sku),
+    "",
+    SEPARATOR,
+  ].join("\n");
+}
+
+export function connectionTestMessage(): string {
+  return [
+    "✅ CONEXIÓN EXITOSA",
+    "🔔 My eBay Vinted Sales",
+    "📦 SKU: 2830",
+    "🛍️ Plataforma: eBay",
+    "🟢 Notificaciones de ventas funcionando correctamente.",
+  ].join("\n");
+}
+
 export function platformStoreLine(platform: SalePlatform): string {
   if (platform === "vinted") return "💙 <b>Vinted Store</b>";
   return "🛍️ <b>eBay Store</b>";
@@ -32,11 +61,8 @@ export function platformStoreLine(platform: SalePlatform): string {
 
 function skuBlock(sku: string): string {
   const exact = sku.trim();
-  const exactHtml = escapeTelegramHtml(exact);
-  const largeHtml = escapeTelegramHtml(enlargeSkuDigits(exact));
   if (!exact) return "";
-  if (largeHtml === exactHtml) return `<b>${exactHtml}</b>`;
-  return `<b>${largeHtml}</b>\n${exactHtml}`;
+  return `<b>${escapeTelegramHtml(enlargeSkuDigits(exact))}</b>`;
 }
 
 export function saleTelegramMessage(platform: SalePlatform, sku: string, title: string): string {

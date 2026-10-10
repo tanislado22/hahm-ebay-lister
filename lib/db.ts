@@ -81,6 +81,33 @@ async function migrate(): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS ebay_ended_notices (
+      id TEXT PRIMARY KEY,
+      ebay_item_id TEXT NOT NULL,
+      event_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      sent_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (ebay_item_id, event_id)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS ebay_listing_watches (
+      ebay_item_id TEXT PRIMARY KEY,
+      sku TEXT,
+      title TEXT,
+      listing_status TEXT NOT NULL,
+      quantity_sold INTEGER NOT NULL DEFAULT 0,
+      end_time TEXT,
+      notified_event_id TEXT,
+      first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS vinted_category_maps (
       id TEXT PRIMARY KEY,
       item_type TEXT NOT NULL UNIQUE,

@@ -14,12 +14,18 @@ function configFromEnv(): TelegramConfig {
   return { token, chatId };
 }
 
-function safeTelegramError(error: unknown): string {
-  const message = error instanceof Error ? error.message : "request failed";
-  return message.replace(/bot\d+:[A-Za-z0-9_-]+/gi, "bot[redacted]").slice(0, 300);
+function safeTelegramError(error: unknown, chatId = ""): string {
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" && error ? error : "request failed";
+  let safe = message.replace(/bot\d+:[A-Za-z0-9_-]+/gi, "bot[redacted]");
+  if (chatId) safe = safe.split(chatId).join("[redacted]");
+  return safe.slice(0, 300);
 }
 
-export async function sendTelegramHtml(text: string): Promise<{ messageId: number }> {
+async function postTelegramMessage(
+  text: string,
+  parseMode?: "HTML"
+): Promise<{ messageId: number }> {
   const cfg = configFromEnv();
   const url = `https://api.telegram.org/bot${cfg.token}/sendMessage`;
   let resp: Response;
@@ -30,12 +36,12 @@ export async function sendTelegramHtml(text: string): Promise<{ messageId: numbe
       body: JSON.stringify({
         chat_id: cfg.chatId,
         text,
-        parse_mode: "HTML",
+        ...(parseMode ? { parse_mode: parseMode } : {}),
         disable_web_page_preview: true,
       }),
     });
   } catch (error) {
-    throw new Error(`Telegram request failed: ${safeTelegramError(error)}`);
+    throw new Error(`Telegram request failed: ${safeTelegramError(error, cfg.chatId)}`);
   }
 
   const data = (await resp.json().catch(() => null)) as {
@@ -45,9 +51,19 @@ export async function sendTelegramHtml(text: string): Promise<{ messageId: numbe
   } | null;
   if (!resp.ok || !data?.ok) {
     const description = typeof data?.description === "string" ? data.description : "";
-    throw new Error(`Telegram request failed (${resp.status}): ${description.slice(0, 200)}`);
+    throw new Error(
+      `Telegram request failed (${resp.status}): ${safeTelegramError(description, cfg.chatId)}`
+    );
   }
   return { messageId: Number(data.result?.message_id ?? 0) };
+}
+
+export function sendTelegramHtml(text: string): Promise<{ messageId: number }> {
+  return postTelegramMessage(text, "HTML");
+}
+
+export function sendTelegramPlain(text: string): Promise<{ messageId: number }> {
+  return postTelegramMessage(text);
 }
 
 export async function sendTelegramSale(

@@ -1,11 +1,27 @@
 import { describe, expect, test } from "vitest";
-import { ebaySaleNotice, isConfirmedEbaySale } from "@/lib/telegram/ebay-sale";
-import { enlargeSkuDigits, saleTelegramMessage } from "@/lib/telegram/message";
+import { ebaySaleNotice, isConfirmedEbaySale, isNewTelegramSale } from "@/lib/telegram/ebay-sale";
+import { connectionTestMessage, enlargeSkuDigits, saleTelegramMessage } from "@/lib/telegram/message";
 
 const SAMPLE_TITLE = "Levi’s 550 Men’s Relaxed Fit Jeans";
 
+describe("telegram connection test", () => {
+  test("uses the fixed connection text and does not include a sale claim", () => {
+    const message = connectionTestMessage();
+    expect(message).toBe(
+      [
+        "✅ CONEXIÓN EXITOSA",
+        "🔔 My eBay Vinted Sales",
+        "📦 SKU: 2830",
+        "🛍️ Plataforma: eBay",
+        "🟢 Notificaciones de ventas funcionando correctamente.",
+      ].join("\n")
+    );
+    expect(message).not.toContain("VENTA CONFIRMADA");
+  });
+});
+
 describe("telegram sale message", () => {
-  test("renders the eBay premium layout with a bold header and both SKU forms", () => {
+  test("renders the eBay premium layout with one large bold SKU and the full title", () => {
     const message = saleTelegramMessage("ebay", "2830", SAMPLE_TITLE);
     expect(message).toContain("🎉 <b>¡VENTA CONFIRMADA!</b> 🎉");
     expect(message).toContain("🛍️ <b>eBay Store</b>");
@@ -14,7 +30,8 @@ describe("telegram sale message", () => {
     expect(message).toContain(SAMPLE_TITLE);
     expect(message).toContain("📦 <b>NÚMERO DE SKU</b>");
     expect(message).toContain(`<b>${enlargeSkuDigits("2830")}</b>`);
-    expect(message).toContain("\n2830\n");
+    expect(message).not.toContain("\n2830");
+    expect(message.match(/𝟮𝟴𝟯𝟬/g)).toHaveLength(1);
     expect(message).toContain("✨ <b>¡Otra venta exitosa!</b>");
     expect(message).toContain("━━━━━━━━━━━━━━━━━━━━");
     expect(message).not.toMatch(/\$|price|buyer|comprador/i);
@@ -33,12 +50,13 @@ describe("telegram sale message", () => {
     expect(message).not.toContain("<550>");
   });
 
-  test("maps only digits to large unicode and still prints the exact SKU", () => {
+  test("shows a mixed SKU once, with large digits and the other characters", () => {
     expect(enlargeSkuDigits("2830")).toBe("𝟮𝟴𝟯𝟬");
     expect(enlargeSkuDigits("28-30")).toBe("𝟮𝟴-𝟯𝟬");
     const message = saleTelegramMessage("ebay", "28-30", SAMPLE_TITLE);
     expect(message).toContain("<b>𝟮𝟴-𝟯𝟬</b>");
-    expect(message).toContain("28-30");
+    expect(message.match(/𝟮𝟴-𝟯𝟬/g)).toHaveLength(1);
+    expect(message).not.toContain("28-30");
   });
 
   test("does not repeat a SKU that has no digits", () => {
@@ -84,6 +102,13 @@ describe("confirmed eBay sale selection", () => {
 
   test("does not guess when several inventory rows match", () => {
     expect(ebaySaleNotice(paid, { kind: "ambiguous" })).toBeNull();
+  });
+
+  test("does not notify a sale created before the Telegram cutoff", () => {
+    expect(isNewTelegramSale("2026-10-10T19:39:00.000Z")).toBe(true);
+    expect(isNewTelegramSale("2026-10-11T15:00:00.000Z")).toBe(true);
+    expect(isNewTelegramSale("2026-10-09T12:00:00.000Z")).toBe(false);
+    expect(isNewTelegramSale("")).toBe(false);
   });
 
   test("does not notify a cancelled order", () => {
