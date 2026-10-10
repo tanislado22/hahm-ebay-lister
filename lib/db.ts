@@ -65,6 +65,22 @@ async function migrate(): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS telegram_sale_notices (
+      id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL,
+      external_event_id TEXT NOT NULL,
+      sku TEXT NOT NULL,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      detail TEXT,
+      sent_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (platform, external_event_id)
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS vinted_category_maps (
       id TEXT PRIMARY KEY,
       item_type TEXT NOT NULL UNIQUE,

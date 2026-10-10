@@ -3,6 +3,7 @@ import { classifyVintedEmail } from "@/lib/vinted/email";
 import { listPublishedVinted } from "@/lib/inventory/links";
 import { claimSaleEvent, finishSaleEvent } from "@/lib/inventory/sale-events";
 import { matchSoldTitle } from "@/lib/vinted/match";
+import { deliverConfirmedSale } from "@/lib/telegram/notices";
 import { sendPlatformSaleAlert } from "@/lib/whatsapp/send";
 
 export async function handleVintedSaleEmail(
@@ -58,8 +59,25 @@ export async function handleVintedSaleEmail(
     detail: null,
     initialStatus: "pending",
   });
+
+  let telegram: "sent" | "duplicate" | "failed" | "missing" = "missing";
+  try {
+    telegram = await deliverConfirmedSale({
+      platform: "vinted",
+      externalEventId: email.messageId,
+      sku: match.sku,
+      title: match.title,
+    });
+  } catch (error) {
+    console.error("[vinted/inbound] Telegram failed", email.messageId, error);
+    telegram = "failed";
+  }
+
   if (claim.action === "done") {
-    return { httpStatus: 200, body: { ok: true, duplicate: true } };
+    if (telegram === "failed") {
+      return { httpStatus: 500, body: { ok: false, error: "Telegram send failed", duplicate: true } };
+    }
+    return { httpStatus: 200, body: { ok: true, duplicate: true, telegram } };
   }
 
   try {
@@ -70,7 +88,6 @@ export async function handleVintedSaleEmail(
       sku: match.sku,
       title: match.title,
     });
-    return { httpStatus: 200, body: { ok: true, status: "sent", sku: match.sku } };
   } catch (error) {
     console.error("[vinted/inbound] WhatsApp failed", email.messageId, error);
     await finishSaleEvent(claim.id, {
@@ -82,4 +99,9 @@ export async function handleVintedSaleEmail(
     });
     return { httpStatus: 500, body: { ok: false, error: "WhatsApp send failed" } };
   }
+
+  if (telegram === "failed") {
+    return { httpStatus: 500, body: { ok: false, error: "Telegram send failed", sku: match.sku } };
+  }
+  return { httpStatus: 200, body: { ok: true, status: "sent", sku: match.sku, telegram } };
 }

@@ -4,6 +4,8 @@ import { decideEbaySale } from "@/lib/ebay/sale-decision";
 import { accessTokenFromCookie } from "@/lib/ebay/session";
 import { findListingForEbaySale } from "@/lib/inventory/links";
 import { claimSaleEvent, finishSaleEvent } from "@/lib/inventory/sale-events";
+import { ebaySaleNotice } from "@/lib/telegram/ebay-sale";
+import { deliverConfirmedSale } from "@/lib/telegram/notices";
 import { sendPlatformSaleAlert } from "@/lib/whatsapp/send";
 
 const LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -14,6 +16,9 @@ export interface EbaySalesCheckResult {
   sent: number;
   skipped: number;
   needsReview: number;
+  telegramSent: number;
+  telegramDuplicate: number;
+  telegramFailed: number;
   errors: string[];
 }
 
@@ -24,6 +29,9 @@ export async function runEbaySalesCheck(): Promise<EbaySalesCheckResult> {
     sent: 0,
     skipped: 0,
     needsReview: 0,
+    telegramSent: 0,
+    telegramDuplicate: 0,
+    telegramFailed: 0,
     errors: [],
   };
   const connections = await listEbayConnections();
@@ -60,6 +68,27 @@ export async function runEbaySalesCheck(): Promise<EbaySalesCheckResult> {
           line.sku,
           line.legacyItemId
         );
+        try {
+          const notice = ebaySaleNotice(line, lookup);
+          if (notice) {
+            const delivery = await deliverConfirmedSale({
+              platform: "ebay",
+              externalEventId,
+              sku: notice.sku,
+              title: notice.title,
+            });
+            if (delivery === "sent") result.telegramSent += 1;
+            else if (delivery === "duplicate") result.telegramDuplicate += 1;
+            else if (delivery === "failed") {
+              result.telegramFailed += 1;
+              result.errors.push(`${externalEventId}: Telegram failed`);
+            }
+          }
+        } catch (error) {
+          result.telegramFailed += 1;
+          result.errors.push(`${externalEventId}: Telegram failed`);
+          console.error("[ebay-sales] telegram", externalEventId, error);
+        }
         const row = lookup.kind === "one" ? lookup.row : null;
         const decision = decideEbaySale({
           cancelled: line.cancelled,
