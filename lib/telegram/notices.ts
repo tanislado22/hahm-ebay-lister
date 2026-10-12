@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { ensureInventoryTables, getSql } from "@/lib/db";
 import type { SalePlatform } from "@/lib/telegram/message";
 import { sendTelegramSale } from "@/lib/telegram/send";
+import { findVerifiedVintedUrl } from "@/lib/vinted/inventory-store";
 
 export type TelegramDelivery = "sent" | "duplicate" | "failed" | "missing";
 
@@ -163,7 +164,11 @@ export async function deliverConfirmedSale(input: {
   if (claim.action === "done") return "duplicate";
 
   try {
-    await sendTelegramSale(input.platform, sku, title);
+    const vintedNotice =
+      input.platform === "vinted"
+        ? undefined
+        : { url: sku ? await findVerifiedVintedUrl(sku).catch(() => null) : null };
+    await sendTelegramSale(input.platform, sku, title, vintedNotice);
     await finishTelegramNotice(claim.id, { status: "sent" });
     return "sent";
   } catch (error) {

@@ -69,11 +69,12 @@ export function sendTelegramPlain(text: string): Promise<{ messageId: number }> 
 export async function sendTelegramSale(
   platform: SalePlatform,
   sku: string,
-  title: string
+  title: string,
+  vintedNotice?: { url: string | null }
 ): Promise<{ messageId: number }> {
   const cleanTitle = title.trim();
   if (!cleanTitle) {
     throw new Error("Telegram alert is missing the title.");
   }
-  return sendTelegramHtml(saleTelegramMessage(platform, sku.trim(), cleanTitle));
+  return sendTelegramHtml(saleTelegramMessage(platform, sku.trim(), cleanTitle, vintedNotice));
 }

@@ -51,14 +51,263 @@ function findField(aliases) {
   return null;
 }
 
-function clickChoice(value) {
-  const wanted = clean(value).toLowerCase();
+function norm(value) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[’‘]/g, "'")
+    .replace(/[·•]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isClickable(el) {
+  if (!el || el.closest?.(".vinted-assist-v2")) return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width < 8 || rect.height < 8) return false;
+  const style = getComputedStyle(el);
+  return style.visibility !== "hidden" && style.display !== "none" && style.pointerEvents !== "none";
+}
+
+function isFieldRow(el) {
+  const rect = el.getBoundingClientRect();
+  return rect.height >= 20 && rect.height <= 140 && rect.width >= 40 && rect.width <= 900;
+}
+
+function findTrigger(aliases) {
+  const wanted = aliases.map(norm);
+  const tested = [...document.querySelectorAll("[data-testid]")].find((el) => {
+    const id = norm(el.getAttribute("data-testid") || "").replace(/[_-]+/g, " ");
+    return wanted.some((alias) => id === alias || id.includes(` ${alias}`) || id.includes(`${alias} `));
+  });
+  if (tested) {
+    const button = [tested, ...tested.querySelectorAll("button, [role='button'], [role='combobox']")].find(
+      (el) => isClickable(el) && isFieldRow(el)
+    );
+    if (button) return button;
+  }
+  return (
+    [...document.querySelectorAll("button, [role='button'], [role='combobox']")].find((node) => {
+      if (!isClickable(node) || !isFieldRow(node)) return false;
+      const text = norm(clean(node.innerText || node.getAttribute("aria-label") || "").split("\n")[0]);
+      return wanted.includes(text);
+    }) || null
+  );
+}
+
+function fieldShows(aliases, value) {
+  const trigger = findTrigger(aliases);
+  if (!trigger) return false;
+  const wanted = norm(value);
   if (!wanted) return false;
-  const inputs = [...document.querySelectorAll('input[type="radio"], input[type="checkbox"]')];
-  const match = inputs.find((input) => clean(labelFor(input)?.textContent).toLowerCase() === wanted);
-  if (!match) return false;
-  match.click();
-  return true;
+  return clean(trigger.innerText || "")
+    .split(/[\n,]/)
+    .slice(0, 4)
+    .map(norm)
+    .includes(wanted);
+}
+
+function activeSurface() {
+  const surfaces = [...document.querySelectorAll("[role='dialog'], [role='listbox'], [role='menu']")].filter(isClickable);
+  return surfaces.length ? surfaces[surfaces.length - 1] : null;
+}
+
+function collectOptions() {
+  const surface = activeSurface();
+  const selector = surface
+    ? "[role='option'], [role='radio'], [role='menuitem'], [role='menuitemradio'], [role='button'], button, li, [tabindex='0']"
+    : "[role='option'], [role='radio'], [role='menuitem'], [role='menuitemradio'], [role='button']";
+  const blocked = new Set([
+    "done",
+    "save",
+    "apply",
+    "cancel",
+    "close",
+    "back",
+    "sell",
+    "create a brand",
+    "use as brand",
+    "list without brand",
+    "no brand",
+  ]);
+  const seen = new Set();
+  const options = [];
+  for (const node of (surface || document).querySelectorAll(selector)) {
+    if (!isClickable(node)) continue;
+    const text = clean(node.innerText || node.getAttribute("aria-label") || "").split("\n")[0];
+    const key = norm(text);
+    if (!key || key.length > 60 || blocked.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    options.push({ el: node, text, key });
+  }
+  return options;
+}
+
+function matchOption(candidates) {
+  for (const candidate of candidates.map(norm).filter(Boolean)) {
+    const match = collectOptions().find((option) => option.key === candidate);
+    if (match) return match;
+  }
+  return null;
+}
+
+async function waitForOptions(timeout) {
+  const deadline = Date.now() + timeout;
+  let options = [];
+  while (Date.now() < deadline) {
+    options = collectOptions();
+    if (options.length > 0) return options;
+    await sleep(200);
+  }
+  return options;
+}
+
+function closeSurface() {
+  const done = [...document.querySelectorAll("button")].find((el) => {
+    if (!isClickable(el)) return false;
+    const text = norm(el.innerText || "");
+    return text === "done" || text === "save" || text === "apply";
+  });
+  if (done) {
+    done.click();
+    return;
+  }
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+}
+
+function sizeCandidates(saved) {
+  const value = norm(saved);
+  const aliases = {
+    xs: ["xs", "extra small"],
+    s: ["s", "small"],
+    m: ["m", "medium"],
+    l: ["l", "large"],
+    xl: ["xl", "extra large"],
+    xxl: ["xxl", "2xl"],
+    "2xl": ["2xl", "xxl"],
+  };
+  return aliases[value] || [value];
+}
+
+function conditionCandidates(saved) {
+  const value = norm(saved);
+  const groups = [
+    [["new with tags"], ["new with tags", "new"]],
+    [["new without tags"], ["new without tags", "like new"]],
+    [["new"], ["new"]],
+    [["pre-owned excellent", "excellent", "pre-owned very good", "very good"], ["very good"]],
+    [["pre-owned good", "good"], ["good"]],
+    [["pre-owned fair", "fair", "satisfactory"], ["satisfactory"]],
+  ];
+  for (const [from, to] of groups) {
+    if (from.includes(value)) return to;
+  }
+  return value ? [value] : [];
+}
+
+async function searchAndMatch(query) {
+  const surface = activeSurface();
+  const input = surface
+    ? [...surface.querySelectorAll("input")].find((el) => isClickable(el) && el.type !== "file" && el.type !== "checkbox")
+    : null;
+  if (!input) return null;
+  input.focus();
+  setNativeValue(input, query);
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const match = matchOption([query]);
+    if (match) return match;
+    await sleep(200);
+  }
+  return null;
+}
+
+async function selectMenu(label, aliases, saved, candidates, log, options = {}) {
+  const value = clean(saved);
+  if (!value) {
+    log.push(`${label}: nothing saved. Select it yourself.`);
+    return;
+  }
+  const trigger = findTrigger(aliases);
+  if (!trigger) {
+    log.push(`${label}: menu was not found. Select it yourself.`);
+    return;
+  }
+  if (fieldShows(aliases, value) || candidates.some((candidate) => fieldShows(aliases, candidate))) {
+    log.push(`${label}: selected ${value}.`);
+    return;
+  }
+  trigger.click();
+  const loaded = await waitForOptions(options.timeout || 8000);
+  if (loaded.length === 0) {
+    closeSurface();
+    log.push(`${label}: options did not load. Select it yourself.`);
+    return;
+  }
+  let match = matchOption(candidates);
+  if (!match && options.search) match = await searchAndMatch(value);
+  if (!match) {
+    closeSurface();
+    log.push(`${label}: ${value} was not in Vinted's list. Select it yourself.`);
+    return;
+  }
+  match.el.click();
+  await sleep(400);
+  if (activeSurface()) closeSurface();
+  await sleep(300);
+  const kept = fieldShows(aliases, match.text) || fieldShows(aliases, value);
+  if (!kept) {
+    log.push(`${label}: ${match.text} was clicked but Vinted did not keep it. Select it yourself.`);
+    return;
+  }
+  log.push(`${label}: selected ${match.text}.`);
+}
+
+async function selectColors(saved, log) {
+  const colors = String(saved || "")
+    .split(",")
+    .map(clean)
+    .filter(Boolean);
+  if (colors.length === 0) {
+    log.push("Color: nothing saved. Select it yourself.");
+    return;
+  }
+  const aliases = ["color", "colour", "colors", "colours"];
+  const trigger = findTrigger(aliases);
+  if (!trigger) {
+    log.push("Color: menu was not found. Select it yourself.");
+    return;
+  }
+  const pending = colors.filter((color) => !fieldShows(aliases, color));
+  if (pending.length === 0) {
+    log.push(`Color: selected ${colors.join(", ")}.`);
+    return;
+  }
+  trigger.click();
+  const loaded = await waitForOptions(8000);
+  if (loaded.length === 0) {
+    closeSurface();
+    log.push("Color: options did not load. Select it yourself.");
+    return;
+  }
+  const missing = [];
+  const chosen = [];
+  for (const color of pending) {
+    const match = matchOption([color]);
+    if (!match) {
+      missing.push(color);
+      continue;
+    }
+    match.el.click();
+    chosen.push(match.text);
+    await sleep(250);
+  }
+  if (activeSurface()) closeSurface();
+  await sleep(300);
+  for (const color of chosen) {
+    if (fieldShows(aliases, color)) log.push(`Color: selected ${color}.`);
+    else log.push(`Color: ${color} was clicked but Vinted did not keep it. Select it yourself.`);
+  }
+  for (const color of missing) log.push(`Color: ${color} was not in Vinted's list. Select it yourself.`);
 }
 
 function formatMb(bytes) {
@@ -318,18 +567,11 @@ async function fillReadyItem(log) {
     log
   );
   fillField("Price", ["price"], item.price, log);
-  fillField("Brand", ["brand"], item.brand, log);
   fillField("Category", ["category"], item.category, log);
-  fillField("Size", ["size"], item.size, log);
-  if (!clickChoice(item.condition)) fillField("Condition", ["condition"], item.condition, log);
-  else log.push("Condition: selected.");
-  const colors = String(item.color || "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const selectedColors = colors.filter((color) => clickChoice(color));
-  if (selectedColors.length === colors.length && colors.length > 0) log.push("Color: selected.");
-  else fillField("Color", ["color", "colour"], item.color, log);
+  await selectMenu("Brand", ["brand"], item.brand, [item.brand], log, { search: true });
+  await selectMenu("Size", ["size"], item.size, sizeCandidates(item.size), log, { timeout: 8000 });
+  await selectMenu("Condition", ["condition"], item.condition, conditionCandidates(item.condition), log);
+  await selectColors(item.color, log);
   log.push("Sell was not pressed.");
 }
 
@@ -367,4 +609,128 @@ function mountPanel() {
   });
 }
 
+const VINTED_SYNC_LIMIT = 10;
+
+function onClosetPage() {
+  const path = location.pathname;
+  if (/\/items\/(?:new|\d+)/.test(path)) return false;
+  return /\/member\/\d+/.test(path) || /\/wardrobe/.test(path);
+}
+
+function itemFromAnchor(anchor) {
+  const href = anchor.href || anchor.getAttribute("href") || "";
+  const match = String(href).match(/\/items\/(\d+)/i);
+  if (!match) return null;
+  let url;
+  try {
+    url = new URL(href, location.origin);
+  } catch (error) {
+    return null;
+  }
+  if (!/vinted\./i.test(url.hostname)) return null;
+  url.hash = "";
+  url.search = "";
+  const image = anchor.querySelector("img");
+  const title = clean(anchor.getAttribute("title") || image?.alt || anchor.innerText || "");
+  return {
+    vintedItemId: match[1],
+    title,
+    url: url.toString(),
+    photoUrl: image ? srcOf(image) : "",
+    brand: "",
+    size: "",
+  };
+}
+
+function harvestCloset(seen, batch) {
+  let added = 0;
+  document.querySelectorAll('a[href*="/items/"]').forEach((anchor) => {
+    if (batch.length >= VINTED_SYNC_LIMIT) return;
+    const item = itemFromAnchor(anchor);
+    if (!item || seen.has(item.vintedItemId)) return;
+    seen.add(item.vintedItemId);
+    batch.push(item);
+    added += 1;
+  });
+  return added;
+}
+
+async function syncCloset(resume, log) {
+  const stored = await chrome.storage.local.get(["vintedInventorySeen"]);
+  const seen = new Set(resume && Array.isArray(stored.vintedInventorySeen) ? stored.vintedInventorySeen : []);
+  if (!resume) seen.clear();
+  const batch = [];
+  let quiet = 0;
+  for (let step = 0; step < 12 && batch.length < VINTED_SYNC_LIMIT; step += 1) {
+    const added = harvestCloset(seen, batch);
+    log.push(`Recopiladas en esta pasada: ${batch.length}.`);
+    if (!added) quiet += 1;
+    else quiet = 0;
+    if (quiet >= 2 || batch.length >= VINTED_SYNC_LIMIT) break;
+    window.scrollBy(0, Math.max(500, window.innerHeight));
+    await sleep(900);
+  }
+  await chrome.storage.local.set({ vintedInventorySeen: Array.from(seen) });
+  if (!batch.length) {
+    log.push("No aparecieron publicaciones nuevas. Puedes reanudar o importar un archivo.");
+    return;
+  }
+  const response = await chrome.runtime.sendMessage({ type: "sync-inventory", items: batch });
+  if (!response?.ok) throw new Error(response?.error || "No se pudo guardar la sincronización.");
+  const body = response.body || {};
+  log.push(`Enviadas: ${body.received || batch.length}. Nuevas: ${body.inserted || 0}. Verificadas conservadas: ${body.keptVerified || 0}.`);
+  log.push("No se editó, retiró ni republicó ningún anuncio.");
+}
+
+function mountInventoryPanel() {
+  if (!onClosetPage() || document.querySelector(".vinted-inventory-sync")) return;
+  const panel = document.createElement("aside");
+  panel.className = "vinted-assist vinted-assist-v2 vinted-inventory-sync";
+  panel.innerHTML = `
+    <strong>Sincronizar inventario Vinted</strong>
+    <p>Lee hasta 10 publicaciones visibles de este perfil. No modifica anuncios.</p>
+    <button type="button" id="vinted-sync-start">Sincronizar 10</button>
+    <button type="button" id="vinted-sync-resume">Reanudar</button>
+    <label>Importar archivo <input id="vinted-sync-file" type="file" accept=".csv,.json,text/csv,application/json"></label>
+    <pre id="vinted-sync-log"></pre>
+  `;
+  document.body.appendChild(panel);
+  const output = panel.querySelector("#vinted-sync-log");
+  async function run(task) {
+    const lines = [];
+    const log = {
+      push(line) {
+        lines.push(line);
+        output.textContent = lines.join("\n");
+      },
+    };
+    panel.querySelectorAll("button").forEach((button) => {
+      button.disabled = true;
+    });
+    try {
+      await task(log);
+    } catch (error) {
+      log.push(error.message);
+    } finally {
+      panel.querySelectorAll("button").forEach((button) => {
+        button.disabled = false;
+      });
+    }
+  }
+  panel.querySelector("#vinted-sync-start").addEventListener("click", () => run((log) => syncCloset(false, log)));
+  panel.querySelector("#vinted-sync-resume").addEventListener("click", () => run((log) => syncCloset(true, log)));
+  panel.querySelector("#vinted-sync-file").addEventListener("change", (event) => {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = "";
+    if (!file) return;
+    run(async (log) => {
+      const text = await file.text();
+      const response = await chrome.runtime.sendMessage({ type: "sync-inventory-file", text });
+      if (!response?.ok) throw new Error(response?.error || "No se pudo importar el archivo.");
+      log.push(`Importadas en esta prueba: ${response.body?.received || 0}.`);
+    });
+  });
+}
+
 mountPanel();
+mountInventoryPanel();

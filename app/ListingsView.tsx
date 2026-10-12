@@ -186,6 +186,9 @@ export function ListingsView({
         <a className="btn btn-ghost" href="/vinted">
           Vinted queue
         </a>
+        <a className="btn btn-ghost" href="/vinted/inventory">
+          Inventario Vinted
+        </a>
       </div>
 <button
 

@@ -126,6 +126,26 @@ async function migrate(): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS vinted_inventory_links (
+      id TEXT PRIMARY KEY,
+      vinted_item_id TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL,
+      photo_url TEXT NOT NULL DEFAULT '',
+      brand TEXT NOT NULL DEFAULT '',
+      size TEXT NOT NULL DEFAULT '',
+      sku TEXT NOT NULL DEFAULT '',
+      suggested_sku TEXT NOT NULL DEFAULT '',
+      match_status TEXT NOT NULL,
+      detail TEXT NOT NULL DEFAULT '',
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      verified_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS vinted_ready_snapshot (
       workspace_key TEXT PRIMARY KEY,
       sku TEXT NOT NULL,

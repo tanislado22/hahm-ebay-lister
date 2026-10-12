@@ -26,7 +26,36 @@ async function assistGet(query) {
   return body;
 }
 
+async function syncInventory(payload) {
+  const { appUrl, appSecret } = await settings();
+  const response = await fetch(`${appUrl}/api/vinted/inventory/sync`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-app-secret": appSecret,
+    },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || `Sync request failed (${response.status}).`);
+  }
+  return body;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "sync-inventory") {
+    syncInventory({ items: message.items })
+      .then((body) => sendResponse({ ok: true, body }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message?.type === "sync-inventory-file") {
+    syncInventory({ text: String(message.text || "").slice(0, 200000) })
+      .then((body) => sendResponse({ ok: true, body }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message?.type !== "load-ready" && message?.type !== "load-photo") return;
   const params = new URLSearchParams();
   params.set("t", String(Date.now()));

@@ -11,7 +11,10 @@ export default function VintedPage() {
         </span>
         <div>
           <h1>Listing Writer</h1>
-          <p>Prepare items for Vinted, then post them yourself one at a time.</p>
+          <p>
+            Prepare items for Vinted, then post them yourself one at a time.{" "}
+            <a href="/vinted/inventory">Inventario Vinted</a>
+          </p>
         </div>
       </header>
       <VintedQueue />

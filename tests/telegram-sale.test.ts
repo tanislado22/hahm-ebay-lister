@@ -30,18 +30,32 @@ describe("telegram sale message", () => {
     expect(message).not.toContain("\n2830");
     expect(message.match(/𝟮𝟴𝟯𝟬/g)).toHaveLength(1);
     expect(message).toContain("⚠️ <b>REVISAR VINTED</b>");
-    expect(message).toContain("🔍 Si sigue publicado, retirarlo manualmente.");
+    expect(message).toContain("🔍 Si sigue publicado en Vinted, retirarlo manualmente.");
+    expect(message).not.toContain("Publicación de Vinted no identificada");
     expect(message).not.toMatch(/\$|price|buyer|comprador/i);
   });
 
   test("names Vinted, Poshmark, and Depop, and does not invent a missing SKU", () => {
     const vinted = saleTelegramMessage("vinted", "2830", SAMPLE_TITLE);
     expect(vinted).toContain("🛍️ Plataforma: <b>VINTED</b>");
+    expect(vinted).toContain("⚠️ <b>REVISAR OTRAS PLATAFORMAS</b>");
     expect(vinted).toContain("🔍 Si sigue publicado en otra plataforma, retirarlo manualmente.");
     expect(saleTelegramMessage("poshmark", "2830", SAMPLE_TITLE)).toContain("🛍️ Plataforma: <b>POSHMARK</b>");
     expect(saleTelegramMessage("depop", "", SAMPLE_TITLE)).toContain("🔢 SKU: <b>No encontrado</b>");
     expect(saleTelegramMessage("depop", "", SAMPLE_TITLE)).not.toContain("2830");
     expect(saleTelegramMessage("depop", "", SAMPLE_TITLE)).toContain("🔍 Si sigue publicado, retirarlo manualmente.");
+  });
+
+  test("adds the verified Vinted link for another platform, or says it was not identified", () => {
+    const linked = saleTelegramMessage("ebay", "2830", SAMPLE_TITLE, {
+      url: "https://www.vinted.com/items/178425031509-coat",
+    });
+    expect(linked).toContain("🔗 https://www.vinted.com/items/178425031509-coat");
+    const missing = saleTelegramMessage("depop", "2830", SAMPLE_TITLE, { url: null });
+    expect(missing).toContain("🔗 Publicación de Vinted no identificada");
+    expect(saleTelegramMessage("vinted", "2830", SAMPLE_TITLE, { url: "https://www.vinted.com/items/1" })).not.toContain(
+      "Publicación de Vinted no identificada"
+    );
   });
 
   test("a Vinted sale without a SKU asks for a manual check and does not invent one", () => {

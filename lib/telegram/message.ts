@@ -84,20 +84,34 @@ function vintedSaleMessage(sku: string, title: string): string {
     "🛍️ Plataforma: <b>VINTED</b>",
     `👕 Artículo: ${item}`,
     `🔢 SKU: <b>${escapeTelegramHtml(enlargeSkuDigits(exact))}</b>`,
-    "⚠️ <b>REVISAR VINTED</b>",
+    "⚠️ <b>REVISAR OTRAS PLATAFORMAS</b>",
     "🔍 Si sigue publicado en otra plataforma, retirarlo manualmente.",
   ].join("\n");
 }
 
-export function saleTelegramMessage(platform: SalePlatform, sku: string, title: string): string {
+export function saleTelegramMessage(
+  platform: SalePlatform,
+  sku: string,
+  title: string,
+  vintedNotice?: { url: string | null }
+): string {
   if (platform === "vinted") return vintedSaleMessage(sku, title);
   const item = escapeTelegramHtml(displayTitle(title));
-  return [
+  const followUp =
+    platform === "ebay"
+      ? "🔍 Si sigue publicado en Vinted, retirarlo manualmente."
+      : "🔍 Si sigue publicado, retirarlo manualmente.";
+  const lines = [
     "🟢 📦 <b>¡ARTÍCULO VENDIDO!</b>",
     `🛍️ Plataforma: <b>${platformLabel(platform)}</b>`,
     `👕 Artículo: ${item}`,
     `🔢 SKU: ${skuBlock(sku)}`,
     "⚠️ <b>REVISAR VINTED</b>",
-    "🔍 Si sigue publicado, retirarlo manualmente.",
-  ].join("\n");
+    followUp,
+  ];
+  if (vintedNotice) {
+    const url = vintedNotice.url?.trim() ?? "";
+    lines.push(url ? `🔗 ${escapeTelegramHtml(url)}` : "🔗 Publicación de Vinted no identificada");
+  }
+  return lines.join("\n");
 }
