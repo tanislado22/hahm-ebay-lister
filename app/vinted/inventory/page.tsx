@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { ebayItemUrl } from "@/lib/vinted/card-text";
+import { rejectOneCandidate } from "@/lib/vinted/candidate-rejection";
 import { duplicateGroupsWithoutArchived } from "@/lib/vinted/inventory-archive";
 import { parseInventoryImport, VINTED_SYNC_PILOT_LIMIT } from "@/lib/vinted/inventory-match";
 
@@ -236,7 +237,8 @@ export default function VintedInventoryPage() {
     item: InventoryItem,
     action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion" | "archive" | "restore",
     relatedIds: string[],
-    ebayItemId = ""
+    ebayItemId = "",
+    sku = ""
   ) {
     setError("");
     const response = await apiPost("/api/vinted/inventory/review", {
@@ -244,6 +246,7 @@ export default function VintedInventoryPage() {
       action,
       relatedIds,
       ebayItemId,
+      sku,
     });
     const body = (await response.json()) as { ok?: boolean; error?: string };
     if (!response.ok || !body.ok) {
@@ -259,12 +262,13 @@ export default function VintedInventoryPage() {
     await review(item, "set_ebay_item", [], value.trim());
   }
 
-  async function confirmSku(item: InventoryItem, sku: string) {
+  async function confirmSku(item: InventoryItem, sku: string, ebayItemId = "") {
     const wanted = sku.trim();
     if (!wanted) return;
     const response = await apiPost("/api/vinted/inventory/confirm", {
       vintedItemId: item.vintedItemId,
       sku: wanted,
+      ebayItemId,
     });
     const body = (await response.json()) as { ok?: boolean; error?: string };
     if (!response.ok || !body.ok) {
@@ -278,6 +282,49 @@ export default function VintedInventoryPage() {
     const sku = window.prompt("SKU de eBay para esta publicación", item.suggestedSku || item.listedSku || "");
     if (!sku?.trim()) return;
     void confirmSku(item, sku);
+  }
+
+  async function rejectCandidate(item: InventoryItem, candidate: { sku: string; ebayItemId: string }) {
+    setError("");
+    setItems((current) =>
+      current.map((row) => {
+        if (row.vintedItemId !== item.vintedItemId || row.status === "verified") return row;
+        const result = rejectOneCandidate(
+          {
+            vintedItemId: row.vintedItemId,
+            sku: row.sku,
+            suggestedSku: row.suggestedSku,
+            ebayItemId: row.ebayItemId,
+            matchStatus: row.status,
+            detail: row.detail,
+            candidates: row.candidates,
+            rejected: [],
+          },
+          candidate
+        );
+        if (!result.ok) return row;
+        const status = result.row.matchStatus === "review" ? "review" : "unmatched";
+        return {
+          ...row,
+          sku: result.row.sku,
+          suggestedSku: result.row.suggestedSku,
+          ebayItemId: result.row.ebayItemId,
+          status,
+          detail: result.row.detail,
+          candidates: result.row.candidates,
+        };
+      })
+    );
+    const response = await apiPost("/api/vinted/inventory/review", {
+      vintedItemId: item.vintedItemId,
+      action: "reject_suggestion",
+      relatedIds: [],
+      ebayItemId: candidate.ebayItemId,
+      sku: candidate.sku,
+    });
+    const body = (await response.json()) as { ok?: boolean; error?: string };
+    if (!response.ok || !body.ok) setError(body.error || "No se pudo rechazar la coincidencia.");
+    await load(query);
   }
 
   async function archive(item: InventoryItem) {
@@ -377,7 +424,7 @@ export default function VintedInventoryPage() {
                   <button className="btn btn-ghost" type="button" onClick={() => void confirmSku(item, suggestedSku)}>
                     Confirmar asociación
                   </button>
-                  <button className="btn btn-ghost" type="button" onClick={() => void review(item, "reject_suggestion", [])}>
+                  <button className="btn btn-ghost" type="button" onClick={() => void rejectCandidate(item, { sku: suggestedSku, ebayItemId: "" })}>
                     Rechazar
                   </button>
                 </>
@@ -417,11 +464,11 @@ export default function VintedInventoryPage() {
                         <span>Sin Item ID de eBay</span>
                       )}
                       {candidate.sku ? (
-                        <button className="btn btn-ghost" type="button" onClick={() => void confirmSku(item, candidate.sku)}>
+                        <button className="btn btn-ghost" type="button" onClick={() => void confirmSku(item, candidate.sku, candidate.ebayItemId)}>
                           Confirmar asociación
                         </button>
                       ) : null}
-                      <button className="btn btn-ghost" type="button" onClick={() => void review(item, "reject_suggestion", [])}>
+                      <button className="btn btn-ghost" type="button" onClick={() => void rejectCandidate(item, candidate)}>
                         Rechazar
                       </button>
                     </div>

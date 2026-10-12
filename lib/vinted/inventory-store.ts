@@ -20,6 +20,14 @@ import {
   type DuplicateGroup,
   type KnownSale,
 } from "@/lib/vinted/inventory-review";
+import {
+  candidateIsRejected,
+  confirmCandidateOnListings,
+  omitRejectedMatch,
+  parseRejectedCandidates,
+  rejectOneCandidate,
+  withoutRejectedCandidates,
+} from "@/lib/vinted/candidate-rejection";
 
 export interface VintedInventoryRow {
   vintedItemId: string;
@@ -101,7 +109,9 @@ function mapRow(row: Record<string, unknown>): VintedInventoryRow {
     brand: text(row.brand),
     size: text(row.size),
     sku: text(row.sku),
-    suggestedSku: text(row.suggested_sku),
+    suggestedSku: candidateIsRejected({ sku: text(row.suggested_sku), ebayItemId: "" }, parseRejectedCandidates(row.rejected_candidates))
+      ? ""
+      : text(row.suggested_sku),
     status: status === "verified" || status === "review" ? status : "unmatched",
     detail: text(row.detail),
     syncedAt: text(row.synced_at),
@@ -115,7 +125,7 @@ function mapRow(row: Record<string, unknown>): VintedInventoryRow {
     soldDetail: text(row.sold_detail),
     ebayItemId: text(row.ebay_item_id).replace(/\D/g, ""),
     reviewedAt: timeText(row.reviewed_at),
-    candidates: parseStoredCandidates(row.ebay_candidates),
+    candidates: withoutRejectedCandidates(parseStoredCandidates(row.ebay_candidates), parseRejectedCandidates(row.rejected_candidates)),
     archivedAt: timeText(row.archived_at),
   };
 }
@@ -472,7 +482,7 @@ export async function identifySkuBatch(
     WHERE match_status = 'verified' AND btrim(sku) <> ''
   `;
   const rows = await sql`
-    SELECT vinted_item_id, title, url, photo_url, brand, size, listed_sku, detail
+    SELECT vinted_item_id, title, url, photo_url, brand, size, listed_sku, detail, rejected_candidates
     FROM vinted_inventory_links
     WHERE match_status <> 'verified'
       AND identify_checked_at IS NULL
@@ -487,18 +497,21 @@ export async function identifySkuBatch(
     const listedSku = text(record.listed_sku).trim() || skuFromStoredText(title, detail);
     return {
       id: text(record.vinted_item_id),
-      match: matchVintedListing(
-        {
-          vintedItemId: text(record.vinted_item_id),
-          title,
-          url: text(record.url),
-          photoUrl: text(record.photo_url),
-          brand: text(record.brand),
-          size: text(record.size),
-          listedSku,
-          cardText: detail,
-        },
-        candidates
+      match: omitRejectedMatch(
+        matchVintedListing(
+          {
+            vintedItemId: text(record.vinted_item_id),
+            title,
+            url: text(record.url),
+            photoUrl: text(record.photo_url),
+            brand: text(record.brand),
+            size: text(record.size),
+            listedSku,
+            cardText: detail,
+          },
+          candidates
+        ),
+        parseRejectedCandidates(record.rejected_candidates)
       ),
     };
   });
@@ -660,9 +673,14 @@ export async function listDuplicateGroups(): Promise<DuplicateGroup[]> {
   );
 }
 
-export async function confirmVintedInventoryMatch(vintedItemId: string, sku: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function confirmVintedInventoryMatch(
+  vintedItemId: string,
+  sku: string,
+  ebayItemId = ""
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const wantedId = vintedItemId.trim();
   const wantedSku = sku.trim();
+  const wantedItemId = ebayItemId.replace(/\D/g, "");
   if (!wantedId || !wantedSku) return { ok: false, error: "Faltan el anuncio de Vinted o el SKU." };
   const sql = getSql();
   await ensureInventoryTables();
@@ -675,21 +693,38 @@ export async function confirmVintedInventoryMatch(vintedItemId: string, sku: str
     WHERE vinted_item_id = ${wantedId} AND match_status <> 'verified'
     LIMIT 1
   `;
-  const saved = current[0] as { ebay_candidates?: string } | undefined;
-  const fromCandidate = parseStoredCandidates(saved?.ebay_candidates).find((candidate) => candidate.sku === wantedSku);
-  const linkedItemId = fromCandidate?.ebayItemId || "";
+  const saved = current[0] as { ebay_item_id?: string; ebay_candidates?: string } | undefined;
+  if (!saved) return { ok: false, error: "Esa asociación ya está verificada o no existe." };
+  const candidates = parseStoredCandidates(saved.ebay_candidates);
+  const fromCandidate = candidates.find((candidate) => candidate.sku === wantedSku && (!wantedItemId || candidate.ebayItemId === wantedItemId));
   if (!known.length && !fromCandidate) return { ok: false, error: "Ese SKU no está en el inventario de eBay." };
+  const decided = confirmCandidateOnListings(
+    [
+      {
+        vintedItemId: wantedId,
+        sku: "",
+        suggestedSku: "",
+        ebayItemId: text(saved.ebay_item_id).replace(/\D/g, ""),
+        matchStatus: "review",
+        detail: "",
+        candidates,
+        rejected: [],
+      },
+    ],
+    wantedId,
+    wantedSku,
+    wantedItemId
+  );
+  if (!decided.ok) return decided;
+  const next = decided.rows[0];
   const updated = await sql`
     UPDATE vinted_inventory_links
     SET
-      sku = ${wantedSku},
-      suggested_sku = '',
-      match_status = 'verified',
-      detail = 'Confirmado manualmente.',
-      ebay_item_id = CASE
-        WHEN btrim(ebay_item_id) <> '' THEN ebay_item_id
-        ELSE ${linkedItemId}
-      END,
+      sku = ${next.sku},
+      suggested_sku = ${next.suggestedSku},
+      match_status = ${next.matchStatus},
+      detail = ${next.detail},
+      ebay_item_id = ${next.ebayItemId},
       verified_at = NOW(),
       updated_at = NOW()
     WHERE vinted_item_id = ${wantedId}
@@ -707,6 +742,7 @@ export async function reviewVintedInventory(input: {
   action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion" | "archive" | "restore";
   relatedIds: string[];
   ebayItemId?: string;
+  sku?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const id = input.vintedItemId.trim();
   if (!id) return { ok: false, error: "Falta la publicación de Vinted." };
@@ -773,20 +809,46 @@ export async function reviewVintedInventory(input: {
     return { ok: true };
   }
   if (input.action === "reject_suggestion") {
+    const current = await sql`
+      SELECT sku, suggested_sku, ebay_item_id, match_status, detail, ebay_candidates, rejected_candidates
+      FROM vinted_inventory_links
+      WHERE vinted_item_id = ${id} AND archived_at IS NULL
+      LIMIT 1
+    `;
+    const record = current[0] as Record<string, unknown> | undefined;
+    if (!record) return { ok: false, error: "No existe esa publicación." };
+    const row = {
+      vintedItemId: id,
+      sku: text(record.sku),
+      suggestedSku: text(record.suggested_sku),
+      ebayItemId: text(record.ebay_item_id).replace(/\D/g, ""),
+      matchStatus: text(record.match_status),
+      detail: text(record.detail),
+      candidates: parseStoredCandidates(record.ebay_candidates),
+      rejected: parseRejectedCandidates(record.rejected_candidates),
+    };
+    const targetSku = (input.sku || "").trim() || ((input.ebayItemId || "").trim() ? "" : row.suggestedSku);
+    const result = rejectOneCandidate(row, { sku: targetSku, ebayItemId: input.ebayItemId || "" });
+    if (!result.ok) return result;
+    const next = result.row;
     const updated = await sql`
       UPDATE vinted_inventory_links
       SET
-        suggested_sku = '',
-        sku = '',
-        match_status = 'unmatched',
-        detail = 'Sugerencia rechazada.',
+        sku = ${next.sku},
+        suggested_sku = ${next.suggestedSku},
+        ebay_item_id = ${next.ebayItemId},
+        match_status = ${next.matchStatus},
+        detail = ${next.detail},
+        ebay_candidates = ${JSON.stringify(next.candidates)},
+        rejected_candidates = ${JSON.stringify(next.rejected)},
         updated_at = NOW()
       WHERE vinted_item_id = ${id}
         AND match_status <> 'verified'
+        AND archived_at IS NULL
       RETURNING id
     `;
     if (!updated.length) return { ok: false, error: "Esa asociación ya está verificada o no existe." };
-    await recordEvent(id, "reject_suggestion", "Sugerencia rechazada. No se borró la publicación.");
+    await recordEvent(id, "reject_suggestion", `${targetSku} ${input.ebayItemId || ""}`.trim() || "Sugerencia rechazada. No se borró la publicación.");
     return { ok: true };
   }
   if (input.action === "mark_reviewed") {

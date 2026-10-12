@@ -7,14 +7,14 @@ export const dynamic = "force-dynamic";
 export async function POST(req: NextRequest) {
   const denied = guardApiRequest(req);
   if (denied) return denied;
-  let body: { vintedItemId?: unknown; sku?: unknown };
+  let body: { vintedItemId?: unknown; sku?: unknown; ebayItemId?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request." }, { status: 400 });
   }
   try {
-    const result = await confirmVintedInventoryMatch(String(body.vintedItemId || ""), String(body.sku || ""));
+    const result = await confirmVintedInventoryMatch(String(body.vintedItemId || ""), String(body.sku || ""), String(body.ebayItemId || ""));
     if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: 400 });
     return NextResponse.json({ ok: true });
   } catch (error) {
