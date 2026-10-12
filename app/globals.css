@@ -1266,6 +1266,30 @@ a.btn {
   white-space: nowrap;
 }
 
+.vinted-card-actions .btn-delete {
+  background: var(--color-danger);
+  color: white;
+  border: none;
+}
+
+.vinted-card-actions .btn-delete:hover {
+  background: var(--color-danger);
+  filter: brightness(0.92);
+}
+
+.vinted-delete-confirm {
+  flex-basis: 100%;
+  margin-top: 0.35rem;
+  padding: 0.7rem;
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-soft);
+}
+
+.vinted-delete-confirm p {
+  margin: 0 0 0.45rem;
+}
+
 .vinted-candidates {
   display: grid;
   gap: 0.75rem;

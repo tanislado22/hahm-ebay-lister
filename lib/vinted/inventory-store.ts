@@ -44,6 +44,7 @@ export interface VintedInventoryRow {
   ebayItemId: string;
   reviewedAt: string;
   candidates: EbayMatchCandidate[];
+  archivedAt: string;
 }
 
 export interface VintedInventoryCounts {
@@ -58,6 +59,7 @@ export interface VintedInventoryCounts {
   unmatched: number;
   identifyRemaining: number;
   confirmed: number;
+  archived: number;
 }
 
 function text(value: unknown): string {
@@ -114,6 +116,7 @@ function mapRow(row: Record<string, unknown>): VintedInventoryRow {
     ebayItemId: text(row.ebay_item_id).replace(/\D/g, ""),
     reviewedAt: timeText(row.reviewed_at),
     candidates: parseStoredCandidates(row.ebay_candidates),
+    archivedAt: timeText(row.archived_at),
   };
 }
 
@@ -282,6 +285,7 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
       updated_at = NOW()
     WHERE vinted_item_id = ${prepared.vintedItemId}
       AND match_status = 'verified'
+      AND archived_at IS NULL
     RETURNING id
   `;
   if (kept.length > 0) return "kept";
@@ -309,6 +313,7 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
       updated_at = NOW()
     WHERE vinted_item_id = ${prepared.vintedItemId}
       AND match_status <> 'verified'
+      AND archived_at IS NULL
   `;
   return "updated";
 }
@@ -363,9 +368,9 @@ export async function listVintedInventory(query: string): Promise<VintedInventor
 export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
   const sql = getSql();
   await ensureInventoryTables();
-  const rows = await sql`SELECT match_status, duplicate_status, sold_status, sku, detail, reviewed_at, identify_checked_at FROM vinted_inventory_links`;
+  const rows = await sql`SELECT match_status, duplicate_status, sold_status, sku, detail, reviewed_at, identify_checked_at, archived_at FROM vinted_inventory_links`;
   const counts: VintedInventoryCounts = {
-    collected: rows.length,
+    collected: 0,
     identified: 0,
     duplicates: 0,
     soldPending: 0,
@@ -376,6 +381,7 @@ export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
     unmatched: 0,
     identifyRemaining: 0,
     confirmed: 0,
+    archived: 0,
   };
   for (const row of rows) {
     const record = row as {
@@ -386,7 +392,13 @@ export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
       detail?: string;
       reviewed_at?: unknown;
       identify_checked_at?: unknown;
+      archived_at?: unknown;
     };
+    if (record.archived_at) {
+      counts.archived += 1;
+      continue;
+    }
+    counts.collected += 1;
     if (record.match_status === "verified") counts.identified += 1;
     if (record.match_status === "verified" && text(record.detail) === "Confirmado manualmente.") counts.confirmed += 1;
     if (record.match_status === "review") counts.possible += 1;
@@ -438,6 +450,7 @@ export async function reopenUnverifiedIdentification(): Promise<number> {
     SET identify_checked_at = NULL
     WHERE match_status <> 'verified'
       AND identify_checked_at IS NOT NULL
+      AND archived_at IS NULL
     RETURNING id
   `;
   return updated.length;
@@ -463,6 +476,7 @@ export async function identifySkuBatch(
     FROM vinted_inventory_links
     WHERE match_status <> 'verified'
       AND identify_checked_at IS NULL
+      AND archived_at IS NULL
     ORDER BY created_at ASC, vinted_item_id ASC
     LIMIT ${cap}
   `;
@@ -514,6 +528,7 @@ export async function identifySkuBatch(
       WHERE vinted_item_id = ${proposal.id}
         AND match_status <> 'verified'
         AND identify_checked_at IS NULL
+        AND archived_at IS NULL
       RETURNING id
     `;
     if (updated.length) processed += 1;
@@ -567,7 +582,9 @@ export async function refreshInventorySignals(): Promise<void> {
     const record = row as { item_a?: string; item_b?: string };
     return [text(record.item_a), text(record.item_b)] as [string, string];
   });
-  const listings = rows.map((row) => mapRow(row as Record<string, unknown>));
+  const listings = rows
+    .map((row) => mapRow(row as Record<string, unknown>))
+    .filter((item) => !item.archivedAt);
   const groups = findPossibleDuplicates(listings.map(reviewListing), pairs);
   const grouped = new Map<string, string[]>();
   for (const group of groups) {
@@ -632,7 +649,10 @@ export async function listDuplicateGroups(): Promise<DuplicateGroup[]> {
   const rows = await sql`SELECT * FROM vinted_inventory_links`;
   const dismissals = await sql`SELECT item_a, item_b FROM vinted_duplicate_dismissals`;
   return findPossibleDuplicates(
-    rows.map((row) => reviewListing(mapRow(row as Record<string, unknown>))),
+    rows
+      .map((row) => mapRow(row as Record<string, unknown>))
+      .filter((item) => !item.archivedAt)
+      .map((item) => reviewListing(item)),
     dismissals.map((row) => {
       const record = row as { item_a?: string; item_b?: string };
       return [text(record.item_a), text(record.item_b)] as [string, string];
@@ -684,7 +704,7 @@ export async function confirmVintedInventoryMatch(vintedItemId: string, sku: str
 
 export async function reviewVintedInventory(input: {
   vintedItemId: string;
-  action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion";
+  action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion" | "archive" | "restore";
   relatedIds: string[];
   ebayItemId?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -726,6 +746,30 @@ export async function reviewVintedInventory(input: {
     }
     await recordEvent(id, "not_duplicate", ids.join(","));
     await refreshInventorySignals();
+    return { ok: true };
+  }
+  if (input.action === "archive") {
+    const updated = await sql`
+      UPDATE vinted_inventory_links
+      SET archived_at = NOW(), updated_at = NOW()
+      WHERE vinted_item_id = ${id}
+        AND archived_at IS NULL
+      RETURNING id
+    `;
+    if (!updated.length) return { ok: false, error: "Esa publicación ya está archivada o no existe." };
+    await recordEvent(id, "archive", "Archivado en el inventario. No se borró la publicación ni la asociación.");
+    return { ok: true };
+  }
+  if (input.action === "restore") {
+    const updated = await sql`
+      UPDATE vinted_inventory_links
+      SET archived_at = NULL, updated_at = NOW()
+      WHERE vinted_item_id = ${id}
+        AND archived_at IS NOT NULL
+      RETURNING id
+    `;
+    if (!updated.length) return { ok: false, error: "Esa publicación no está archivada." };
+    await recordEvent(id, "restore", "Restaurado al inventario activo.");
     return { ok: true };
   }
   if (input.action === "reject_suggestion") {

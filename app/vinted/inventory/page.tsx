@@ -23,6 +23,7 @@ interface InventoryItem {
   ebayItemId: string;
   reviewedAt: string;
   candidates: EbayCandidate[];
+  archivedAt: string;
 }
 
 interface EbayCandidate {
@@ -49,9 +50,10 @@ interface Counts {
   unmatched: number;
   identifyRemaining: number;
   confirmed: number;
+  archived: number;
 }
 
-type View = "all" | "pending" | "reviewed" | "identified" | "possible" | "none" | "duplicates" | "sold";
+type View = "all" | "pending" | "reviewed" | "identified" | "possible" | "none" | "duplicates" | "sold" | "archived";
 
 const EMPTY_COUNTS: Counts = {
   collected: 0,
@@ -65,6 +67,7 @@ const EMPTY_COUNTS: Counts = {
   unmatched: 0,
   identifyRemaining: 0,
   confirmed: 0,
+  archived: 0,
 };
 
 const VIEWS: Array<{ id: View; label: string }> = [
@@ -76,6 +79,7 @@ const VIEWS: Array<{ id: View; label: string }> = [
   { id: "none", label: "Sin coincidencia" },
   { id: "duplicates", label: "Posibles duplicados" },
   { id: "sold", label: "Vendidos pendientes" },
+  { id: "archived", label: "Archivados" },
 ];
 
 function platformLabel(platform: string): string {
@@ -108,6 +112,7 @@ export default function VintedInventoryPage() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [identifying, setIdentifying] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const identifyRun = useRef(false);
   const load = useCallback(async (search: string) => {
     setLoading(true);
@@ -177,6 +182,8 @@ export default function VintedInventoryPage() {
 
   const visible = useMemo(() => {
     return items.filter((item) => {
+      if (item.archivedAt) return view === "archived";
+      if (view === "archived") return false;
       if (view === "pending") return !item.reviewedAt;
       if (view === "reviewed") return Boolean(item.reviewedAt);
       if (view === "identified") return item.status === "verified";
@@ -225,7 +232,7 @@ export default function VintedInventoryPage() {
 
   async function review(
     item: InventoryItem,
-    action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion",
+    action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion" | "archive" | "restore",
     relatedIds: string[],
     ebayItemId = ""
   ) {
@@ -269,6 +276,22 @@ export default function VintedInventoryPage() {
     const sku = window.prompt("SKU de eBay para esta publicación", item.suggestedSku || item.listedSku || "");
     if (!sku?.trim()) return;
     void confirmSku(item, sku);
+  }
+
+  async function archive(item: InventoryItem) {
+    setPendingDelete(null);
+    setError("");
+    setItems((current) => current.map((row) => (row.vintedItemId === item.vintedItemId ? { ...row, archivedAt: new Date().toISOString() } : row)));
+    const response = await apiPost("/api/vinted/inventory/review", {
+      vintedItemId: item.vintedItemId,
+      action: "archive",
+      relatedIds: [],
+    });
+    const body = (await response.json()) as { ok?: boolean; error?: string };
+    if (!response.ok || !body.ok) {
+      setError(body.error || "No se pudo archivar el artículo.");
+    }
+    await load(query);
   }
 
   function photoFrame(src: string, className: string) {
@@ -337,6 +360,27 @@ export default function VintedInventoryPage() {
                   </button>
                 </>
               ) : null}
+              {item.archivedAt ? (
+                <button className="btn btn-ghost" type="button" onClick={() => void review(item, "restore", [])}>
+                  Restaurar
+                </button>
+              ) : pendingDelete === item.vintedItemId ? (
+                <div className="vinted-delete-confirm" role="alertdialog" aria-label="Confirmar eliminación">
+                  <p>¿Estás seguro de que deseas eliminar este artículo de Vinted Inventory?</p>
+                  <div className="vinted-card-actions">
+                    <button className="btn btn-ghost" type="button" onClick={() => setPendingDelete(null)}>
+                      Cancelar
+                    </button>
+                    <button className="btn btn-delete" type="button" onClick={() => void archive(item)}>
+                      Sí, eliminar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button className="btn btn-delete" type="button" onClick={() => setPendingDelete(item.vintedItemId)}>
+                  Eliminar
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -401,6 +445,7 @@ export default function VintedInventoryPage() {
         <p className="policy-count">Revisados: {counts.reviewed}</p>
         <p className="policy-count">Posibles duplicados: {counts.duplicates}</p>
         <p className="policy-count">Vendidos pendientes de retirar: {counts.soldPending}</p>
+        <p className="policy-count">Archivados: {counts.archived}</p>
       </section>
       <div className="post-all-bar">
         <a className="btn btn-primary" href="#sincronizar">
