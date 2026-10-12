@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import { cleanVintedCard, ebayItemUrl, ebaySearchUrl, sizesEquivalent } from "@/lib/vinted/card-text";
 import {
   matchVintedListing,
+  reserveUniqueSkus,
+  skuFromStoredText,
   uniqueVerifiedVintedUrl,
   parseInventoryImport,
   parseVintedItemLink,
@@ -60,10 +62,24 @@ describe("vinted inventory matching", () => {
     expect(result).toMatchObject({ status: "review", sku: "", suggestedSku: "2443" });
   });
 
-  test("verifies a unique listed SKU and sends a conflicting title to review", () => {
-    const unique = matchVintedListing(
+  test("verifies a listed SKU only when the title agrees and keeps conflicts for review", () => {
+    const agreed = matchVintedListing(
       {
         vintedItemId: "5",
+        title: coat.ebayTitle,
+        url: "https://www.vinted.com/items/5",
+        photoUrl: "",
+        brand: "",
+        size: "",
+        listedSku: skuFromStoredText("SKU: 2443"),
+      },
+      [coat, other]
+    );
+    expect(agreed).toMatchObject({ status: "verified", sku: "2443" });
+
+    const differentTitle = matchVintedListing(
+      {
+        vintedItemId: "5b",
         title: "Different title",
         url: "https://www.vinted.com/items/5",
         photoUrl: "",
@@ -73,7 +89,7 @@ describe("vinted inventory matching", () => {
       },
       [coat, other]
     );
-    expect(unique).toMatchObject({ status: "verified", sku: "2443" });
+    expect(differentTitle).toMatchObject({ status: "review", sku: "", suggestedSku: "2443" });
 
     const conflict = matchVintedListing(
       {
@@ -89,6 +105,35 @@ describe("vinted inventory matching", () => {
     );
     expect(conflict.status).toBe("review");
     expect(conflict.sku).toBe("");
+  });
+
+  test("does not assign one SKU to several Vinted listings", () => {
+    const match = { status: "verified" as const, sku: "2443", suggestedSku: "", title: coat.ebayTitle, ebayItemId: "123456789012", detail: "" };
+    const reserved = reserveUniqueSkus(
+      [
+        { id: "a", match },
+        { id: "b", match: { ...match } },
+      ],
+      ["2443"]
+    );
+    expect(reserved.every((row) => row.match.status === "review" && row.match.sku === "")).toBe(true);
+    expect(reserved[0].match.suggestedSku).toBe("2443");
+  });
+
+  test("does not treat the same brand alone as an identification", () => {
+    const result = matchVintedListing(
+      {
+        vintedItemId: "11",
+        title: "Another Levi jacket",
+        url: "https://www.vinted.com/items/11",
+        photoUrl: "",
+        brand: "Levi's",
+        size: "",
+      },
+      [coat, { ...coat, sku: "3001", ebayTitle: "Levi's trucker jacket", size: "L" }]
+    );
+    expect(result.status).not.toBe("verified");
+    expect(result.sku).toBe("");
   });
 
   test("attaches one eBay item id and does not link a similar title", () => {

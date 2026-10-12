@@ -3,6 +3,8 @@ import { ensureInventoryTables, getSql } from "@/lib/db";
 import {
   matchVintedListing,
   prepareCollectedItem,
+  reserveUniqueSkus,
+  skuFromStoredText,
   uniqueVerifiedVintedUrl,
   type EbayInventoryCandidate,
   type VintedCollectedItem,
@@ -48,6 +50,9 @@ export interface VintedInventoryCounts {
   needsReview: number;
   reviewed: number;
   pending: number;
+  possible: number;
+  unmatched: number;
+  identifyRemaining: number;
 }
 
 function text(value: unknown): string {
@@ -128,7 +133,9 @@ export async function listEbayMatchCandidates(): Promise<EbayInventoryCandidate[
       vintedTitle: text(record.vinted_title),
       brand: text(prepared.brand),
       size: text(prepared.size),
-      photoUrl: "",
+      photoUrl: text(prepared.photoUrl || prepared.photo),
+      color: text(prepared.color),
+      category: text(prepared.category || prepared.itemType),
       ebayItemId: text(record.ebay_item_id).replace(/\D/g, ""),
     };
   });
@@ -178,6 +185,8 @@ function attachKnownEbayItems(
         brand: "",
         size: "",
         photoUrl: "",
+        color: "",
+        category: "",
         ebayItemId: "",
       });
     }
@@ -330,7 +339,7 @@ export async function listVintedInventory(query: string): Promise<VintedInventor
 export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
   const sql = getSql();
   await ensureInventoryTables();
-  const rows = await sql`SELECT match_status, duplicate_status, sold_status, sku, reviewed_at FROM vinted_inventory_links`;
+  const rows = await sql`SELECT match_status, duplicate_status, sold_status, sku, reviewed_at, identify_checked_at FROM vinted_inventory_links`;
   const counts: VintedInventoryCounts = {
     collected: rows.length,
     identified: 0,
@@ -339,10 +348,22 @@ export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
     needsReview: 0,
     reviewed: 0,
     pending: 0,
+    possible: 0,
+    unmatched: 0,
+    identifyRemaining: 0,
   };
   for (const row of rows) {
-    const record = row as { match_status?: string; duplicate_status?: string; sold_status?: string; sku?: string; reviewed_at?: unknown };
+    const record = row as {
+      match_status?: string;
+      duplicate_status?: string;
+      sold_status?: string;
+      sku?: string;
+      reviewed_at?: unknown;
+      identify_checked_at?: unknown;
+    };
     if (record.match_status === "verified") counts.identified += 1;
+    if (record.match_status === "review") counts.possible += 1;
+    if (record.match_status === "unmatched") counts.unmatched += 1;
     if (record.duplicate_status === "suspected" || record.duplicate_status === "confirmed") counts.duplicates += 1;
     if (record.sold_status === "pending_removal") counts.soldPending += 1;
     const needsSku = record.match_status !== "verified" && !text(record.sku).trim();
@@ -351,8 +372,80 @@ export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
     }
     if (record.reviewed_at) counts.reviewed += 1;
     else counts.pending += 1;
+    if (record.match_status !== "verified" && !record.identify_checked_at) counts.identifyRemaining += 1;
   }
   return counts;
+}
+
+export async function identifySkuBatch(limit = 30): Promise<VintedInventoryCounts & { processed: number }> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const cap = Math.min(30, Math.max(1, limit));
+  const candidates = await listEbayMatchCandidates();
+  const verified = await sql`
+    SELECT sku
+    FROM vinted_inventory_links
+    WHERE match_status = 'verified' AND btrim(sku) <> ''
+  `;
+  const rows = await sql`
+    SELECT vinted_item_id, title, url, photo_url, brand, size, listed_sku, detail
+    FROM vinted_inventory_links
+    WHERE match_status <> 'verified'
+      AND identify_checked_at IS NULL
+    ORDER BY created_at ASC, vinted_item_id ASC
+    LIMIT ${cap}
+  `;
+  const proposals = rows.map((row) => {
+    const record = row as Record<string, unknown>;
+    const title = text(record.title);
+    const detail = text(record.detail);
+    const listedSku = text(record.listed_sku).trim() || skuFromStoredText(title, detail);
+    return {
+      id: text(record.vinted_item_id),
+      match: matchVintedListing(
+        {
+          vintedItemId: text(record.vinted_item_id),
+          title,
+          url: text(record.url),
+          photoUrl: text(record.photo_url),
+          brand: text(record.brand),
+          size: text(record.size),
+          listedSku,
+          cardText: detail,
+        },
+        candidates
+      ),
+    };
+  });
+  const settled = reserveUniqueSkus(
+    proposals,
+    verified.map((row) => text((row as { sku?: string }).sku))
+  );
+  let processed = 0;
+  for (const proposal of settled) {
+    if (!proposal.id) continue;
+    const updated = await sql`
+      UPDATE vinted_inventory_links
+      SET
+        sku = ${proposal.match.sku},
+        suggested_sku = ${proposal.match.suggestedSku},
+        match_status = ${proposal.match.status},
+        detail = ${proposal.match.detail},
+        ebay_item_id = CASE
+          WHEN btrim(ebay_item_id) <> '' THEN ebay_item_id
+          ELSE ${proposal.match.ebayItemId || ""}
+        END,
+        verified_at = CASE WHEN ${proposal.match.status} = 'verified' THEN NOW() ELSE verified_at END,
+        identify_checked_at = NOW(),
+        updated_at = NOW()
+      WHERE vinted_item_id = ${proposal.id}
+        AND match_status <> 'verified'
+        AND identify_checked_at IS NULL
+      RETURNING id
+    `;
+    if (updated.length) processed += 1;
+  }
+  return { ...(await vintedInventoryCounts()), processed };
 }
 
 async function recordEvent(vintedItemId: string, eventType: string, detail: string): Promise<void> {
@@ -505,7 +598,7 @@ export async function confirmVintedInventoryMatch(vintedItemId: string, sku: str
 
 export async function reviewVintedInventory(input: {
   vintedItemId: string;
-  action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item";
+  action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion";
   relatedIds: string[];
   ebayItemId?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -547,6 +640,23 @@ export async function reviewVintedInventory(input: {
     }
     await recordEvent(id, "not_duplicate", ids.join(","));
     await refreshInventorySignals();
+    return { ok: true };
+  }
+  if (input.action === "reject_suggestion") {
+    const updated = await sql`
+      UPDATE vinted_inventory_links
+      SET
+        suggested_sku = '',
+        sku = '',
+        match_status = 'unmatched',
+        detail = 'Sugerencia rechazada.',
+        updated_at = NOW()
+      WHERE vinted_item_id = ${id}
+        AND match_status <> 'verified'
+      RETURNING id
+    `;
+    if (!updated.length) return { ok: false, error: "Esa asociación ya está verificada o no existe." };
+    await recordEvent(id, "reject_suggestion", "Sugerencia rechazada. No se borró la publicación.");
     return { ok: true };
   }
   if (input.action === "mark_reviewed") {

@@ -11,6 +11,8 @@ export interface EbayInventoryCandidate {
   brand: string;
   size: string;
   photoUrl: string;
+  color?: string;
+  category?: string;
   ebayItemId?: string;
 }
 
@@ -23,6 +25,8 @@ export interface VintedCollectedItem {
   size: string;
   listedSku?: string;
   cardText?: string;
+  color?: string;
+  category?: string;
 }
 
 export type VintedMatchStatus = "verified" | "review" | "unmatched";
@@ -73,6 +77,47 @@ export function uniqueVerifiedVintedUrl(urls: string[]): string | null {
   return unique.length === 1 ? unique[0] : null;
 }
 
+export function skuFromStoredText(...parts: string[]): string {
+  for (const part of parts) {
+    const match = String(part || "").match(/\bSKU:\s*([A-Za-z0-9][A-Za-z0-9-]{2,40})\b/i);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+}
+
+export function reserveUniqueSkus(
+  proposals: { id: string; match: VintedInventoryMatch }[],
+  alreadyVerified: string[]
+): { id: string; match: VintedInventoryMatch }[] {
+  const used = new Set(alreadyVerified.map((sku) => sku.trim()).filter(Boolean));
+  const claimed = new Map<string, number>();
+  for (const proposal of proposals) {
+    if (proposal.match.status !== "verified" || !proposal.match.sku) continue;
+    claimed.set(proposal.match.sku, (claimed.get(proposal.match.sku) ?? 0) + 1);
+  }
+  return proposals.map((proposal) => {
+    if (proposal.match.status !== "verified" || !proposal.match.sku) return proposal;
+    const duplicated = (claimed.get(proposal.match.sku) ?? 0) > 1 || used.has(proposal.match.sku);
+    if (!duplicated) {
+      used.add(proposal.match.sku);
+      return proposal;
+    }
+    return {
+      id: proposal.id,
+      match: {
+        ...proposal.match,
+        status: "review",
+        sku: "",
+        suggestedSku: proposal.match.sku,
+        ebayItemId: "",
+        detail: used.has(proposal.match.sku)
+          ? "Ese SKU ya está asociado a otra publicación de Vinted."
+          : "Ese SKU corresponde a varios artículos de Vinted. Queda para revisión.",
+      },
+    };
+  });
+}
+
 export function matchVintedListing(
   item: VintedCollectedItem,
   candidates: EbayInventoryCandidate[]
@@ -84,25 +129,39 @@ export function matchVintedListing(
     titlesOf(candidate).some((stored) => sameText(stored, title))
   );
   const byListedSku = listedSku ? candidates.filter((candidate) => candidate.sku === listedSku) : [];
+  if (byListedSku.length > 1) {
+    return {
+      status: "review",
+      sku: "",
+      suggestedSku: "",
+      title,
+      ebayItemId: "",
+      detail: "Ese SKU aparece en varias publicaciones de eBay.",
+    };
+  }
   if (byListedSku.length === 1) {
-    const titleSku = exact.length === 1 ? exact[0].sku : "";
-    if (exact.length > 1 || (titleSku && titleSku !== listedSku)) {
+    const chosen = byListedSku[0];
+    const titleAgrees = titlesOf(chosen).some((stored) => sameText(stored, title));
+    const titleElsewhere = exact.some((candidate) => candidate.sku !== listedSku);
+    if (titleAgrees && !titleElsewhere) {
       return {
-        status: "review",
-        sku: "",
+        status: "verified",
+        sku: listedSku,
         suggestedSku: "",
         title,
-        ebayItemId: "",
-        detail: "El SKU de la publicación y el título no señalan el mismo artículo.",
+        ebayItemId: itemIdOf(chosen),
+        detail: "El SKU de la descripción y el título coinciden con una sola publicación de eBay.",
       };
     }
     return {
-      status: "verified",
-      sku: listedSku,
-      suggestedSku: "",
+      status: "review",
+      sku: "",
+      suggestedSku: listedSku,
       title,
-      ebayItemId: itemIdOf(byListedSku[0]),
-      detail: "SKU único encontrado en la publicación.",
+      ebayItemId: "",
+      detail: titleElsewhere
+        ? "El SKU de la descripción y el título no señalan el mismo artículo."
+        : "El SKU está en eBay, pero el título no confirma que sea el mismo artículo.",
     };
   }
   if (listedSku && !byListedSku.length && exact.length === 1 && exact[0].sku !== listedSku) {
@@ -142,13 +201,15 @@ export function matchVintedListing(
       const brand = signalMatch(prepared.brand, candidate.brand);
       const size = signalMatch(prepared.size, candidate.size, "size");
       const photo = signalMatch(item.photoUrl, candidate.photoUrl);
-      const signals = [brand, size, photo];
+      const color = signalMatch(prepared.color || "", candidate.color || "");
+      const category = signalMatch(prepared.category || "", candidate.category || "");
+      const signals = [brand, size, photo, color, category];
       const comparable = signals.filter((signal) => signal !== "skip").length;
       const matched = signals.filter((signal) => signal === "match").length;
       const missed = signals.filter((signal) => signal === "miss").length;
       return { candidate, comparable, matched, missed };
     })
-    .filter((row) => row.comparable > 0 && row.matched === row.comparable && row.missed === 0);
+    .filter((row) => row.comparable >= 2 && row.matched === row.comparable && row.missed === 0);
 
   if (ranked.length === 1) {
     return {

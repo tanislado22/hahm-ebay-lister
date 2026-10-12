@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { ebayItemUrl, ebaySearchUrl } from "@/lib/vinted/card-text";
 import { parseInventoryImport, VINTED_SYNC_PILOT_LIMIT } from "@/lib/vinted/inventory-match";
@@ -37,6 +37,9 @@ interface Counts {
   needsReview: number;
   reviewed: number;
   pending: number;
+  possible: number;
+  unmatched: number;
+  identifyRemaining: number;
 }
 
 type View = "all" | "pending" | "reviewed" | "identified" | "possible" | "none" | "duplicates" | "sold";
@@ -49,6 +52,9 @@ const EMPTY_COUNTS: Counts = {
   needsReview: 0,
   reviewed: 0,
   pending: 0,
+  possible: 0,
+  unmatched: 0,
+  identifyRemaining: 0,
 };
 
 const VIEWS: Array<{ id: View; label: string }> = [
@@ -91,6 +97,8 @@ export default function VintedInventoryPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  const [identifying, setIdentifying] = useState(false);
+  const identifyRun = useRef(false);
   const load = useCallback(async (search: string) => {
     setLoading(true);
     setError("");
@@ -120,6 +128,29 @@ export default function VintedInventoryPage() {
   useEffect(() => {
     void load("");
   }, [load]);
+
+  async function identify(loop: boolean) {
+    identifyRun.current = loop;
+    setIdentifying(true);
+    setError("");
+    try {
+      do {
+        const response = await apiPost("/api/vinted/inventory/identify", {});
+        const body = (await response.json()) as { ok?: boolean; error?: string; done?: boolean; processed?: number };
+        if (!response.ok || !body.ok) {
+          setError(body.error || "No se pudo identificar este lote.");
+          break;
+        }
+        await load(query);
+        if (body.done || body.processed === 0) break;
+      } while (identifyRun.current);
+    } catch {
+      setError("No se pudo identificar este lote.");
+    } finally {
+      identifyRun.current = false;
+      setIdentifying(false);
+    }
+  }
 
   const byId = useMemo(() => new Map(items.map((item) => [item.vintedItemId, item])), [items]);
 
@@ -188,7 +219,7 @@ export default function VintedInventoryPage() {
 
   async function review(
     item: InventoryItem,
-    action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item",
+    action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion",
     relatedIds: string[],
     ebayItemId = ""
   ) {
@@ -218,7 +249,14 @@ export default function VintedInventoryPage() {
     if (direct) {
       return (
         <a href={direct} target="_blank" rel="noopener noreferrer">
-          Abrir en eBay
+          Open in eBay
+        </a>
+      );
+    }
+    if (item.status === "review" && item.suggestedSku) {
+      return (
+        <a href={ebaySearchUrl(item.suggestedSku)} target="_blank" rel="noopener noreferrer">
+          Open in eBay
         </a>
       );
     }
@@ -246,10 +284,12 @@ export default function VintedInventoryPage() {
         </div>
       </header>
       <section className="policy-counts" aria-label="Resumen">
-        <p className="policy-count">Importadas: {counts.collected}</p>
-        <p className="policy-count">Identificadas: {counts.identified}</p>
-        <p className="policy-count">Revisadas: {counts.reviewed}</p>
+        <p className="policy-count">Total: {counts.collected}</p>
+        <p className="policy-count">Identificados: {counts.identified}</p>
+        <p className="policy-count">Posibles coincidencias: {counts.possible}</p>
+        <p className="policy-count">Sin coincidencia: {counts.unmatched}</p>
         <p className="policy-count">Pendientes: {counts.pending}</p>
+        <p className="policy-count">Revisados: {counts.reviewed}</p>
         <p className="policy-count">Posibles duplicados: {counts.duplicates}</p>
         <p className="policy-count">Vendidos pendientes de retirar: {counts.soldPending}</p>
       </section>
@@ -257,9 +297,36 @@ export default function VintedInventoryPage() {
         <a className="btn btn-primary" href="#sincronizar">
           Iniciar una nueva sincronización
         </a>
+        <button className="btn btn-primary" type="button" onClick={() => void identify(true)} disabled={identifying || loading || (counts.collected > 0 && counts.identifyRemaining === 0)}>
+          Identificar SKU automáticamente
+        </button>
+        <button className="btn btn-ghost" type="button" onClick={() => { identifyRun.current = false; }} disabled={!identifying}>
+          Pausar
+        </button>
+        <button className="btn btn-ghost" type="button" onClick={() => void identify(true)} disabled={identifying || loading || counts.identifyRemaining === 0}>
+          Continuar
+        </button>
         <a className="btn btn-ghost" href="/vinted">
           Cola de Vinted
         </a>
+      </div>
+      <p>
+        Progreso: {Math.max(0, counts.collected - counts.identifyRemaining)} de {counts.collected}. Quedan {counts.identifyRemaining} sin pasar por esta identificación. El avance queda guardado; puedes cerrar la página y continuar después. No se borran publicaciones ni SKU ya confirmados.
+      </p>
+      <div
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={Math.max(counts.collected, 1)}
+        aria-valuenow={Math.max(0, counts.collected - counts.identifyRemaining)}
+        style={{ height: 10, background: "#e7e1d8", borderRadius: 999, overflow: "hidden", marginBottom: 16 }}
+      >
+        <div
+          style={{
+            height: "100%",
+            width: `${counts.collected ? ((counts.collected - counts.identifyRemaining) / counts.collected) * 100 : 0}%`,
+            background: "#2f6f4e",
+          }}
+        />
       </div>
       <section id="sincronizar">
         <h2>Sincronizar</h2>
@@ -372,7 +439,7 @@ export default function VintedInventoryPage() {
                     <tr key={item.vintedItemId}>
                       <td>{photo(item)}</td>
                       <td>{item.title || "Sin título"}</td>
-                      <td>{item.sku || "—"}</td>
+                      <td>{item.status === "verified" && item.sku ? item.sku : "—"}</td>
                       <td>{platformLabel(item.soldPlatform)}</td>
                       <td>{saleDate(item.soldAt)}</td>
                       <td>
@@ -430,6 +497,7 @@ export default function VintedInventoryPage() {
                 <td>
                   {matchLabel(item)}
                   <p>{item.reviewedAt ? "Revisado" : "Pendiente de revisión"}</p>
+                  {item.detail ? <p>{item.detail}</p> : null}
                 </td>
                 <td>
                   <p>
@@ -456,6 +524,18 @@ export default function VintedInventoryPage() {
                     <p>
                       <button className="btn btn-ghost" type="button" onClick={() => void confirm(item)}>
                         Confirmar SKU
+                      </button>
+                    </p>
+                  ) : null}
+                  {item.status === "review" && item.suggestedSku ? (
+                    <p>
+                      Candidato eBay: {item.suggestedSku}
+                      <br />
+                      <button className="btn btn-ghost" type="button" onClick={() => void confirm(item)}>
+                        Confirmar asociación
+                      </button>{" "}
+                      <button className="btn btn-ghost" type="button" onClick={() => void review(item, "reject_suggestion", [])}>
+                        Rechazar
                       </button>
                     </p>
                   ) : null}

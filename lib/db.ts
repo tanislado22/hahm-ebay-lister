@@ -154,6 +154,7 @@ async function migrate(): Promise<void> {
   await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMPTZ`;
   await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS ebay_item_id TEXT NOT NULL DEFAULT ''`;
   await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS identify_checked_at TIMESTAMPTZ`;
   await sql`
     CREATE TABLE IF NOT EXISTS vinted_inventory_events (
       id TEXT PRIMARY KEY,

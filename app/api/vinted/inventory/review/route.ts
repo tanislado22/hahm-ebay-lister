@@ -4,7 +4,7 @@ import { reviewVintedInventory } from "@/lib/vinted/inventory-store";
 
 export const dynamic = "force-dynamic";
 
-const ACTIONS = new Set(["confirm_duplicate", "not_duplicate", "withdrawn", "not_sold", "mark_reviewed", "set_ebay_item"]);
+const ACTIONS = new Set(["confirm_duplicate", "not_duplicate", "withdrawn", "not_sold", "mark_reviewed", "set_ebay_item", "reject_suggestion"]);
 
 export async function POST(req: NextRequest) {
   const denied = guardApiRequest(req);
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   try {
     const result = await reviewVintedInventory({
       vintedItemId: String(body.vintedItemId || ""),
-      action: action as "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item",
+      action: action as "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion",
       relatedIds,
       ebayItemId: String(body.ebayItemId || ""),
     });
