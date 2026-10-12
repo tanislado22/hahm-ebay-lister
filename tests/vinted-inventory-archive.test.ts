@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { activeInventoryRows, archiveInventoryItem, restoreInventoryItem, type ArchiveInventoryRow } from "@/lib/vinted/inventory-archive";
+import {
+  activeInventoryRows,
+  archiveInventoryItem,
+  duplicateGroupsWithoutArchived,
+  restoreInventoryItem,
+  type ArchiveInventoryRow,
+} from "@/lib/vinted/inventory-archive";
 
 const rows: ArchiveInventoryRow[] = [
   { vintedItemId: "111", sku: "2443", ebayItemId: "123456789012", matchStatus: "verified", archivedAt: null },
@@ -27,6 +33,31 @@ describe("vinted inventory archive", () => {
 
   test("does not change anything when the archive is cancelled by leaving the row active", () => {
     expect(activeInventoryRows(rows)).toEqual(rows);
+  });
+
+  test("archives one Vinted listing that shares SKU ST-26 and leaves the other listing in place", () => {
+    const pair: ArchiveInventoryRow[] = [
+      { vintedItemId: "vinted-481920", sku: "ST-26", ebayItemId: "123456789012", matchStatus: "verified", archivedAt: null },
+      { vintedItemId: "vinted-481921", sku: "ST-26", ebayItemId: "123456789013", matchStatus: "verified", archivedAt: null },
+    ];
+    const bySku = archiveInventoryItem(pair, "ST-26", "2026-10-12T20:00:00.000Z");
+    expect(bySku.ok).toBe(false);
+
+    const archived = archiveInventoryItem(pair, "vinted-481920", "2026-10-12T20:00:00.000Z");
+    expect(archived.ok).toBe(true);
+    if (!archived.ok) return;
+    expect(archived.rows[0]).toEqual({ ...pair[0], archivedAt: "2026-10-12T20:00:00.000Z" });
+    expect(archived.rows[1]).toEqual(pair[1]);
+    expect(activeInventoryRows(archived.rows).map((row) => row.vintedItemId)).toEqual(["vinted-481921"]);
+    expect(
+      duplicateGroupsWithoutArchived([{ reason: "sku", itemIds: ["vinted-481920", "vinted-481921"] }], ["vinted-481920"])
+    ).toEqual([]);
+    expect(
+      duplicateGroupsWithoutArchived(
+        [{ reason: "sku", itemIds: ["vinted-481920", "vinted-481921", "vinted-481922"] }],
+        ["vinted-481920"]
+      )
+    ).toEqual([{ reason: "sku", itemIds: ["vinted-481921", "vinted-481922"] }]);
   });
 
   test("restores an archived item without changing its saved association", () => {

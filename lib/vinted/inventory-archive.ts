@@ -28,3 +28,10 @@ export function restoreInventoryItem<T extends ArchiveInventoryRow>(rows: T[], v
 export function activeInventoryRows<T extends { archivedAt: string | null }>(rows: T[]): T[] {
   return rows.filter((row) => !row.archivedAt);
 }
+
+export function duplicateGroupsWithoutArchived<T extends { itemIds: string[] }>(groups: T[], archivedIds: Iterable<string>): T[] {
+  const archived = new Set(archivedIds);
+  return groups
+    .map((group) => ({ ...group, itemIds: group.itemIds.filter((id) => !archived.has(id)) }))
+    .filter((group) => group.itemIds.length > 1);
+}

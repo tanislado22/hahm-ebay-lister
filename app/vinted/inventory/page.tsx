@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { ebayItemUrl } from "@/lib/vinted/card-text";
+import { duplicateGroupsWithoutArchived } from "@/lib/vinted/inventory-archive";
 import { parseInventoryImport, VINTED_SYNC_PILOT_LIMIT } from "@/lib/vinted/inventory-match";
 
 interface InventoryItem {
@@ -196,9 +197,10 @@ export default function VintedInventoryPage() {
   }, [items, view]);
 
   const visibleGroups = useMemo(() => {
+    const archivedIds = items.filter((item) => item.archivedAt).map((item) => item.vintedItemId);
     const allowed = new Set(visible.map((item) => item.vintedItemId));
-    return groups.filter((group) => group.itemIds.some((id) => allowed.has(id)));
-  }, [groups, visible]);
+    return duplicateGroupsWithoutArchived(groups, archivedIds).filter((group) => group.itemIds.some((id) => allowed.has(id)));
+  }, [groups, items, visible]);
 
   async function importFile(file: File) {
     setNotice("");
@@ -294,6 +296,36 @@ export default function VintedInventoryPage() {
     await load(query);
   }
 
+  function deleteActions(item: InventoryItem) {
+    if (item.archivedAt) {
+      return (
+        <button className="btn btn-ghost" type="button" onClick={() => void review(item, "restore", [])}>
+          Restaurar
+        </button>
+      );
+    }
+    if (pendingDelete === item.vintedItemId) {
+      return (
+        <div className="vinted-delete-confirm" role="alertdialog" aria-label="Confirmar eliminación">
+          <p>¿Estás seguro de que deseas eliminar este artículo de Vinted Inventory?</p>
+          <div className="vinted-card-actions">
+            <button className="btn btn-ghost" type="button" onClick={() => setPendingDelete(null)}>
+              Cancelar
+            </button>
+            <button className="btn btn-delete" type="button" onClick={() => void archive(item)}>
+              Sí, eliminar
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <button className="btn btn-delete" type="button" onClick={() => setPendingDelete(item.vintedItemId)}>
+        Eliminar
+      </button>
+    );
+  }
+
   function photoFrame(src: string, className: string) {
     if (!src) return <span className={`${className} is-empty`} aria-hidden="true" />;
     return <img className={className} src={src} alt="" />;
@@ -360,27 +392,7 @@ export default function VintedInventoryPage() {
                   </button>
                 </>
               ) : null}
-              {item.archivedAt ? (
-                <button className="btn btn-ghost" type="button" onClick={() => void review(item, "restore", [])}>
-                  Restaurar
-                </button>
-              ) : pendingDelete === item.vintedItemId ? (
-                <div className="vinted-delete-confirm" role="alertdialog" aria-label="Confirmar eliminación">
-                  <p>¿Estás seguro de que deseas eliminar este artículo de Vinted Inventory?</p>
-                  <div className="vinted-card-actions">
-                    <button className="btn btn-ghost" type="button" onClick={() => setPendingDelete(null)}>
-                      Cancelar
-                    </button>
-                    <button className="btn btn-delete" type="button" onClick={() => void archive(item)}>
-                      Sí, eliminar
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button className="btn btn-delete" type="button" onClick={() => setPendingDelete(item.vintedItemId)}>
-                  Eliminar
-                </button>
-              )}
+              {deleteActions(item)}
             </div>
           </div>
         </div>
@@ -563,6 +575,7 @@ export default function VintedInventoryPage() {
                           <button className="btn btn-ghost" type="button" onClick={() => void review(item, "not_duplicate", group.itemIds)}>
                             Son artículos diferentes
                           </button>
+                          {deleteActions(item)}
                         </div>
                       </div>
                     </div>
