@@ -286,7 +286,7 @@ export default function VintedInventoryPage() {
   }
 
   return (
-    <main className="wrap">
+    <main className="wrap vinted-inventory-page">
       <header className="masthead">
         <span className="logo-mark" aria-hidden="true">
           🛍️
@@ -438,7 +438,7 @@ export default function VintedInventoryPage() {
           {visible.filter((item) => item.soldStatus === "pending_removal").length === 0 ? (
             <p>No hay publicaciones activas con una venta confirmada.</p>
           ) : null}
-          <div className="policy-table-wrap">
+          <div className="policy-table-wrap vinted-inventory-table">
             <table className="policy-table">
               <thead>
                 <tr>
@@ -455,12 +455,12 @@ export default function VintedInventoryPage() {
                   .filter((item) => item.soldStatus === "pending_removal")
                   .map((item) => (
                     <tr key={item.vintedItemId}>
-                      <td>{photo(item)}</td>
-                      <td>{item.title || "Sin título"}</td>
-                      <td>{item.status === "verified" && item.sku ? item.sku : "—"}</td>
-                      <td>{platformLabel(item.soldPlatform)}</td>
-                      <td>{saleDate(item.soldAt)}</td>
-                      <td>
+                      <td className="photo-cell">{photo(item)}</td>
+                      <td className="title-cell">{item.title || "Sin título"}</td>
+                      <td className="sku-cell">{item.status === "verified" && item.sku ? item.sku : "—"}</td>
+                      <td className="plain-cell">{platformLabel(item.soldPlatform)}</td>
+                      <td className="plain-cell">{saleDate(item.soldAt)}</td>
+                      <td className="review-cell">
                         <a href={item.url} target="_blank" rel="noopener noreferrer">
                           Open in Vinted
                         </a>
@@ -483,7 +483,7 @@ export default function VintedInventoryPage() {
         </section>
       ) : null}
 
-      <div className="policy-table-wrap">
+      <div className="policy-table-wrap vinted-inventory-table">
         <table className="policy-table">
           <thead>
             <tr>
@@ -501,42 +501,46 @@ export default function VintedInventoryPage() {
           <tbody>
             {visible.map((item) => (
               <tr key={item.vintedItemId}>
-                <td>{photo(item)}</td>
-                <td>
+                <td className="photo-cell">{photo(item)}</td>
+                <td className="title-cell">
                   {item.title || "Sin título"}
                   {item.soldStatus === "pending_removal" ? <p>Vendido — pendiente de retirar</p> : null}
                   {item.duplicateStatus === "suspected" || item.duplicateStatus === "confirmed" ? <p>Duplicado</p> : null}
                 </td>
-                <td>—</td>
-                <td>
-                  {item.status === "verified" && item.sku ? item.sku : "—"}
-                  {item.status !== "verified" && item.suggestedSku ? <p>Sugerido: {item.suggestedSku}</p> : null}
+                <td className="plain-cell">—</td>
+                <td className="sku-cell">
+                  <span>{item.status === "verified" && item.sku ? item.sku : "—"}</span>
+                  {item.status !== "verified" && item.suggestedSku ? <span className="sku-suggested">Sugerido: {item.suggestedSku}</span> : null}
                 </td>
-                <td>{item.ebayItemId || "—"}</td>
-                <td>
+                <td className="item-id-cell">{item.ebayItemId || "—"}</td>
+                <td className="match-cell">
                   {matchLabel(item)}
                   <p>{item.reviewedAt ? "Revisado" : "Pendiente de revisión"}</p>
                   {item.detail ? <p>{item.detail}</p> : null}
                 </td>
-                <td>
+                <td className="candidate-cell">
                   {item.status === "verified" ? (
                     "Asociación confirmada"
                   ) : item.candidates?.length ? (
                     item.candidates.map((candidate) => (
-                      <div key={`${candidate.ebayItemId}-${candidate.sku}`} style={{ marginBottom: 8 }}>
+                      <div className="candidate-card" key={`${candidate.ebayItemId}-${candidate.sku}`}>
                         {candidate.photoUrl ? (
-                          <img src={candidate.photoUrl} alt="" width={48} height={48} style={{ objectFit: "cover" }} />
-                        ) : null}
-                        <div>{candidate.title || "Sin título"}</div>
-                        <div>SKU {candidate.sku || "—"}</div>
-                        {directEbayLink(candidate.ebayItemId)}
+                          <img className="candidate-photo" src={candidate.photoUrl} alt="" />
+                        ) : (
+                          <span className="candidate-photo candidate-photo-empty" />
+                        )}
+                        <div className="candidate-copy">
+                          <div className="candidate-title">{candidate.title || "Sin título"}</div>
+                          <div className="candidate-sku">SKU {candidate.sku || "—"}</div>
+                          {directEbayLink(candidate.ebayItemId)}
+                        </div>
                       </div>
                     ))
                   ) : (
                     "Ningún candidato de tu cuenta"
                   )}
                 </td>
-                <td>
+                <td className="links-cell">
                   <p>
                     <a href={item.url} target="_blank" rel="noopener noreferrer">
                       Open in Vinted
@@ -544,7 +548,7 @@ export default function VintedInventoryPage() {
                   </p>
                   <p>{ebayLink(item)}</p>
                 </td>
-                <td>
+                <td className="review-cell">
                   {item.reviewedAt ? (
                     "Revisado"
                   ) : (
