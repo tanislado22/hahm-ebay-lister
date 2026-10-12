@@ -24,11 +24,11 @@ async function tradingCall(accessToken: string, callName: string, body: string):
   return text;
 }
 
-function totalPages(xml: string): number {
+function totalPages(xml: string, cap = MAX_PAGES): number {
   const match = xml.match(/<TotalNumberOfPages>(\d+)<\/TotalNumberOfPages>/i);
   const pages = Number(match?.[1] ?? "1");
   if (!Number.isFinite(pages) || pages < 1) return 1;
-  return Math.min(pages, MAX_PAGES);
+  return Math.min(pages, cap);
 }
 
 // Read-only. Every active listing on the seller account, including listings
@@ -83,6 +83,98 @@ export async function fetchRecentlyEndedSellerListings(
     );
     pages = totalPages(xml);
     listings.push(...parseTradingItems(xml));
+  }
+  return listings;
+}
+
+export interface SellerCatalogListing {
+  itemId: string;
+  sku: string;
+  title: string;
+  photoUrl: string;
+  brand: string;
+  size: string;
+  color: string;
+  category: string;
+}
+
+function decodeXml(value: string): string {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .trim();
+}
+
+function tag(block: string, name: string): string {
+  const match = block.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, "i"));
+  return match?.[1] ? decodeXml(match[1]) : "";
+}
+
+function specificValue(block: string, names: string[]): string {
+  const wanted = new Set(names.map((name) => name.toLowerCase()));
+  const pattern = /<NameValueList>([\s\S]*?)<\/NameValueList>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(block))) {
+    const name = tag(match[1], "Name").toLowerCase();
+    if (!wanted.has(name)) continue;
+    const value = tag(match[1], "Value");
+    if (value) return value;
+  }
+  return "";
+}
+
+// Active listings on the connected seller account. Read-only.
+export function parseSellerCatalogItems(xml: string): SellerCatalogListing[] {
+  const items: SellerCatalogListing[] = [];
+  const pattern = /<Item\b[^>]*>([\s\S]*?)<\/Item>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(xml))) {
+    const block = match[1];
+    const itemId = tag(block, "ItemID").replace(/\D/g, "");
+    if (!itemId) continue;
+    const status = tag(block, "ListingStatus").toLowerCase();
+    if (status === "completed" || status === "ended") continue;
+    const categoryBlock = tag(block, "PrimaryCategory");
+    items.push({
+      itemId,
+      sku: tag(block, "SKU").trim(),
+      title: tag(block, "Title").trim(),
+      photoUrl: tag(block, "GalleryURL") || tag(block, "PictureURL"),
+      brand: specificValue(block, ["Brand"]),
+      size: specificValue(block, ["Size"]),
+      color: specificValue(block, ["Color", "Colour"]),
+      category: categoryBlock ? tag(categoryBlock, "CategoryName") || categoryBlock : tag(block, "CategoryName"),
+    });
+  }
+  return items;
+}
+
+const CATALOG_PAGE_CAP = 25;
+
+export async function fetchActiveSellerCatalog(accessToken: string): Promise<SellerCatalogListing[]> {
+  const listings: SellerCatalogListing[] = [];
+  let pages = 1;
+  for (let page = 1; page <= pages; page += 1) {
+    const xml = await tradingCall(
+      accessToken,
+      "GetMyeBaySelling",
+      `<?xml version="1.0" encoding="utf-8"?>
+<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <ActiveList>
+    <Include>true</Include>
+    <Pagination>
+      <EntriesPerPage>200</EntriesPerPage>
+      <PageNumber>${page}</PageNumber>
+    </Pagination>
+  </ActiveList>
+  <DetailLevel>ReturnAll</DetailLevel>
+</GetMyeBaySellingRequest>`
+    );
+    pages = totalPages(xml, CATALOG_PAGE_CAP);
+    listings.push(...parseSellerCatalogItems(xml));
   }
   return listings;
 }

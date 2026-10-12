@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api-client";
-import { ebayItemUrl, ebaySearchUrl } from "@/lib/vinted/card-text";
+import { ebayItemUrl } from "@/lib/vinted/card-text";
 import { parseInventoryImport, VINTED_SYNC_PILOT_LIMIT } from "@/lib/vinted/inventory-match";
 
 interface InventoryItem {
@@ -22,6 +22,14 @@ interface InventoryItem {
   soldDetail: string;
   ebayItemId: string;
   reviewedAt: string;
+  candidates: EbayCandidate[];
+}
+
+interface EbayCandidate {
+  sku: string;
+  title: string;
+  ebayItemId: string;
+  photoUrl: string;
 }
 
 interface DuplicateGroup {
@@ -40,6 +48,7 @@ interface Counts {
   possible: number;
   unmatched: number;
   identifyRemaining: number;
+  confirmed: number;
 }
 
 type View = "all" | "pending" | "reviewed" | "identified" | "possible" | "none" | "duplicates" | "sold";
@@ -55,6 +64,7 @@ const EMPTY_COUNTS: Counts = {
   possible: 0,
   unmatched: 0,
   identifyRemaining: 0,
+  confirmed: 0,
 };
 
 const VIEWS: Array<{ id: View; label: string }> = [
@@ -129,17 +139,28 @@ export default function VintedInventoryPage() {
     void load("");
   }, [load]);
 
-  async function identify(loop: boolean) {
+  async function identify(loop: boolean, restart = false) {
     identifyRun.current = loop;
     setIdentifying(true);
     setError("");
+    let reset = restart;
     try {
       do {
-        const response = await apiPost("/api/vinted/inventory/identify", {});
-        const body = (await response.json()) as { ok?: boolean; error?: string; done?: boolean; processed?: number };
+        const response = await apiPost("/api/vinted/inventory/identify", { restart: reset });
+        reset = false;
+        const body = (await response.json()) as {
+          ok?: boolean;
+          error?: string;
+          done?: boolean;
+          processed?: number;
+          catalogSize?: number;
+        };
         if (!response.ok || !body.ok) {
           setError(body.error || "No se pudo identificar este lote.");
           break;
+        }
+        if (body.catalogSize) {
+          setNotice(`Comparando con ${body.catalogSize} publicaciones activas de tu cuenta de eBay.`);
         }
         await load(query);
         if (body.done || body.processed === 0) break;
@@ -244,27 +265,19 @@ export default function VintedInventoryPage() {
     await review(item, "set_ebay_item", [], value.trim());
   }
 
-  function ebayLink(item: InventoryItem) {
-    const direct = item.ebayItemId ? ebayItemUrl(item.ebayItemId) : null;
-    if (direct) {
-      return (
-        <a href={direct} target="_blank" rel="noopener noreferrer">
-          Open in eBay
-        </a>
-      );
-    }
-    if (item.status === "review" && item.suggestedSku) {
-      return (
-        <a href={ebaySearchUrl(item.suggestedSku)} target="_blank" rel="noopener noreferrer">
-          Open in eBay
-        </a>
-      );
-    }
+  function directEbayLink(itemId: string) {
+    const direct = itemId ? ebayItemUrl(itemId) : null;
+    if (!direct) return null;
     return (
-      <a href={ebaySearchUrl(item.title || "")} target="_blank" rel="noopener noreferrer">
-        Buscar en eBay
+      <a href={direct} target="_blank" rel="noopener noreferrer">
+        Open in eBay
       </a>
     );
+  }
+
+  function ebayLink(item: InventoryItem) {
+    if (item.status !== "verified") return <span>Sin publicación confirmada</span>;
+    return directEbayLink(item.ebayItemId) || <span>Sin Item ID de eBay</span>;
   }
 
   function photo(item: InventoryItem) {
@@ -285,7 +298,9 @@ export default function VintedInventoryPage() {
       </header>
       <section className="policy-counts" aria-label="Resumen">
         <p className="policy-count">Total: {counts.collected}</p>
+        <p className="policy-count">Analizados: {Math.max(0, counts.collected - counts.identifyRemaining)}</p>
         <p className="policy-count">Identificados: {counts.identified}</p>
+        <p className="policy-count">Confirmados manualmente: {counts.confirmed}</p>
         <p className="policy-count">Posibles coincidencias: {counts.possible}</p>
         <p className="policy-count">Sin coincidencia: {counts.unmatched}</p>
         <p className="policy-count">Pendientes: {counts.pending}</p>
@@ -299,6 +314,9 @@ export default function VintedInventoryPage() {
         </a>
         <button className="btn btn-primary" type="button" onClick={() => void identify(true)} disabled={identifying || loading || (counts.collected > 0 && counts.identifyRemaining === 0)}>
           Identificar SKU automáticamente
+        </button>
+        <button className="btn btn-ghost" type="button" onClick={() => void identify(true, true)} disabled={identifying || loading || counts.collected === 0}>
+          Volver a identificar
         </button>
         <button className="btn btn-ghost" type="button" onClick={() => { identifyRun.current = false; }} disabled={!identifying}>
           Pausar
@@ -475,6 +493,7 @@ export default function VintedInventoryPage() {
               <th>SKU</th>
               <th>Item ID de eBay</th>
               <th>Coincidencia</th>
+              <th>Candidatos de tu eBay</th>
               <th>Enlaces</th>
               <th>Revisión</th>
             </tr>
@@ -498,6 +517,24 @@ export default function VintedInventoryPage() {
                   {matchLabel(item)}
                   <p>{item.reviewedAt ? "Revisado" : "Pendiente de revisión"}</p>
                   {item.detail ? <p>{item.detail}</p> : null}
+                </td>
+                <td>
+                  {item.status === "verified" ? (
+                    "Asociación confirmada"
+                  ) : item.candidates?.length ? (
+                    item.candidates.map((candidate) => (
+                      <div key={`${candidate.ebayItemId}-${candidate.sku}`} style={{ marginBottom: 8 }}>
+                        {candidate.photoUrl ? (
+                          <img src={candidate.photoUrl} alt="" width={48} height={48} style={{ objectFit: "cover" }} />
+                        ) : null}
+                        <div>{candidate.title || "Sin título"}</div>
+                        <div>SKU {candidate.sku || "—"}</div>
+                        {directEbayLink(candidate.ebayItemId)}
+                      </div>
+                    ))
+                  ) : (
+                    "Ningún candidato de tu cuenta"
+                  )}
                 </td>
                 <td>
                   <p>

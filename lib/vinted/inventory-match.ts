@@ -29,6 +29,13 @@ export interface VintedCollectedItem {
   category?: string;
 }
 
+export interface EbayMatchCandidate {
+  sku: string;
+  title: string;
+  ebayItemId: string;
+  photoUrl: string;
+}
+
 export type VintedMatchStatus = "verified" | "review" | "unmatched";
 
 export interface VintedInventoryMatch {
@@ -38,6 +45,7 @@ export interface VintedInventoryMatch {
   title: string;
   ebayItemId: string;
   detail: string;
+  candidates: EbayMatchCandidate[];
 }
 
 function sameText(left: string, right: string): boolean {
@@ -58,6 +66,70 @@ function signalMatch(itemValue: string, candidateValue: string, kind: "text" | "
 
 function itemIdOf(candidate: EbayInventoryCandidate): string {
   return cleanEbayItemId(candidate.ebayItemId || "") || "";
+}
+
+function tokensOf(value: string): string[] {
+  return normalizeTitle(value)
+    .split(" ")
+    .filter((token) => token.length > 1);
+}
+
+function containsAllTokens(title: string, tokens: string[]): boolean {
+  const present = new Set(tokensOf(title));
+  return tokens.every((token) => present.has(token));
+}
+
+function candidateCard(candidate: EbayInventoryCandidate): EbayMatchCandidate {
+  return {
+    sku: candidate.sku,
+    title: (candidate.ebayTitle || candidate.vintedTitle).trim(),
+    ebayItemId: itemIdOf(candidate),
+    photoUrl: candidate.photoUrl || "",
+  };
+}
+
+function cards(list: EbayInventoryCandidate[], limit = 3): EbayMatchCandidate[] {
+  const seen = new Set<string>();
+  const selected: EbayMatchCandidate[] = [];
+  for (const candidate of list) {
+    const card = candidateCard(candidate);
+    const key = card.ebayItemId || card.sku;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    selected.push(card);
+    if (selected.length >= limit) break;
+  }
+  return selected;
+}
+
+export function mergeOwnEbayCandidates(
+  live: EbayInventoryCandidate[],
+  stored: EbayInventoryCandidate[]
+): EbayInventoryCandidate[] {
+  const bySku = new Map<string, EbayInventoryCandidate>();
+  const byItem = new Map<string, EbayInventoryCandidate>();
+  for (const row of stored) {
+    if (row.sku) bySku.set(row.sku, row);
+    const itemId = cleanEbayItemId(row.ebayItemId || "");
+    if (itemId) byItem.set(itemId, row);
+  }
+  return live
+    .map((row) => {
+      const itemId = cleanEbayItemId(row.ebayItemId || "") || "";
+      const extra = (row.sku && bySku.get(row.sku)) || (itemId ? byItem.get(itemId) : undefined);
+      return {
+        sku: row.sku || extra?.sku || "",
+        ebayTitle: row.ebayTitle || extra?.ebayTitle || "",
+        vintedTitle: extra?.vintedTitle || "",
+        brand: row.brand || extra?.brand || "",
+        size: row.size || extra?.size || "",
+        photoUrl: row.photoUrl || extra?.photoUrl || "",
+        color: row.color || extra?.color || "",
+        category: row.category || extra?.category || "",
+        ebayItemId: itemId || cleanEbayItemId(extra?.ebayItemId || "") || "",
+      };
+    })
+    .filter((row) => row.sku || row.ebayItemId);
 }
 
 export function prepareCollectedItem(item: VintedCollectedItem): VintedCollectedItem {
@@ -136,21 +208,23 @@ export function matchVintedListing(
       suggestedSku: "",
       title,
       ebayItemId: "",
-      detail: "Ese SKU aparece en varias publicaciones de eBay.",
+      candidates: cards(byListedSku),
+      detail: "Ese SKU aparece en varias publicaciones de tu cuenta de eBay.",
     };
   }
   if (byListedSku.length === 1) {
     const chosen = byListedSku[0];
     const titleAgrees = titlesOf(chosen).some((stored) => sameText(stored, title));
     const titleElsewhere = exact.some((candidate) => candidate.sku !== listedSku);
-    if (titleAgrees && !titleElsewhere) {
+    if (titleAgrees && !titleElsewhere && chosen.sku) {
       return {
         status: "verified",
         sku: listedSku,
         suggestedSku: "",
         title,
         ebayItemId: itemIdOf(chosen),
-        detail: "El SKU de la descripción y el título coinciden con una sola publicación de eBay.",
+        candidates: cards([chosen]),
+        detail: "El SKU de la descripción y el título coinciden con una sola publicación de tu cuenta.",
       };
     }
     return {
@@ -159,9 +233,10 @@ export function matchVintedListing(
       suggestedSku: listedSku,
       title,
       ebayItemId: "",
+      candidates: cards(titleElsewhere ? exact : [chosen]),
       detail: titleElsewhere
         ? "El SKU de la descripción y el título no señalan el mismo artículo."
-        : "El SKU está en eBay, pero el título no confirma que sea el mismo artículo.",
+        : "El SKU está en tu cuenta, pero el título no confirma que sea el mismo artículo.",
     };
   }
   if (listedSku && !byListedSku.length && exact.length === 1 && exact[0].sku !== listedSku) {
@@ -171,18 +246,31 @@ export function matchVintedListing(
       suggestedSku: "",
       title,
       ebayItemId: "",
-      detail: "La publicación trae un SKU que no está en eBay y el título apunta a otro.",
+      candidates: cards(exact),
+      detail: "La publicación trae un SKU que no está en tu cuenta y el título apunta a otro artículo.",
     };
   }
   if (exact.length === 1) {
     const chosen = exact[0];
+    if (!chosen.sku) {
+      return {
+        status: "review",
+        sku: "",
+        suggestedSku: "",
+        title,
+        ebayItemId: "",
+        candidates: cards([chosen]),
+        detail: "El título coincide con una publicación de tu cuenta, pero esa publicación no tiene SKU.",
+      };
+    }
     return {
       status: "verified",
       sku: chosen.sku,
       suggestedSku: "",
       title,
       ebayItemId: itemIdOf(chosen),
-      detail: "Coincidencia exacta y única de título.",
+      candidates: cards([chosen]),
+      detail: "Coincidencia exacta y única con una publicación activa de tu cuenta.",
     };
   }
   if (exact.length > 1) {
@@ -192,8 +280,90 @@ export function matchVintedListing(
       suggestedSku: "",
       title,
       ebayItemId: "",
-      detail: `Varios SKU comparten el título: ${exact.map((candidate) => candidate.sku).join(", ")}.`,
+      candidates: cards(exact),
+      detail: `Varias publicaciones de tu cuenta comparten el título: ${exact.map((candidate) => candidate.sku).join(", ")}.`,
     };
+  }
+
+  const titleTokens = tokensOf(title);
+  if (titleTokens.length >= 3 && normalizeTitle(title).length >= 12) {
+    const contained = candidates.filter((candidate) =>
+      titlesOf(candidate).some((stored) => containsAllTokens(stored, titleTokens))
+    );
+    if (contained.length === 1 && contained[0].sku) {
+      return {
+        status: "verified",
+        sku: contained[0].sku,
+        suggestedSku: "",
+        title,
+        ebayItemId: itemIdOf(contained[0]),
+        candidates: cards(contained),
+        detail: "El título de Vinted queda dentro de una sola publicación activa de tu cuenta.",
+      };
+    }
+    if (contained.length > 1) {
+      return {
+        status: "review",
+        sku: "",
+        suggestedSku: "",
+        title,
+        ebayItemId: "",
+        candidates: cards(contained),
+        detail: "Varias publicaciones de tu cuenta contienen ese título.",
+      };
+    }
+  }
+
+  if (titleTokens.length >= 3) {
+    const overlaps = candidates
+      .map((candidate) => {
+        const present = new Set(titlesOf(candidate).flatMap((stored) => tokensOf(stored)));
+        const shared = titleTokens.filter((token) => present.has(token));
+        return { candidate, shared: shared.length };
+      })
+      .filter((row) => row.shared >= 3 && row.shared / titleTokens.length >= 0.6)
+      .sort((left, right) => right.shared - left.shared);
+    const best = overlaps[0];
+    const runnerUp = overlaps[1];
+    if (best && (!runnerUp || best.shared - runnerUp.shared >= 2)) {
+      const brand = signalMatch(prepared.brand, best.candidate.brand);
+      const size = signalMatch(prepared.size, best.candidate.size, "size");
+      const color = signalMatch(prepared.color || "", best.candidate.color || "");
+      const conflict = brand === "miss" || size === "miss" || color === "miss";
+      if (!conflict && best.candidate.sku && best.shared / titleTokens.length >= 0.75) {
+        return {
+          status: "verified",
+          sku: best.candidate.sku,
+          suggestedSku: "",
+          title,
+          ebayItemId: itemIdOf(best.candidate),
+          candidates: cards([best.candidate]),
+          detail: "El título coincide de forma única con una publicación activa de tu cuenta.",
+        };
+      }
+      return {
+        status: "review",
+        sku: "",
+        suggestedSku: conflict || !best.candidate.sku ? "" : best.candidate.sku,
+        title,
+        ebayItemId: "",
+        candidates: cards(overlaps.map((row) => row.candidate)),
+        detail: conflict
+          ? "Hay un título parecido en tu cuenta, pero marca, talla o color no coinciden."
+          : "Hay un título parecido en tu cuenta. Queda para revisión.",
+      };
+    }
+    if (overlaps.length > 1) {
+      return {
+        status: "review",
+        sku: "",
+        suggestedSku: "",
+        title,
+        ebayItemId: "",
+        candidates: cards(overlaps.map((row) => row.candidate)),
+        detail: "Varias publicaciones de tu cuenta se parecen a este título.",
+      };
+    }
   }
 
   const ranked = candidates
@@ -218,7 +388,8 @@ export function matchVintedListing(
       suggestedSku: ranked[0].candidate.sku,
       title,
       ebayItemId: "",
-      detail: "El título no coincide. Marca, talla o foto apuntan a un solo SKU; queda para revisión.",
+      candidates: cards(ranked.map((row) => row.candidate)),
+      detail: "El título no coincide. Marca, talla, color o foto apuntan a un solo artículo de tu cuenta; queda para revisión.",
     };
   }
   if (ranked.length > 1) {
@@ -228,7 +399,8 @@ export function matchVintedListing(
       suggestedSku: "",
       title,
       ebayItemId: "",
-      detail: `Varias coincidencias parciales: ${ranked.map((row) => row.candidate.sku).join(", ")}.`,
+      candidates: cards(ranked.map((row) => row.candidate)),
+      detail: `Varias publicaciones de tu cuenta coinciden en parte: ${ranked.map((row) => row.candidate.sku).join(", ")}.`,
     };
   }
   return {
@@ -237,7 +409,8 @@ export function matchVintedListing(
     suggestedSku: "",
     title,
     ebayItemId: "",
-    detail: "No hay una coincidencia única con el inventario de eBay.",
+    candidates: [],
+    detail: "Ninguna publicación activa de tu cuenta coincide con este artículo.",
   };
 }
 

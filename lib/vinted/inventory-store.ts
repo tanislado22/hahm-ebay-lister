@@ -1,12 +1,15 @@
 import crypto from "crypto";
 import { ensureInventoryTables, getSql } from "@/lib/db";
+import { fetchActiveSellerCatalog } from "@/lib/ebay/seller-listings";
 import {
   matchVintedListing,
+  mergeOwnEbayCandidates,
   prepareCollectedItem,
   reserveUniqueSkus,
   skuFromStoredText,
   uniqueVerifiedVintedUrl,
   type EbayInventoryCandidate,
+  type EbayMatchCandidate,
   type VintedCollectedItem,
   type VintedInventoryMatch,
   type VintedMatchStatus,
@@ -40,6 +43,7 @@ export interface VintedInventoryRow {
   soldDetail: string;
   ebayItemId: string;
   reviewedAt: string;
+  candidates: EbayMatchCandidate[];
 }
 
 export interface VintedInventoryCounts {
@@ -53,6 +57,7 @@ export interface VintedInventoryCounts {
   possible: number;
   unmatched: number;
   identifyRemaining: number;
+  confirmed: number;
 }
 
 function text(value: unknown): string {
@@ -108,7 +113,26 @@ function mapRow(row: Record<string, unknown>): VintedInventoryRow {
     soldDetail: text(row.sold_detail),
     ebayItemId: text(row.ebay_item_id).replace(/\D/g, ""),
     reviewedAt: timeText(row.reviewed_at),
+    candidates: parseStoredCandidates(row.ebay_candidates),
   };
+}
+
+export function parseStoredCandidates(value: unknown): EbayMatchCandidate[] {
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.slice(0, 3).flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const record = entry as Record<string, unknown>;
+      const sku = text(record.sku).trim();
+      const ebayItemId = text(record.ebayItemId).replace(/\D/g, "");
+      if (!sku && !ebayItemId) return [];
+      return [{ sku, title: text(record.title).trim(), ebayItemId, photoUrl: text(record.photoUrl).trim() }];
+    });
+  } catch {
+    return [];
+  }
 }
 
 export async function listEbayMatchCandidates(): Promise<EbayInventoryCandidate[]> {
@@ -339,7 +363,7 @@ export async function listVintedInventory(query: string): Promise<VintedInventor
 export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
   const sql = getSql();
   await ensureInventoryTables();
-  const rows = await sql`SELECT match_status, duplicate_status, sold_status, sku, reviewed_at, identify_checked_at FROM vinted_inventory_links`;
+  const rows = await sql`SELECT match_status, duplicate_status, sold_status, sku, detail, reviewed_at, identify_checked_at FROM vinted_inventory_links`;
   const counts: VintedInventoryCounts = {
     collected: rows.length,
     identified: 0,
@@ -351,6 +375,7 @@ export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
     possible: 0,
     unmatched: 0,
     identifyRemaining: 0,
+    confirmed: 0,
   };
   for (const row of rows) {
     const record = row as {
@@ -358,10 +383,12 @@ export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
       duplicate_status?: string;
       sold_status?: string;
       sku?: string;
+      detail?: string;
       reviewed_at?: unknown;
       identify_checked_at?: unknown;
     };
     if (record.match_status === "verified") counts.identified += 1;
+    if (record.match_status === "verified" && text(record.detail) === "Confirmado manualmente.") counts.confirmed += 1;
     if (record.match_status === "review") counts.possible += 1;
     if (record.match_status === "unmatched") counts.unmatched += 1;
     if (record.duplicate_status === "suspected" || record.duplicate_status === "confirmed") counts.duplicates += 1;
@@ -377,11 +404,55 @@ export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
   return counts;
 }
 
-export async function identifySkuBatch(limit = 30): Promise<VintedInventoryCounts & { processed: number }> {
+const ownCatalogCache = new Map<string, { at: number; rows: EbayInventoryCandidate[] }>();
+
+export async function loadOwnEbayCandidates(accessToken: string): Promise<EbayInventoryCandidate[]> {
+  const key = crypto.createHash("sha256").update(accessToken).digest("hex").slice(0, 16);
+  const cached = ownCatalogCache.get(key);
+  if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached.rows;
+  const live = await fetchActiveSellerCatalog(accessToken);
+  const stored = await listEbayMatchCandidates();
+  const rows = mergeOwnEbayCandidates(
+    live.map((listing) => ({
+      sku: listing.sku,
+      ebayTitle: listing.title,
+      vintedTitle: "",
+      brand: listing.brand,
+      size: listing.size,
+      photoUrl: listing.photoUrl,
+      color: listing.color,
+      category: listing.category,
+      ebayItemId: listing.itemId,
+    })),
+    stored
+  );
+  ownCatalogCache.set(key, { at: Date.now(), rows });
+  return rows;
+}
+
+export async function reopenUnverifiedIdentification(): Promise<number> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const updated = await sql`
+    UPDATE vinted_inventory_links
+    SET identify_checked_at = NULL
+    WHERE match_status <> 'verified'
+      AND identify_checked_at IS NOT NULL
+    RETURNING id
+  `;
+  return updated.length;
+}
+
+export async function identifySkuBatch(
+  limit = 30,
+  candidates: EbayInventoryCandidate[] = []
+): Promise<VintedInventoryCounts & { processed: number }> {
+  if (!candidates.length) {
+    throw new Error("OWN_EBAY_CATALOG_EMPTY");
+  }
   const sql = getSql();
   await ensureInventoryTables();
   const cap = Math.min(30, Math.max(1, limit));
-  const candidates = await listEbayMatchCandidates();
   const verified = await sql`
     SELECT sku
     FROM vinted_inventory_links
@@ -431,9 +502,11 @@ export async function identifySkuBatch(limit = 30): Promise<VintedInventoryCount
         suggested_sku = ${proposal.match.suggestedSku},
         match_status = ${proposal.match.status},
         detail = ${proposal.match.detail},
+        ebay_candidates = ${JSON.stringify(proposal.match.candidates || [])},
         ebay_item_id = CASE
           WHEN btrim(ebay_item_id) <> '' THEN ebay_item_id
-          ELSE ${proposal.match.ebayItemId || ""}
+          WHEN ${proposal.match.status} = 'verified' THEN ${proposal.match.ebayItemId || ""}
+          ELSE ebay_item_id
         END,
         verified_at = CASE WHEN ${proposal.match.status} = 'verified' THEN NOW() ELSE verified_at END,
         identify_checked_at = NOW(),
@@ -576,7 +649,16 @@ export async function confirmVintedInventoryMatch(vintedItemId: string, sku: str
   const known = await sql`
     SELECT sku FROM platform_listings WHERE sku = ${wantedSku} LIMIT 1
   `;
-  if (!known.length) return { ok: false, error: "Ese SKU no está en el inventario de eBay." };
+  const current = await sql`
+    SELECT ebay_item_id, ebay_candidates
+    FROM vinted_inventory_links
+    WHERE vinted_item_id = ${wantedId} AND match_status <> 'verified'
+    LIMIT 1
+  `;
+  const saved = current[0] as { ebay_candidates?: string } | undefined;
+  const fromCandidate = parseStoredCandidates(saved?.ebay_candidates).find((candidate) => candidate.sku === wantedSku);
+  const linkedItemId = fromCandidate?.ebayItemId || "";
+  if (!known.length && !fromCandidate) return { ok: false, error: "Ese SKU no está en el inventario de eBay." };
   const updated = await sql`
     UPDATE vinted_inventory_links
     SET
@@ -584,6 +666,10 @@ export async function confirmVintedInventoryMatch(vintedItemId: string, sku: str
       suggested_sku = '',
       match_status = 'verified',
       detail = 'Confirmado manualmente.',
+      ebay_item_id = CASE
+        WHEN btrim(ebay_item_id) <> '' THEN ebay_item_id
+        ELSE ${linkedItemId}
+      END,
       verified_at = NOW(),
       updated_at = NOW()
     WHERE vinted_item_id = ${wantedId}

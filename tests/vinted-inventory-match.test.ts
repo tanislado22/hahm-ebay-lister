@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { cleanVintedCard, ebayItemUrl, ebaySearchUrl, sizesEquivalent } from "@/lib/vinted/card-text";
+import { cleanVintedCard, ebayItemUrl, sizesEquivalent } from "@/lib/vinted/card-text";
 import {
   matchVintedListing,
+  mergeOwnEbayCandidates,
   reserveUniqueSkus,
   skuFromStoredText,
   uniqueVerifiedVintedUrl,
@@ -108,7 +109,7 @@ describe("vinted inventory matching", () => {
   });
 
   test("does not assign one SKU to several Vinted listings", () => {
-    const match = { status: "verified" as const, sku: "2443", suggestedSku: "", title: coat.ebayTitle, ebayItemId: "123456789012", detail: "" };
+    const match = { status: "verified" as const, sku: "2443", suggestedSku: "", title: coat.ebayTitle, ebayItemId: "123456789012", detail: "", candidates: [] };
     const reserved = reserveUniqueSkus(
       [
         { id: "a", match },
@@ -136,7 +137,7 @@ describe("vinted inventory matching", () => {
     expect(result.sku).toBe("");
   });
 
-  test("attaches one eBay item id and does not link a similar title", () => {
+  test("links a unique contained title to the seller item and keeps two similar listings for review", () => {
     const linked = matchVintedListing(
       { vintedItemId: "7", title: coat.ebayTitle, url: "https://www.vinted.com/items/7", photoUrl: "", brand: "", size: "" },
       [{ ...coat, ebayItemId: "123456789012" }]
@@ -144,13 +145,34 @@ describe("vinted inventory matching", () => {
     expect(linked).toMatchObject({ status: "verified", sku: "2443", ebayItemId: "123456789012" });
     expect(ebayItemUrl(linked.ebayItemId)).toBe("https://www.ebay.com/itm/123456789012");
 
-    const similar = matchVintedListing(
+    const contained = matchVintedListing(
       { vintedItemId: "8", title: "Levi's 550 Jeans", url: "https://www.vinted.com/items/8", photoUrl: "", brand: "", size: "" },
-      [{ ...coat, ebayItemId: "123456789012" }]
+      [{ ...coat, ebayItemId: "123456789012", photoUrl: "https://i.ebayimg.com/jeans.jpg" }]
     );
-    expect(similar.status).not.toBe("verified");
-    expect(similar.ebayItemId).toBe("");
-    expect(ebaySearchUrl(similar.title)).toContain(encodeURIComponent("Levi's 550 Jeans"));
+    expect(contained).toMatchObject({ status: "verified", sku: "2443", ebayItemId: "123456789012" });
+    expect(contained.candidates[0]).toMatchObject({ sku: "2443", photoUrl: "https://i.ebayimg.com/jeans.jpg" });
+    expect(ebayItemUrl(contained.ebayItemId)).toBe("https://www.ebay.com/itm/123456789012");
+
+    const ambiguous = matchVintedListing(
+      { vintedItemId: "8b", title: "Levi's 550 Jeans", url: "https://www.vinted.com/items/8b", photoUrl: "", brand: "", size: "" },
+      [
+        { ...coat, ebayItemId: "123456789012" },
+        { ...coat, sku: "2444", ebayTitle: "Levi's 550 Jeans Mens 36x30 Black", ebayItemId: "123456789013" },
+      ]
+    );
+    expect(ambiguous.status).toBe("review");
+    expect(ambiguous.sku).toBe("");
+    expect(ambiguous.ebayItemId).toBe("");
+    expect(ambiguous.candidates.map((candidate) => candidate.sku).sort()).toEqual(["2443", "2444"]);
+  });
+
+  test("uses only the live seller catalog and ignores stored listings that are not active", () => {
+    const live = [{ ...coat, ebayItemId: "123456789012", brand: "" }];
+    const stored = [other, { ...coat, brand: "Levi's", photoUrl: "https://i.ebayimg.com/stored.jpg" }];
+    const merged = mergeOwnEbayCandidates(live, stored);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ sku: "2443", brand: "Levi's", photoUrl: "https://i.ebayimg.com/stored.jpg" });
+    expect(merged.some((candidate) => candidate.sku === "2503")).toBe(false);
   });
 
   test("keeps the original Vinted title without price, size, or condition", () => {
