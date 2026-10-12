@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import {
   parseInventoryImport,
-  VINTED_SYNC_BATCH_LIMIT,
+  prepareCollectedItem,
   VINTED_SYNC_PILOT_LIMIT,
   type VintedCollectedItem,
 } from "@/lib/vinted/inventory-match";
@@ -24,6 +24,7 @@ function cleanItem(value: unknown): VintedCollectedItem | null {
     brand: String(row.brand || "").trim(),
     size: String(row.size || "").trim(),
     listedSku: String(row.listedSku || row.sku || "").trim(),
+    cardText: String(row.cardText || "").trim(),
   };
 }
 
@@ -47,22 +48,11 @@ export async function POST(req: NextRequest) {
   if (!items.length) {
     return NextResponse.json({ ok: false, error: "No hay publicaciones de Vinted para sincronizar." }, { status: 400 });
   }
-  const full = body.confirmFullSync === true;
-  const limit = full ? VINTED_SYNC_BATCH_LIMIT : VINTED_SYNC_PILOT_LIMIT;
-  if (items.length > limit) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: full
-          ? `Cada lote acepta hasta ${VINTED_SYNC_BATCH_LIMIT} publicaciones.`
-          : `La prueba inicial acepta ${VINTED_SYNC_PILOT_LIMIT} publicaciones. No se sincronizó ninguna.`,
-      },
-      { status: 400 }
-    );
-  }
+  const skipped = Math.max(0, items.length - VINTED_SYNC_PILOT_LIMIT);
+  const batch = items.slice(0, VINTED_SYNC_PILOT_LIMIT);
   try {
-    const result = await syncVintedInventory(items);
-    return NextResponse.json({ ok: true, ...result, pilot: !full });
+    const result = await syncVintedInventory(batch.map((item) => prepareCollectedItem(item)));
+    return NextResponse.json({ ok: true, ...result, skipped });
   } catch (error) {
     console.error("[vinted/inventory/sync]", error instanceof Error ? error.name : "Error");
     return NextResponse.json({ ok: false, error: "No se pudo guardar la sincronización." }, { status: 500 });

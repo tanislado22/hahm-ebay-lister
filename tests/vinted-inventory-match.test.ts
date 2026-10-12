@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
+import { cleanVintedCard, ebayItemUrl, ebaySearchUrl, sizesEquivalent } from "@/lib/vinted/card-text";
 import {
   matchVintedListing,
   parseInventoryImport,
   parseVintedItemLink,
+  prepareCollectedItem,
   VINTED_SYNC_PILOT_LIMIT,
   type EbayInventoryCandidate,
 } from "@/lib/vinted/inventory-match";
@@ -88,6 +90,45 @@ describe("vinted inventory matching", () => {
     expect(conflict.sku).toBe("");
   });
 
+  test("attaches one eBay item id and does not link a similar title", () => {
+    const linked = matchVintedListing(
+      { vintedItemId: "7", title: coat.ebayTitle, url: "https://www.vinted.com/items/7", photoUrl: "", brand: "", size: "" },
+      [{ ...coat, ebayItemId: "123456789012" }]
+    );
+    expect(linked).toMatchObject({ status: "verified", sku: "2443", ebayItemId: "123456789012" });
+    expect(ebayItemUrl(linked.ebayItemId)).toBe("https://www.ebay.com/itm/123456789012");
+
+    const similar = matchVintedListing(
+      { vintedItemId: "8", title: "Levi's 550 Jeans", url: "https://www.vinted.com/items/8", photoUrl: "", brand: "", size: "" },
+      [{ ...coat, ebayItemId: "123456789012" }]
+    );
+    expect(similar.status).not.toBe("verified");
+    expect(similar.ebayItemId).toBe("");
+    expect(ebaySearchUrl(similar.title)).toContain(encodeURIComponent("Levi's 550 Jeans"));
+  });
+
+  test("keeps the original Vinted title without price, size, or condition", () => {
+    const prepared = prepareCollectedItem({
+      vintedItemId: "9",
+      title: "Nike Air Max",
+      cardText: "Nike Air Max\nYM\n$20.00\nVery good",
+      url: "https://www.vinted.com/items/9",
+      photoUrl: "",
+      brand: "",
+      size: "",
+    });
+    expect(prepared.title).toBe("Nike Air Max");
+    expect(prepared.size).toBe("YM");
+    expect(prepared.title).not.toMatch(/\$|Very good|YM/);
+    expect(cleanVintedCard("Gap Tee\nMedium\n€15,00\nGood").title).toBe("Gap Tee");
+  });
+
+  test("treats YM as Youth Medium and not as an adult medium", () => {
+    expect(sizesEquivalent("YM", "Youth Medium")).toBe(true);
+    expect(sizesEquivalent("YM", "M")).toBe(false);
+    expect(sizesEquivalent("M", "Medium")).toBe(true);
+  });
+
   test("leaves an item unmatched when nothing identifies it", () => {
     expect(
       matchVintedListing(
@@ -106,6 +147,6 @@ describe("vinted inventory matching", () => {
     const items = parseInventoryImport(csv);
     expect(items).toHaveLength(12);
     expect(items[0].vintedItemId).toBe("1");
-    expect(VINTED_SYNC_PILOT_LIMIT).toBe(10);
+    expect(VINTED_SYNC_PILOT_LIMIT).toBe(30);
   });
 });

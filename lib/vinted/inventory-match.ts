@@ -1,7 +1,8 @@
+import { cleanEbayItemId, cleanVintedCard, sizesEquivalent } from "@/lib/vinted/card-text";
 import { normalizeTitle } from "@/lib/vinted/match";
 
-export const VINTED_SYNC_PILOT_LIMIT = 10;
-export const VINTED_SYNC_BATCH_LIMIT = 50;
+export const VINTED_SYNC_PILOT_LIMIT = 30;
+export const VINTED_SYNC_BATCH_LIMIT = 30;
 
 export interface EbayInventoryCandidate {
   sku: string;
@@ -10,6 +11,7 @@ export interface EbayInventoryCandidate {
   brand: string;
   size: string;
   photoUrl: string;
+  ebayItemId?: string;
 }
 
 export interface VintedCollectedItem {
@@ -20,6 +22,7 @@ export interface VintedCollectedItem {
   brand: string;
   size: string;
   listedSku?: string;
+  cardText?: string;
 }
 
 export type VintedMatchStatus = "verified" | "review" | "unmatched";
@@ -29,6 +32,7 @@ export interface VintedInventoryMatch {
   sku: string;
   suggestedSku: string;
   title: string;
+  ebayItemId: string;
   detail: string;
 }
 
@@ -42,17 +46,35 @@ function titlesOf(candidate: EbayInventoryCandidate): string[] {
   return [candidate.ebayTitle, candidate.vintedTitle].map((title) => title.trim()).filter(Boolean);
 }
 
-function signalMatch(itemValue: string, candidateValue: string): "match" | "miss" | "skip" {
+function signalMatch(itemValue: string, candidateValue: string, kind: "text" | "size" = "text"): "match" | "miss" | "skip" {
   if (!itemValue.trim() || !candidateValue.trim()) return "skip";
-  return sameText(itemValue, candidateValue) ? "match" : "miss";
+  const matched = kind === "size" ? sizesEquivalent(itemValue, candidateValue) : sameText(itemValue, candidateValue);
+  return matched ? "match" : "miss";
+}
+
+function itemIdOf(candidate: EbayInventoryCandidate): string {
+  return cleanEbayItemId(candidate.ebayItemId || "") || "";
+}
+
+export function prepareCollectedItem(item: VintedCollectedItem): VintedCollectedItem {
+  const fromCard = cleanVintedCard(item.cardText || "");
+  const fromTitle = cleanVintedCard(item.title);
+  const title = fromTitle.title || fromCard.title || item.title.trim();
+  return {
+    ...item,
+    title,
+    brand: item.brand.trim() || fromCard.brand,
+    size: item.size.trim() || fromCard.size || fromTitle.size,
+  };
 }
 
 export function matchVintedListing(
   item: VintedCollectedItem,
   candidates: EbayInventoryCandidate[]
 ): VintedInventoryMatch {
-  const title = item.title.trim();
-  const listedSku = item.listedSku?.trim() ?? "";
+  const prepared = prepareCollectedItem(item);
+  const title = prepared.title.trim();
+  const listedSku = prepared.listedSku?.trim() ?? "";
   const exact = candidates.filter((candidate) =>
     titlesOf(candidate).some((stored) => sameText(stored, title))
   );
@@ -65,6 +87,7 @@ export function matchVintedListing(
         sku: "",
         suggestedSku: "",
         title,
+        ebayItemId: "",
         detail: "El SKU de la publicación y el título no señalan el mismo artículo.",
       };
     }
@@ -72,7 +95,8 @@ export function matchVintedListing(
       status: "verified",
       sku: listedSku,
       suggestedSku: "",
-      title: titlesOf(byListedSku[0])[0] || title,
+      title,
+      ebayItemId: itemIdOf(byListedSku[0]),
       detail: "SKU único encontrado en la publicación.",
     };
   }
@@ -82,6 +106,7 @@ export function matchVintedListing(
       sku: "",
       suggestedSku: "",
       title,
+      ebayItemId: "",
       detail: "La publicación trae un SKU que no está en eBay y el título apunta a otro.",
     };
   }
@@ -91,7 +116,8 @@ export function matchVintedListing(
       status: "verified",
       sku: chosen.sku,
       suggestedSku: "",
-      title: titlesOf(chosen)[0] || title,
+      title,
+      ebayItemId: itemIdOf(chosen),
       detail: "Coincidencia exacta y única de título.",
     };
   }
@@ -101,14 +127,15 @@ export function matchVintedListing(
       sku: "",
       suggestedSku: "",
       title,
+      ebayItemId: "",
       detail: `Varios SKU comparten el título: ${exact.map((candidate) => candidate.sku).join(", ")}.`,
     };
   }
 
   const ranked = candidates
     .map((candidate) => {
-      const brand = signalMatch(item.brand, candidate.brand);
-      const size = signalMatch(item.size, candidate.size);
+      const brand = signalMatch(prepared.brand, candidate.brand);
+      const size = signalMatch(prepared.size, candidate.size, "size");
       const photo = signalMatch(item.photoUrl, candidate.photoUrl);
       const signals = [brand, size, photo];
       const comparable = signals.filter((signal) => signal !== "skip").length;
@@ -124,6 +151,7 @@ export function matchVintedListing(
       sku: "",
       suggestedSku: ranked[0].candidate.sku,
       title,
+      ebayItemId: "",
       detail: "El título no coincide. Marca, talla o foto apuntan a un solo SKU; queda para revisión.",
     };
   }
@@ -133,6 +161,7 @@ export function matchVintedListing(
       sku: "",
       suggestedSku: "",
       title,
+      ebayItemId: "",
       detail: `Varias coincidencias parciales: ${ranked.map((row) => row.candidate.sku).join(", ")}.`,
     };
   }
@@ -141,6 +170,7 @@ export function matchVintedListing(
     sku: "",
     suggestedSku: "",
     title,
+    ebayItemId: "",
     detail: "No hay una coincidencia única con el inventario de eBay.",
   };
 }

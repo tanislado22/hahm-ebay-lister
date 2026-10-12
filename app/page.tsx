@@ -1399,7 +1399,10 @@ const draftAll = async () => {
         </span>
         <div>
           <h1>Listing Writer</h1>
-          <p>Upload a pile of photos · auto-sort into items · write every listing.</p>
+          <p>
+            Upload a pile of photos · auto-sort into items · write every listing.{" "}
+            <a href="/vinted/inventory">Inventario Vinted</a>
+          </p>
         </div>
       </header>
 

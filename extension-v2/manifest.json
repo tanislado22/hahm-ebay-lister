@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Listing Writer Vinted V2",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Fills the open Vinted sell form from the one item you just prepared. Does not press Sell.",
   "permissions": ["storage"],
   "host_permissions": [
@@ -23,7 +23,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.vinted.com/*", "https://*.vinted.com/*"],
-      "js": ["content.js"],
+      "js": ["closet-walk.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

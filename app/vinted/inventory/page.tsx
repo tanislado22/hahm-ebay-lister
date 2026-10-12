@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api-client";
-import { parseInventoryImport, VINTED_SYNC_BATCH_LIMIT, VINTED_SYNC_PILOT_LIMIT } from "@/lib/vinted/inventory-match";
+import { ebayItemUrl, ebaySearchUrl } from "@/lib/vinted/card-text";
+import { parseInventoryImport, VINTED_SYNC_PILOT_LIMIT } from "@/lib/vinted/inventory-match";
 
 interface InventoryItem {
   vintedItemId: string;
@@ -19,6 +20,8 @@ interface InventoryItem {
   soldPlatform: string;
   soldAt: string;
   soldDetail: string;
+  ebayItemId: string;
+  reviewedAt: string;
 }
 
 interface DuplicateGroup {
@@ -33,9 +36,10 @@ interface Counts {
   soldPending: number;
   needsReview: number;
   reviewed: number;
+  pending: number;
 }
 
-type View = "all" | "identified" | "duplicates" | "sold" | "review" | "reviewed";
+type View = "all" | "pending" | "reviewed" | "identified" | "possible" | "none" | "duplicates" | "sold";
 
 const EMPTY_COUNTS: Counts = {
   collected: 0,
@@ -44,15 +48,18 @@ const EMPTY_COUNTS: Counts = {
   soldPending: 0,
   needsReview: 0,
   reviewed: 0,
+  pending: 0,
 };
 
 const VIEWS: Array<{ id: View; label: string }> = [
   { id: "all", label: "Todas" },
+  { id: "pending", label: "Pendientes" },
+  { id: "reviewed", label: "Revisados" },
   { id: "identified", label: "Identificadas" },
+  { id: "possible", label: "Posible coincidencia" },
+  { id: "none", label: "Sin coincidencia" },
   { id: "duplicates", label: "Posibles duplicados" },
   { id: "sold", label: "Vendidos pendientes" },
-  { id: "review", label: "Sin SKU o revisión" },
-  { id: "reviewed", label: "Ya revisadas" },
 ];
 
 function platformLabel(platform: string): string {
@@ -69,22 +76,21 @@ function saleDate(value: string): string {
   return parsed.toLocaleString();
 }
 
-function needsReview(item: InventoryItem): boolean {
-  return item.status !== "verified" || item.soldStatus === "review";
+function matchLabel(item: InventoryItem): string {
+  if (item.status === "verified") return "Identificado";
+  if (item.status === "review") return "Posible coincidencia";
+  return "Sin coincidencia";
 }
 
 export default function VintedInventoryPage() {
   const [counts, setCounts] = useState<Counts>(EMPTY_COUNTS);
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [groups, setGroups] = useState<DuplicateGroup[]>([]);
-  const [reviewedIds, setReviewedIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<View>("all");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
-  const [importAll, setImportAll] = useState(false);
-
   const load = useCallback(async (search: string) => {
     setLoading(true);
     setError("");
@@ -96,7 +102,6 @@ export default function VintedInventoryPage() {
         counts?: Counts;
         items?: InventoryItem[];
         groups?: DuplicateGroup[];
-        reviewedIds?: string[];
       };
       if (!response.ok || !body.ok) {
         setError(body.error || "No se pudo leer el inventario.");
@@ -105,7 +110,6 @@ export default function VintedInventoryPage() {
       setCounts(body.counts || EMPTY_COUNTS);
       setItems(body.items || []);
       setGroups(body.groups || []);
-      setReviewedIds(body.reviewedIds || []);
     } catch {
       setError("No se pudo leer el inventario.");
     } finally {
@@ -117,19 +121,20 @@ export default function VintedInventoryPage() {
     void load("");
   }, [load]);
 
-  const reviewed = useMemo(() => new Set(reviewedIds), [reviewedIds]);
   const byId = useMemo(() => new Map(items.map((item) => [item.vintedItemId, item])), [items]);
 
   const visible = useMemo(() => {
     return items.filter((item) => {
+      if (view === "pending") return !item.reviewedAt;
+      if (view === "reviewed") return Boolean(item.reviewedAt);
       if (view === "identified") return item.status === "verified";
+      if (view === "possible") return item.status === "review";
+      if (view === "none") return item.status === "unmatched";
       if (view === "duplicates") return item.duplicateStatus === "suspected" || item.duplicateStatus === "confirmed";
       if (view === "sold") return item.soldStatus === "pending_removal";
-      if (view === "review") return needsReview(item);
-      if (view === "reviewed") return reviewed.has(item.vintedItemId);
       return true;
     });
-  }, [items, reviewed, view]);
+  }, [items, view]);
 
   const visibleGroups = useMemo(() => {
     const allowed = new Set(visible.map((item) => item.vintedItemId));
@@ -140,8 +145,8 @@ export default function VintedInventoryPage() {
     setNotice("");
     setError("");
     const parsed = parseInventoryImport(await file.text());
-    const batchSize = importAll ? VINTED_SYNC_BATCH_LIMIT : VINTED_SYNC_PILOT_LIMIT;
-    const slice = importAll ? parsed : parsed.slice(0, VINTED_SYNC_PILOT_LIMIT);
+    const batchSize = VINTED_SYNC_PILOT_LIMIT;
+    const slice = parsed.slice(0, VINTED_SYNC_PILOT_LIMIT);
     if (!slice.length) {
       setError("El archivo no tiene publicaciones de Vinted con URL.");
       return;
@@ -151,7 +156,6 @@ export default function VintedInventoryPage() {
       const batch = slice.slice(index, index + batchSize);
       const response = await apiPost("/api/vinted/inventory/sync", {
         items: batch,
-        confirmFullSync: batch.length > VINTED_SYNC_PILOT_LIMIT,
       });
       const body = (await response.json()) as { ok?: boolean; error?: string; received?: number };
       if (!response.ok || !body.ok) {
@@ -182,12 +186,18 @@ export default function VintedInventoryPage() {
     await load(query);
   }
 
-  async function review(item: InventoryItem, action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold", relatedIds: string[]) {
+  async function review(
+    item: InventoryItem,
+    action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item",
+    relatedIds: string[],
+    ebayItemId = ""
+  ) {
     setError("");
     const response = await apiPost("/api/vinted/inventory/review", {
       vintedItemId: item.vintedItemId,
       action,
       relatedIds,
+      ebayItemId,
     });
     const body = (await response.json()) as { ok?: boolean; error?: string };
     if (!response.ok || !body.ok) {
@@ -195,6 +205,28 @@ export default function VintedInventoryPage() {
       return;
     }
     await load(query);
+  }
+
+  async function correctEbay(item: InventoryItem) {
+    const value = window.prompt("Item ID del anuncio original de eBay", item.ebayItemId || "");
+    if (!value?.trim()) return;
+    await review(item, "set_ebay_item", [], value.trim());
+  }
+
+  function ebayLink(item: InventoryItem) {
+    const direct = item.ebayItemId ? ebayItemUrl(item.ebayItemId) : null;
+    if (direct) {
+      return (
+        <a href={direct} target="_blank" rel="noopener noreferrer">
+          Abrir en eBay
+        </a>
+      );
+    }
+    return (
+      <a href={ebaySearchUrl(item.title || "")} target="_blank" rel="noopener noreferrer">
+        Buscar en eBay
+      </a>
+    );
   }
 
   function photo(item: InventoryItem) {
@@ -214,12 +246,12 @@ export default function VintedInventoryPage() {
         </div>
       </header>
       <section className="policy-counts" aria-label="Resumen">
-        <p className="policy-count">Recopiladas: {counts.collected}</p>
+        <p className="policy-count">Importadas: {counts.collected}</p>
         <p className="policy-count">Identificadas: {counts.identified}</p>
+        <p className="policy-count">Revisadas: {counts.reviewed}</p>
+        <p className="policy-count">Pendientes: {counts.pending}</p>
         <p className="policy-count">Posibles duplicados: {counts.duplicates}</p>
         <p className="policy-count">Vendidos pendientes de retirar: {counts.soldPending}</p>
-        <p className="policy-count">Sin SKU o pendientes de revisión: {counts.needsReview}</p>
-        <p className="policy-count">Ya revisadas: {counts.reviewed}</p>
       </section>
       <div className="post-all-bar">
         <a className="btn btn-primary" href="#sincronizar">
@@ -232,14 +264,10 @@ export default function VintedInventoryPage() {
       <section id="sincronizar">
         <h2>Sincronizar</h2>
         <p>
-          Abre tu perfil de Vinted y usa “Sincronizar inventario Vinted” en la extensión V2.1.1. Cada pasada
-          recoge {VINTED_SYNC_PILOT_LIMIT} publicaciones y se puede reanudar. Si el perfil no se puede leer, importa
-          un archivo CSV o JSON con título, URL e ID.
+          Abre tu perfil de Vinted con la extensión 2.2.0. “Sincronizar 30” continúa el recorrido guardado.
+          “Reiniciar recorrido” vuelve al primer artículo y no borra registros ni revisiones. Cada archivo importa
+          como máximo {VINTED_SYNC_PILOT_LIMIT} publicaciones.
         </p>
-        <label>
-          <input type="checkbox" checked={importAll} onChange={(event) => setImportAll(event.target.checked)} />{" "}
-          Importar el archivo completo en un lote de hasta 50
-        </label>
         <p>
           <input
             type="file"
@@ -374,38 +402,57 @@ export default function VintedInventoryPage() {
           <thead>
             <tr>
               <th>Foto</th>
+              <th>Título de Vinted</th>
               <th>SKU</th>
-              <th>Título</th>
-              <th>Estado</th>
-              <th>Vinted</th>
-              <th></th>
+              <th>Item ID de eBay</th>
+              <th>Coincidencia</th>
+              <th>Enlaces</th>
+              <th>Revisión</th>
             </tr>
           </thead>
           <tbody>
             {visible.map((item) => (
               <tr key={item.vintedItemId}>
                 <td>{photo(item)}</td>
-                <td>{item.sku || item.listedSku || item.suggestedSku || "—"}</td>
                 <td>
                   {item.title || "Sin título"}
                   {item.soldStatus === "pending_removal" ? <p>Vendido — pendiente de retirar</p> : null}
                   {item.duplicateStatus === "suspected" || item.duplicateStatus === "confirmed" ? <p>Duplicado</p> : null}
-                  {needsReview(item) ? <p>Pendiente de revisión</p> : null}
                 </td>
-                <td>{item.status === "verified" ? "Identificado" : item.status === "review" ? "Revisión" : "Sin coincidencia"}</td>
+                <td>{item.sku || "—"}</td>
+                <td>{item.ebayItemId || "—"}</td>
                 <td>
-                  <a href={item.url} target="_blank" rel="noopener noreferrer">
-                    Abrir en Vinted
-                  </a>
+                  {matchLabel(item)}
+                  <p>{item.reviewedAt ? "Revisado" : "Pendiente de revisión"}</p>
                 </td>
                 <td>
-                  {item.status !== "verified" ? (
-                    <button className="btn btn-ghost" type="button" onClick={() => void confirm(item)}>
-                      Confirmar SKU
-                    </button>
+                  <p>
+                    <a href={item.url} target="_blank" rel="noopener noreferrer">
+                      Abrir en Vinted
+                    </a>
+                  </p>
+                  <p>{ebayLink(item)}</p>
+                </td>
+                <td>
+                  {item.reviewedAt ? (
+                    "Revisado"
                   ) : (
-                    "Verificado"
+                    <button className="btn btn-ghost" type="button" onClick={() => void review(item, "mark_reviewed", [])}>
+                      Marcar como revisado
+                    </button>
                   )}
+                  <p>
+                    <button className="btn btn-ghost" type="button" onClick={() => void correctEbay(item)}>
+                      Corregir Item ID
+                    </button>
+                  </p>
+                  {item.status !== "verified" ? (
+                    <p>
+                      <button className="btn btn-ghost" type="button" onClick={() => void confirm(item)}>
+                        Confirmar SKU
+                      </button>
+                    </p>
+                  ) : null}
                   {item.soldStatus === "pending_removal" ? (
                     <p>
                       <button className="btn btn-ghost" type="button" onClick={() => void review(item, "withdrawn", [])}>

@@ -609,8 +609,6 @@ function mountPanel() {
   });
 }
 
-const VINTED_SYNC_LIMIT = 10;
-
 function onClosetPage() {
   const path = location.pathname;
   if (/\/items\/(?:new|\d+)/.test(path)) return false;
@@ -630,59 +628,118 @@ function itemFromAnchor(anchor) {
   if (!/vinted\./i.test(url.hostname)) return null;
   url.hash = "";
   url.search = "";
-  const image = anchor.querySelector("img");
-  const title = clean(anchor.getAttribute("title") || image?.alt || anchor.innerText || "");
-  const visible = `${title}\n${anchor.innerText || ""}`;
+  const root = anchor.closest("[data-testid*='product-item'], [data-testid*='grid-item'], article, .feed-grid__item, .new-item-box") || anchor;
+  const image = anchor.querySelector("img") || root.querySelector("img");
+  if (!image) return null;
+  const titleNode = root.querySelector("[data-testid='item-title'], [data-testid*='description-title']");
+  const title = clean(titleNode?.innerText || anchor.getAttribute("title") || image.alt || "");
+  const cardText = clean(root.innerText || anchor.innerText || "");
+  const visible = `${title}\n${cardText}`;
   const skuMatch = visible.match(/SKU:\s*([A-Za-z0-9][A-Za-z0-9-]{2,40})/i);
+  const brandNode = root.querySelector("[data-testid*='brand']");
+  const sizeNode = root.querySelector("[data-testid*='size']");
   return {
     vintedItemId: match[1],
-    title: title.replace(/^SKU:\s*[A-Za-z0-9][A-Za-z0-9-]{2,40}\s*/i, "").trim(),
+    title,
+    cardText,
     url: url.toString(),
-    photoUrl: image ? srcOf(image) : "",
-    brand: "",
-    size: "",
+    photoUrl: srcOf(image),
+    brand: clean(brandNode?.innerText || ""),
+    size: clean(sizeNode?.innerText || ""),
     listedSku: skuMatch ? skuMatch[1] : "",
   };
 }
 
-function harvestCloset(seen, batch) {
-  let added = 0;
+function visibleClosetItems() {
+  const items = [];
+  const seen = new Set();
   document.querySelectorAll('a[href*="/items/"]').forEach((anchor) => {
-    if (batch.length >= VINTED_SYNC_LIMIT) return;
     const item = itemFromAnchor(anchor);
     if (!item || seen.has(item.vintedItemId)) return;
     seen.add(item.vintedItemId);
-    batch.push(item);
-    added += 1;
+    items.push(item);
   });
-  return added;
+  return items;
 }
 
-async function syncCloset(resume, log) {
-  const stored = await chrome.storage.local.get(["vintedInventorySeen"]);
-  const seen = new Set(resume && Array.isArray(stored.vintedInventorySeen) ? stored.vintedInventorySeen : []);
-  if (!resume) seen.clear();
-  const batch = [];
+function clickLoadMore() {
+  document.querySelectorAll("button, a").forEach((button) => {
+    const label = clean(button.innerText || "");
+    if (/^(load more|show more|ver más|cargar más|más resultados)$/i.test(label)) button.click();
+  });
+}
+
+async function loadProgress() {
+  const stored = await chrome.storage.local.get(["vintedInventoryProgress"]);
+  const progress = stored.vintedInventoryProgress;
+  if (!progress || !Array.isArray(progress.order) || !Array.isArray(progress.committed)) return emptyProgress();
+  return { order: progress.order.map(String), committed: progress.committed.map(String) };
+}
+
+async function saveProgress(progress) {
+  await chrome.storage.local.set({ vintedInventoryProgress: progress });
+}
+
+async function syncCloset(log) {
+  const progress = await loadProgress();
+  const payloads = {};
+  window.scrollTo(0, 0);
+  await sleep(500);
   let quiet = 0;
-  for (let step = 0; step < 12 && batch.length < VINTED_SYNC_LIMIT; step += 1) {
-    const added = harvestCloset(seen, batch);
-    log.push(`Recopiladas en esta pasada: ${batch.length}.`);
-    if (!added) quiet += 1;
+  let marker = "";
+  let lastLogged = -1;
+  let ready = nextBatchItems(progress.order, progress.committed, payloads, VINTED_SYNC_LIMIT);
+  for (let step = 0; step < 80 && ready.batch.length < VINTED_SYNC_LIMIT; step += 1) {
+    const visible = visibleClosetItems();
+    progress.order = mergeClosetOrder(progress.order, visible.map((item) => item.vintedItemId));
+    visible.forEach((item) => {
+      payloads[item.vintedItemId] = item;
+    });
+    ready = nextBatchItems(progress.order, progress.committed, payloads, VINTED_SYNC_LIMIT);
+    if (ready.batch.length !== lastLogged) {
+      log.push(`Artículos vistos en orden: ${progress.order.length}. Listos en este lote: ${ready.batch.length}.`);
+      lastLogged = ready.batch.length;
+    }
+    if (ready.batch.length >= VINTED_SYNC_LIMIT) break;
+    if (!ready.blocked && quiet >= 2) break;
+    const nextMarker = `${progress.order.length}:${Object.keys(payloads).length}`;
+    window.scrollBy(0, Math.max(640, Math.floor(window.innerHeight * 0.85)));
+    clickLoadMore();
+    await sleep(800);
+    if (nextMarker === marker) quiet += 1;
     else quiet = 0;
-    if (quiet >= 2 || batch.length >= VINTED_SYNC_LIMIT) break;
-    window.scrollBy(0, Math.max(500, window.innerHeight));
-    await sleep(900);
+    marker = nextMarker;
   }
-  await chrome.storage.local.set({ vintedInventorySeen: Array.from(seen) });
-  if (!batch.length) {
-    log.push("No aparecieron publicaciones nuevas. Puedes reanudar o importar un archivo.");
+  await saveProgress(progress);
+  if (!ready.batch.length) {
+    if (ready.blocked) {
+      log.push("El recorrido se detuvo antes de encontrar el siguiente artículo. Baja el perfil y pulsa Sincronizar 30 otra vez. No se borró ningún registro.");
+      return;
+    }
+    log.push("No hay más publicaciones nuevas en este recorrido. Reiniciar recorrido vuelve al primer artículo sin borrar datos.");
     return;
   }
-  const response = await chrome.runtime.sendMessage({ type: "sync-inventory", items: batch });
-  if (!response?.ok) throw new Error(response?.error || "No se pudo guardar la sincronización.");
+  const response = await chrome.runtime.sendMessage({ type: "sync-inventory", items: ready.batch });
+  if (!response?.ok) {
+    log.push("No se guardó este lote. El progreso no avanzó. Puedes pulsar Sincronizar 30 para reintentar.");
+    throw new Error(response?.error || "No se pudo guardar la sincronización.");
+  }
+  const saved = commitSynced(progress, ready.batch.map((item) => item.vintedItemId));
+  await saveProgress(saved);
   const body = response.body || {};
-  log.push(`Enviadas: ${body.received || batch.length}. Nuevas: ${body.inserted || 0}. Verificadas conservadas: ${body.keptVerified || 0}.`);
-  log.push("No se editó, retiró ni republicó ningún anuncio.");
+  log.push(`Procesadas: ${body.received || ready.batch.length}. Nuevas: ${body.inserted || 0}. Ya existían: ${body.existing ?? body.updated ?? 0}.`);
+  log.push(`Recorrido guardado: ${saved.committed.length} artículos. No se editó, retiró ni republicó ningún anuncio.`);
+}
+
+async function resetWalk(log) {
+  const accepted = window.confirm("El recorrido volverá al primer artículo. No se borra ningún registro ni ninguna revisión.");
+  if (!accepted) {
+    log.push("No se reinició el recorrido.");
+    return;
+  }
+  await chrome.storage.local.set({ vintedInventoryProgress: emptyProgress() });
+  await chrome.storage.local.remove(["vintedInventorySeen"]);
+  log.push("Recorrido reiniciado. Los registros de Inventario Vinted siguen guardados. Pulsa Sincronizar 30 para empezar por el primer artículo.");
 }
 
 function mountInventoryPanel() {
@@ -691,9 +748,9 @@ function mountInventoryPanel() {
   panel.className = "vinted-assist vinted-assist-v2 vinted-inventory-sync";
   panel.innerHTML = `
     <strong>Sincronizar inventario Vinted</strong>
-    <p>Lee hasta 10 publicaciones visibles de este perfil. No modifica anuncios.</p>
-    <button type="button" id="vinted-sync-start">Sincronizar 10</button>
-    <button type="button" id="vinted-sync-resume">Reanudar</button>
+    <p>Cada pulsación lee los siguientes 30 artículos de este perfil. No modifica anuncios.</p>
+    <button type="button" id="vinted-sync-start">Sincronizar 30</button>
+    <button type="button" id="vinted-sync-reset">Reiniciar recorrido</button>
     <label>Importar archivo <input id="vinted-sync-file" type="file" accept=".csv,.json,text/csv,application/json"></label>
     <pre id="vinted-sync-log"></pre>
   `;
@@ -720,17 +777,23 @@ function mountInventoryPanel() {
       });
     }
   }
-  panel.querySelector("#vinted-sync-start").addEventListener("click", () => run((log) => syncCloset(false, log)));
-  panel.querySelector("#vinted-sync-resume").addEventListener("click", () => run((log) => syncCloset(true, log)));
+  loadProgress().then((progress) => {
+    output.textContent = progress.committed.length
+      ? `Recorrido guardado: ${progress.committed.length} artículos. Sincronizar 30 continúa desde ahí.`
+      : "El recorrido empieza en el primer artículo.";
+  });
+  panel.querySelector("#vinted-sync-start").addEventListener("click", () => run((log) => syncCloset(log)));
+  panel.querySelector("#vinted-sync-reset").addEventListener("click", () => run((log) => resetWalk(log)));
   panel.querySelector("#vinted-sync-file").addEventListener("change", (event) => {
     const file = event.target.files && event.target.files[0];
     event.target.value = "";
     if (!file) return;
     run(async (log) => {
       const text = await file.text();
-      const response = await chrome.runtime.sendMessage({ type: "sync-inventory-file", text });
+      const response = await chrome.runtime.sendMessage({ type: "sync-inventory-file", text: text.slice(0, 200000) });
       if (!response?.ok) throw new Error(response?.error || "No se pudo importar el archivo.");
-      log.push(`Importadas en esta prueba: ${response.body?.received || 0}.`);
+      const body = response.body || {};
+      log.push(`Procesadas: ${body.received || 0}. Nuevas: ${body.inserted || 0}. Ya existían: ${body.existing || 0}.${body.skipped ? ` Quedaron ${body.skipped} fuera de este lote de 30.` : ""}`);
     });
   });
 }

@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { ensureInventoryTables, getSql } from "@/lib/db";
 import {
   matchVintedListing,
+  prepareCollectedItem,
   type EbayInventoryCandidate,
   type VintedCollectedItem,
   type VintedInventoryMatch,
@@ -34,6 +35,8 @@ export interface VintedInventoryRow {
   soldPlatform: string;
   soldAt: string;
   soldDetail: string;
+  ebayItemId: string;
+  reviewedAt: string;
 }
 
 export interface VintedInventoryCounts {
@@ -43,6 +46,7 @@ export interface VintedInventoryCounts {
   soldPending: number;
   needsReview: number;
   reviewed: number;
+  pending: number;
 }
 
 function text(value: unknown): string {
@@ -96,6 +100,8 @@ function mapRow(row: Record<string, unknown>): VintedInventoryRow {
     soldPlatform: text(row.sold_platform),
     soldAt: timeText(row.sold_at),
     soldDetail: text(row.sold_detail),
+    ebayItemId: text(row.ebay_item_id).replace(/\D/g, ""),
+    reviewedAt: timeText(row.reviewed_at),
   };
 }
 
@@ -103,11 +109,16 @@ export async function listEbayMatchCandidates(): Promise<EbayInventoryCandidate[
   const sql = getSql();
   await ensureInventoryTables();
   const rows = await sql`
-    SELECT sku, ebay_title, vinted_title, prepared
+    SELECT sku, ebay_title, vinted_title, ebay_item_id, prepared
     FROM platform_listings
     WHERE sku IS NOT NULL AND btrim(sku) <> ''
   `;
-  return rows.map((row) => {
+  const watches = await sql`
+    SELECT ebay_item_id, sku, title
+    FROM ebay_listing_watches
+    WHERE ebay_item_id IS NOT NULL AND btrim(ebay_item_id) <> ''
+  `;
+  const listings = rows.map((row) => {
     const record = row as Record<string, unknown>;
     const prepared = record.prepared && typeof record.prepared === "object" ? (record.prepared as Record<string, unknown>) : {};
     return {
@@ -117,33 +128,98 @@ export async function listEbayMatchCandidates(): Promise<EbayInventoryCandidate[
       brand: text(prepared.brand),
       size: text(prepared.size),
       photoUrl: "",
+      ebayItemId: text(record.ebay_item_id).replace(/\D/g, ""),
     };
   });
+  return attachKnownEbayItems(
+    listings,
+    watches.map((row) => {
+      const record = row as Record<string, unknown>;
+      return {
+        sku: text(record.sku).trim(),
+        title: text(record.title),
+        ebayItemId: text(record.ebay_item_id).replace(/\D/g, ""),
+      };
+    })
+  );
+}
+
+function attachKnownEbayItems(
+  listings: EbayInventoryCandidate[],
+  watches: { sku: string; title: string; ebayItemId: string }[]
+): EbayInventoryCandidate[] {
+  const bySku = new Map<string, EbayInventoryCandidate>();
+  for (const listing of listings) {
+    if (!listing.sku) continue;
+    const id = validItemId(listing.ebayItemId || "");
+    const current = bySku.get(listing.sku);
+    if (!current) {
+      bySku.set(listing.sku, { ...listing, ebayItemId: id });
+      continue;
+    }
+    const ids = new Set([current.ebayItemId || "", id].filter(Boolean));
+    current.ebayItemId = ids.size === 1 ? [...ids][0] : "";
+    if (!current.ebayTitle && listing.ebayTitle) current.ebayTitle = listing.ebayTitle;
+    if (!current.vintedTitle && listing.vintedTitle) current.vintedTitle = listing.vintedTitle;
+  }
+  const watchIds = new Map<string, Set<string>>();
+  for (const watch of watches) {
+    const id = validItemId(watch.ebayItemId);
+    if (!watch.sku || !id) continue;
+    const ids = watchIds.get(watch.sku) ?? new Set<string>();
+    ids.add(id);
+    watchIds.set(watch.sku, ids);
+    if (!bySku.has(watch.sku)) {
+      bySku.set(watch.sku, {
+        sku: watch.sku,
+        ebayTitle: watch.title,
+        vintedTitle: "",
+        brand: "",
+        size: "",
+        photoUrl: "",
+        ebayItemId: "",
+      });
+    }
+  }
+  for (const [sku, ids] of watchIds) {
+    const candidate = bySku.get(sku);
+    if (!candidate || candidate.ebayItemId) continue;
+    candidate.ebayItemId = ids.size === 1 ? [...ids][0] : "";
+  }
+  return [...bySku.values()];
+}
+
+function validItemId(value: string): string {
+  const id = value.replace(/\D/g, "");
+  return id.length >= 10 && id.length <= 15 ? id : "";
 }
 
 async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch): Promise<"inserted" | "kept" | "updated"> {
   const sql = getSql();
   await ensureInventoryTables();
+  const prepared = prepareCollectedItem(item);
   const id = crypto.randomUUID();
   const verifiedAt = match.status === "verified" ? new Date().toISOString() : null;
+  const title = prepared.title || item.title;
   const inserted = await sql`
     INSERT INTO vinted_inventory_links (
       id, vinted_item_id, title, url, photo_url, brand, size,
-      sku, suggested_sku, match_status, detail, listed_sku, synced_at, verified_at, created_at, updated_at
+      sku, suggested_sku, match_status, detail, listed_sku, ebay_item_id, synced_at, verified_at, created_at, updated_at
     )
     VALUES (
       ${id},
-      ${item.vintedItemId},
-      ${match.title || item.title},
-      ${item.url},
-      ${item.photoUrl},
-      ${item.brand},
-      ${item.size},
+      ${prepared.vintedItemId},
+      ${title},
+      ${prepared.url},
+      ${prepared.photoUrl},
+      ${prepared.brand},
+      ${prepared.size},
       ${match.sku},
       ${match.suggestedSku},
       ${match.status},
       ${match.detail},
-      ${item.listedSku || ""},
+      ${prepared.listedSku || ""},
+      ${match.ebayItemId || ""},
       NOW(),
       ${verifiedAt},
       NOW(),
@@ -157,11 +233,20 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
   const kept = await sql`
     UPDATE vinted_inventory_links
     SET
-      url = ${item.url},
-      photo_url = CASE WHEN ${item.photoUrl} <> '' THEN ${item.photoUrl} ELSE photo_url END,
+      title = CASE WHEN ${title} <> '' THEN ${title} ELSE title END,
+      url = ${prepared.url},
+      photo_url = CASE WHEN ${prepared.photoUrl} <> '' THEN ${prepared.photoUrl} ELSE photo_url END,
+      brand = CASE WHEN ${prepared.brand} <> '' THEN ${prepared.brand} ELSE brand END,
+      size = CASE WHEN ${prepared.size} <> '' THEN ${prepared.size} ELSE size END,
+      listed_sku = CASE WHEN ${prepared.listedSku || ""} <> '' THEN ${prepared.listedSku || ""} ELSE listed_sku END,
+      ebay_item_id = CASE
+        WHEN btrim(ebay_item_id) <> '' THEN ebay_item_id
+        WHEN ${match.sku} <> '' AND ${match.sku} = sku AND ${match.ebayItemId || ""} <> '' THEN ${match.ebayItemId || ""}
+        ELSE ebay_item_id
+      END,
       synced_at = NOW(),
       updated_at = NOW()
-    WHERE vinted_item_id = ${item.vintedItemId}
+    WHERE vinted_item_id = ${prepared.vintedItemId}
       AND match_status = 'verified'
     RETURNING id
   `;
@@ -170,20 +255,25 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
   await sql`
     UPDATE vinted_inventory_links
     SET
-      title = ${match.title || item.title},
-      url = ${item.url},
-      photo_url = ${item.photoUrl},
-      brand = ${item.brand},
-      size = ${item.size},
-      listed_sku = ${item.listedSku || ""},
-      sku = ${match.sku},
-      suggested_sku = ${match.suggestedSku},
-      match_status = ${match.status},
-      detail = ${match.detail},
+      title = CASE WHEN ${title} <> '' THEN ${title} ELSE title END,
+      url = ${prepared.url},
+      photo_url = ${prepared.photoUrl},
+      brand = CASE WHEN ${prepared.brand} <> '' THEN ${prepared.brand} ELSE brand END,
+      size = CASE WHEN ${prepared.size} <> '' THEN ${prepared.size} ELSE size END,
+      listed_sku = CASE WHEN ${prepared.listedSku || ""} <> '' THEN ${prepared.listedSku || ""} ELSE listed_sku END,
+      sku = CASE WHEN btrim(ebay_item_id) <> '' THEN sku ELSE ${match.sku} END,
+      suggested_sku = CASE WHEN btrim(ebay_item_id) <> '' THEN suggested_sku ELSE ${match.suggestedSku} END,
+      match_status = CASE WHEN btrim(ebay_item_id) <> '' THEN match_status ELSE ${match.status} END,
+      detail = CASE WHEN btrim(ebay_item_id) <> '' THEN detail ELSE ${match.detail} END,
+      ebay_item_id = CASE WHEN btrim(ebay_item_id) <> '' THEN ebay_item_id ELSE ${match.ebayItemId || ""} END,
+      verified_at = CASE
+        WHEN btrim(ebay_item_id) <> '' THEN verified_at
+        WHEN ${match.status} = 'verified' THEN ${verifiedAt}
+        ELSE NULL
+      END,
       synced_at = NOW(),
-      verified_at = ${verifiedAt},
       updated_at = NOW()
-    WHERE vinted_item_id = ${item.vintedItemId}
+    WHERE vinted_item_id = ${prepared.vintedItemId}
       AND match_status <> 'verified'
   `;
   return "updated";
@@ -194,15 +284,18 @@ export async function syncVintedInventory(items: VintedCollectedItem[]): Promise
   inserted: number;
   updated: number;
   keptVerified: number;
+  existing: number;
 }> {
   const candidates = await listEbayMatchCandidates();
-  const result = { received: items.length, inserted: 0, updated: 0, keptVerified: 0 };
+  const result = { received: items.length, inserted: 0, updated: 0, keptVerified: 0, existing: 0 };
   for (const item of items) {
-    const outcome = await saveMatch(item, matchVintedListing(item, candidates));
+    const prepared = prepareCollectedItem(item);
+    const outcome = await saveMatch(prepared, matchVintedListing(prepared, candidates));
     if (outcome === "inserted") result.inserted += 1;
     else if (outcome === "kept") result.keptVerified += 1;
     else result.updated += 1;
   }
+  result.existing = result.keptVerified + result.updated;
   await refreshInventorySignals();
   return result;
 }
@@ -219,6 +312,7 @@ export async function listVintedInventory(query: string): Promise<VintedInventor
           OR sku ILIKE ${needle}
           OR suggested_sku ILIKE ${needle}
           OR listed_sku ILIKE ${needle}
+          OR ebay_item_id ILIKE ${needle}
           OR vinted_item_id ILIKE ${needle}
         ORDER BY updated_at DESC
         LIMIT 800
@@ -235,22 +329,18 @@ export async function listVintedInventory(query: string): Promise<VintedInventor
 export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
   const sql = getSql();
   await ensureInventoryTables();
-  const rows = await sql`SELECT match_status, duplicate_status, sold_status, sku FROM vinted_inventory_links`;
-  const reviewed = await sql`
-    SELECT COUNT(DISTINCT vinted_item_id)::int AS total
-    FROM vinted_inventory_events
-    WHERE event_type IN ('confirm_match', 'confirm_duplicate', 'not_duplicate', 'withdrawn', 'not_sold')
-  `;
+  const rows = await sql`SELECT match_status, duplicate_status, sold_status, sku, reviewed_at FROM vinted_inventory_links`;
   const counts: VintedInventoryCounts = {
     collected: rows.length,
     identified: 0,
     duplicates: 0,
     soldPending: 0,
     needsReview: 0,
-    reviewed: Number((reviewed[0] as { total?: number } | undefined)?.total || 0),
+    reviewed: 0,
+    pending: 0,
   };
   for (const row of rows) {
-    const record = row as { match_status?: string; duplicate_status?: string; sold_status?: string; sku?: string };
+    const record = row as { match_status?: string; duplicate_status?: string; sold_status?: string; sku?: string; reviewed_at?: unknown };
     if (record.match_status === "verified") counts.identified += 1;
     if (record.duplicate_status === "suspected" || record.duplicate_status === "confirmed") counts.duplicates += 1;
     if (record.sold_status === "pending_removal") counts.soldPending += 1;
@@ -258,6 +348,8 @@ export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
     if (record.match_status === "review" || record.match_status === "unmatched" || record.sold_status === "review" || needsSku) {
       counts.needsReview += 1;
     }
+    if (record.reviewed_at) counts.reviewed += 1;
+    else counts.pending += 1;
   }
   return counts;
 }
@@ -412,8 +504,9 @@ export async function confirmVintedInventoryMatch(vintedItemId: string, sku: str
 
 export async function reviewVintedInventory(input: {
   vintedItemId: string;
-  action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold";
+  action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item";
   relatedIds: string[];
+  ebayItemId?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const id = input.vintedItemId.trim();
   if (!id) return { ok: false, error: "Falta la publicación de Vinted." };
@@ -452,6 +545,46 @@ export async function reviewVintedInventory(input: {
       `;
     }
     await recordEvent(id, "not_duplicate", ids.join(","));
+    await refreshInventorySignals();
+    return { ok: true };
+  }
+  if (input.action === "mark_reviewed") {
+    const updated = await sql`
+      UPDATE vinted_inventory_links
+      SET reviewed_at = NOW(), updated_at = NOW()
+      WHERE vinted_item_id = ${id}
+      RETURNING id
+    `;
+    if (!updated.length) return { ok: false, error: "No existe esa publicación." };
+    await recordEvent(id, "mark_reviewed", "Marcado como revisado.");
+    return { ok: true };
+  }
+  if (input.action === "set_ebay_item") {
+    const ebayItemId = validItemId(input.ebayItemId || "");
+    if (!ebayItemId) return { ok: false, error: "El Item ID de eBay debe tener entre 10 y 15 dígitos." };
+    const known = await sql`
+      SELECT sku FROM platform_listings WHERE regexp_replace(COALESCE(ebay_item_id, ''), '\\D', '', 'g') = ${ebayItemId}
+      UNION
+      SELECT sku FROM ebay_listing_watches WHERE regexp_replace(COALESCE(ebay_item_id, ''), '\\D', '', 'g') = ${ebayItemId}
+    `;
+    const skus = [...new Set(known.map((row) => text((row as { sku?: string }).sku).trim()).filter(Boolean))];
+    if (skus.length > 1) return { ok: false, error: "Ese Item ID aparece en varios SKU. No se cambió la relación." };
+    const sku = skus[0] || "";
+    const updated = await sql`
+      UPDATE vinted_inventory_links
+      SET
+        ebay_item_id = ${ebayItemId},
+        sku = CASE WHEN ${sku} <> '' THEN ${sku} ELSE sku END,
+        suggested_sku = CASE WHEN ${sku} <> '' THEN '' ELSE suggested_sku END,
+        match_status = CASE WHEN ${sku} <> '' THEN 'verified' ELSE match_status END,
+        detail = 'Item ID de eBay guardado manualmente.',
+        verified_at = CASE WHEN ${sku} <> '' THEN NOW() ELSE verified_at END,
+        updated_at = NOW()
+      WHERE vinted_item_id = ${id}
+      RETURNING id
+    `;
+    if (!updated.length) return { ok: false, error: "No existe esa publicación." };
+    await recordEvent(id, "set_ebay_item", sku ? `${ebayItemId} ${sku}` : ebayItemId);
     await refreshInventorySignals();
     return { ok: true };
   }

@@ -4,12 +4,12 @@ import { reviewVintedInventory } from "@/lib/vinted/inventory-store";
 
 export const dynamic = "force-dynamic";
 
-const ACTIONS = new Set(["confirm_duplicate", "not_duplicate", "withdrawn", "not_sold"]);
+const ACTIONS = new Set(["confirm_duplicate", "not_duplicate", "withdrawn", "not_sold", "mark_reviewed", "set_ebay_item"]);
 
 export async function POST(req: NextRequest) {
   const denied = guardApiRequest(req);
   if (denied) return denied;
-  let body: { vintedItemId?: unknown; action?: unknown; relatedIds?: unknown };
+  let body: { vintedItemId?: unknown; action?: unknown; relatedIds?: unknown; ebayItemId?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -23,8 +23,9 @@ export async function POST(req: NextRequest) {
   try {
     const result = await reviewVintedInventory({
       vintedItemId: String(body.vintedItemId || ""),
-      action: action as "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold",
+      action: action as "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item",
       relatedIds,
+      ebayItemId: String(body.ebayItemId || ""),
     });
     if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: 400 });
     return NextResponse.json({ ok: true });
