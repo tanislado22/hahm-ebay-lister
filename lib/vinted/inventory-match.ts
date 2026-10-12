@@ -19,6 +19,7 @@ export interface VintedCollectedItem {
   photoUrl: string;
   brand: string;
   size: string;
+  listedSku?: string;
 }
 
 export type VintedMatchStatus = "verified" | "review" | "unmatched";
@@ -51,9 +52,39 @@ export function matchVintedListing(
   candidates: EbayInventoryCandidate[]
 ): VintedInventoryMatch {
   const title = item.title.trim();
+  const listedSku = item.listedSku?.trim() ?? "";
   const exact = candidates.filter((candidate) =>
     titlesOf(candidate).some((stored) => sameText(stored, title))
   );
+  const byListedSku = listedSku ? candidates.filter((candidate) => candidate.sku === listedSku) : [];
+  if (byListedSku.length === 1) {
+    const titleSku = exact.length === 1 ? exact[0].sku : "";
+    if (exact.length > 1 || (titleSku && titleSku !== listedSku)) {
+      return {
+        status: "review",
+        sku: "",
+        suggestedSku: "",
+        title,
+        detail: "El SKU de la publicación y el título no señalan el mismo artículo.",
+      };
+    }
+    return {
+      status: "verified",
+      sku: listedSku,
+      suggestedSku: "",
+      title: titlesOf(byListedSku[0])[0] || title,
+      detail: "SKU único encontrado en la publicación.",
+    };
+  }
+  if (listedSku && !byListedSku.length && exact.length === 1 && exact[0].sku !== listedSku) {
+    return {
+      status: "review",
+      sku: "",
+      suggestedSku: "",
+      title,
+      detail: "La publicación trae un SKU que no está en eBay y el título apunta a otro.",
+    };
+  }
   if (exact.length === 1) {
     const chosen = exact[0];
     return {
@@ -150,6 +181,7 @@ export function parseInventoryImport(text: string): VintedCollectedItem[] {
       photoUrl: row.photoUrl.trim(),
       brand: row.brand.trim(),
       size: row.size.trim(),
+      listedSku: (row.listedSku || "").trim(),
     });
   }
   return items;
@@ -167,6 +199,7 @@ function parseJsonImport(raw: string): VintedCollectedItem[] {
       photoUrl: String(record.photoUrl || record.photo || ""),
       brand: String(record.brand || ""),
       size: String(record.size || ""),
+      listedSku: String(record.listedSku || record.sku || ""),
     };
   });
 }
@@ -177,8 +210,8 @@ function parseCsvImport(raw: string): VintedCollectedItem[] {
   const header = lines[0].toLowerCase();
   const start = /title|url|id/.test(header) ? 1 : 0;
   return lines.slice(start).map((line) => {
-    const [title = "", url = "", id = "", photo = "", brand = "", size = ""] = splitCsv(line);
-    return { vintedItemId: id, title, url, photoUrl: photo, brand, size };
+    const [title = "", url = "", id = "", photo = "", brand = "", size = "", listedSku = ""] = splitCsv(line);
+    return { vintedItemId: id, title, url, photoUrl: photo, brand, size, listedSku };
   });
 }
 

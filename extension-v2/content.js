@@ -632,13 +632,16 @@ function itemFromAnchor(anchor) {
   url.search = "";
   const image = anchor.querySelector("img");
   const title = clean(anchor.getAttribute("title") || image?.alt || anchor.innerText || "");
+  const visible = `${title}\n${anchor.innerText || ""}`;
+  const skuMatch = visible.match(/SKU:\s*([A-Za-z0-9][A-Za-z0-9-]{2,40})/i);
   return {
     vintedItemId: match[1],
-    title,
+    title: title.replace(/^SKU:\s*[A-Za-z0-9][A-Za-z0-9-]{2,40}\s*/i, "").trim(),
     url: url.toString(),
     photoUrl: image ? srcOf(image) : "",
     brand: "",
     size: "",
+    listedSku: skuMatch ? skuMatch[1] : "",
   };
 }
 

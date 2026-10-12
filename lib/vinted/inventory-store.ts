@@ -7,6 +7,12 @@ import {
   type VintedInventoryMatch,
   type VintedMatchStatus,
 } from "@/lib/vinted/inventory-match";
+import {
+  classifySoldListing,
+  findPossibleDuplicates,
+  type DuplicateGroup,
+  type KnownSale,
+} from "@/lib/vinted/inventory-review";
 
 export interface VintedInventoryRow {
   vintedItemId: string;
@@ -21,17 +27,51 @@ export interface VintedInventoryRow {
   detail: string;
   syncedAt: string;
   verifiedAt: string;
+  listedSku: string;
+  duplicateStatus: "" | "suspected" | "confirmed" | "dismissed";
+  duplicateWith: string;
+  soldStatus: "" | "pending_removal" | "review" | "withdrawn" | "not_sold";
+  soldPlatform: string;
+  soldAt: string;
+  soldDetail: string;
 }
 
 export interface VintedInventoryCounts {
   collected: number;
   identified: number;
-  review: number;
-  unmatched: number;
+  duplicates: number;
+  soldPending: number;
+  needsReview: number;
+  reviewed: number;
 }
 
 function text(value: unknown): string {
   return value == null ? "" : String(value);
+}
+
+function timeText(value: unknown): string {
+  if (value == null || value === "") return "";
+  const parsed = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+}
+
+function reviewListing(item: VintedInventoryRow): { vintedItemId: string; sku: string; title: string; photoUrl: string } {
+  return {
+    vintedItemId: item.vintedItemId,
+    sku: item.sku || item.listedSku,
+    title: item.title,
+    photoUrl: item.photoUrl,
+  };
+}
+
+function asDuplicate(value: string): VintedInventoryRow["duplicateStatus"] {
+  if (value === "suspected" || value === "confirmed" || value === "dismissed") return value;
+  return "";
+}
+
+function asSold(value: string): VintedInventoryRow["soldStatus"] {
+  if (value === "pending_removal" || value === "review" || value === "withdrawn" || value === "not_sold") return value;
+  return "";
 }
 
 function mapRow(row: Record<string, unknown>): VintedInventoryRow {
@@ -49,6 +89,13 @@ function mapRow(row: Record<string, unknown>): VintedInventoryRow {
     detail: text(row.detail),
     syncedAt: text(row.synced_at),
     verifiedAt: text(row.verified_at),
+    listedSku: text(row.listed_sku),
+    duplicateStatus: asDuplicate(text(row.duplicate_status)),
+    duplicateWith: text(row.duplicate_with),
+    soldStatus: asSold(text(row.sold_status)),
+    soldPlatform: text(row.sold_platform),
+    soldAt: timeText(row.sold_at),
+    soldDetail: text(row.sold_detail),
   };
 }
 
@@ -82,7 +129,7 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
   const inserted = await sql`
     INSERT INTO vinted_inventory_links (
       id, vinted_item_id, title, url, photo_url, brand, size,
-      sku, suggested_sku, match_status, detail, synced_at, verified_at, created_at, updated_at
+      sku, suggested_sku, match_status, detail, listed_sku, synced_at, verified_at, created_at, updated_at
     )
     VALUES (
       ${id},
@@ -96,6 +143,7 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
       ${match.suggestedSku},
       ${match.status},
       ${match.detail},
+      ${item.listedSku || ""},
       NOW(),
       ${verifiedAt},
       NOW(),
@@ -127,6 +175,7 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
       photo_url = ${item.photoUrl},
       brand = ${item.brand},
       size = ${item.size},
+      listed_sku = ${item.listedSku || ""},
       sku = ${match.sku},
       suggested_sku = ${match.suggestedSku},
       match_status = ${match.status},
@@ -154,6 +203,7 @@ export async function syncVintedInventory(items: VintedCollectedItem[]): Promise
     else if (outcome === "kept") result.keptVerified += 1;
     else result.updated += 1;
   }
+  await refreshInventorySignals();
   return result;
 }
 
@@ -168,15 +218,16 @@ export async function listVintedInventory(query: string): Promise<VintedInventor
         WHERE title ILIKE ${needle}
           OR sku ILIKE ${needle}
           OR suggested_sku ILIKE ${needle}
+          OR listed_sku ILIKE ${needle}
           OR vinted_item_id ILIKE ${needle}
         ORDER BY updated_at DESC
-        LIMIT 300
+        LIMIT 800
       `
     : await sql`
         SELECT *
         FROM vinted_inventory_links
         ORDER BY updated_at DESC
-        LIMIT 300
+        LIMIT 800
       `;
   return rows.map((row) => mapRow(row as Record<string, unknown>));
 }
@@ -184,21 +235,150 @@ export async function listVintedInventory(query: string): Promise<VintedInventor
 export async function vintedInventoryCounts(): Promise<VintedInventoryCounts> {
   const sql = getSql();
   await ensureInventoryTables();
-  const rows = await sql`
-    SELECT match_status, COUNT(*)::int AS total
-    FROM vinted_inventory_links
-    GROUP BY match_status
+  const rows = await sql`SELECT match_status, duplicate_status, sold_status, sku FROM vinted_inventory_links`;
+  const reviewed = await sql`
+    SELECT COUNT(DISTINCT vinted_item_id)::int AS total
+    FROM vinted_inventory_events
+    WHERE event_type IN ('confirm_match', 'confirm_duplicate', 'not_duplicate', 'withdrawn', 'not_sold')
   `;
-  const counts = { collected: 0, identified: 0, review: 0, unmatched: 0 };
+  const counts: VintedInventoryCounts = {
+    collected: rows.length,
+    identified: 0,
+    duplicates: 0,
+    soldPending: 0,
+    needsReview: 0,
+    reviewed: Number((reviewed[0] as { total?: number } | undefined)?.total || 0),
+  };
   for (const row of rows) {
-    const record = row as { match_status?: string; total?: number };
-    const total = Number(record.total || 0);
-    counts.collected += total;
-    if (record.match_status === "verified") counts.identified += total;
-    else if (record.match_status === "review") counts.review += total;
-    else counts.unmatched += total;
+    const record = row as { match_status?: string; duplicate_status?: string; sold_status?: string; sku?: string };
+    if (record.match_status === "verified") counts.identified += 1;
+    if (record.duplicate_status === "suspected" || record.duplicate_status === "confirmed") counts.duplicates += 1;
+    if (record.sold_status === "pending_removal") counts.soldPending += 1;
+    const needsSku = record.match_status !== "verified" && !text(record.sku).trim();
+    if (record.match_status === "review" || record.match_status === "unmatched" || record.sold_status === "review" || needsSku) {
+      counts.needsReview += 1;
+    }
   }
   return counts;
+}
+
+async function recordEvent(vintedItemId: string, eventType: string, detail: string): Promise<void> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  await sql`
+    INSERT INTO vinted_inventory_events (id, vinted_item_id, event_type, detail, created_at)
+    VALUES (${crypto.randomUUID()}, ${vintedItemId}, ${eventType}, ${detail}, NOW())
+  `;
+}
+
+async function loadKnownSales(): Promise<KnownSale[]> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const notices = await sql`
+    SELECT platform, sku, title, COALESCE(sent_at, created_at) AS sold_at
+    FROM telegram_sale_notices
+    WHERE status = 'sent' AND platform IN ('ebay', 'depop', 'poshmark')
+  `;
+  const events = await sql`
+    SELECT platform, sku, title, detected_at AS sold_at
+    FROM sale_events
+    WHERE status = 'sent' AND platform IN ('ebay', 'depop', 'poshmark')
+  `;
+  const sales: KnownSale[] = [];
+  for (const row of [...notices, ...events]) {
+    const record = row as { platform?: string; sku?: string; title?: string; sold_at?: string };
+    const platform = record.platform;
+    if (platform !== "ebay" && platform !== "depop" && platform !== "poshmark") continue;
+    sales.push({
+      platform,
+      sku: text(record.sku).trim(),
+      title: text(record.title),
+      soldAt: timeText(record.sold_at),
+    });
+  }
+  return sales;
+}
+
+export async function refreshInventorySignals(): Promise<void> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const rows = await sql`SELECT * FROM vinted_inventory_links`;
+  const dismissals = await sql`SELECT item_a, item_b FROM vinted_duplicate_dismissals`;
+  const pairs = dismissals.map((row) => {
+    const record = row as { item_a?: string; item_b?: string };
+    return [text(record.item_a), text(record.item_b)] as [string, string];
+  });
+  const listings = rows.map((row) => mapRow(row as Record<string, unknown>));
+  const groups = findPossibleDuplicates(listings.map(reviewListing), pairs);
+  const grouped = new Map<string, string[]>();
+  for (const group of groups) {
+    for (const id of group.itemIds) {
+      const others = group.itemIds.filter((itemId) => itemId !== id);
+      grouped.set(id, [...new Set([...(grouped.get(id) ?? []), ...others])]);
+    }
+  }
+  const sales = await loadKnownSales();
+  const activeWithSku = new Map<string, number>();
+  for (const item of listings) {
+    if (item.soldStatus === "withdrawn" || !item.sku) continue;
+    activeWithSku.set(item.sku, (activeWithSku.get(item.sku) ?? 0) + 1);
+  }
+  for (const item of listings) {
+    const partners = grouped.get(item.vintedItemId) ?? [];
+    const duplicateStatus = item.duplicateStatus === "confirmed"
+      ? "confirmed"
+      : partners.length
+        ? "suspected"
+        : item.duplicateStatus === "dismissed"
+          ? "dismissed"
+          : "";
+    const duplicateWith = partners.join(",");
+    let soldStatus = item.soldStatus;
+    let soldPlatform = item.soldPlatform;
+    let soldAt = item.soldAt || null;
+    let soldDetail = item.soldDetail;
+    if (soldStatus !== "withdrawn" && soldStatus !== "not_sold") {
+      const decision = classifySoldListing({
+        sku: item.sku,
+        title: item.title,
+        listingsWithSku: item.sku ? activeWithSku.get(item.sku) ?? 0 : 0,
+        sales,
+      });
+      soldStatus = decision.soldStatus;
+      soldPlatform = decision.platform;
+      soldAt = decision.soldAt || null;
+      soldDetail = decision.detail;
+      if (decision.soldStatus === "pending_removal" && item.soldStatus !== "pending_removal") {
+        await recordEvent(item.vintedItemId, "sold_detected", decision.detail);
+      }
+    }
+    await sql`
+      UPDATE vinted_inventory_links
+      SET
+        duplicate_status = ${duplicateStatus},
+        duplicate_with = ${duplicateWith},
+        sold_status = ${soldStatus},
+        sold_platform = ${soldPlatform},
+        sold_at = ${soldAt},
+        sold_detail = ${soldDetail},
+        updated_at = updated_at
+      WHERE vinted_item_id = ${item.vintedItemId}
+    `;
+  }
+}
+
+export async function listDuplicateGroups(): Promise<DuplicateGroup[]> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const rows = await sql`SELECT * FROM vinted_inventory_links`;
+  const dismissals = await sql`SELECT item_a, item_b FROM vinted_duplicate_dismissals`;
+  return findPossibleDuplicates(
+    rows.map((row) => reviewListing(mapRow(row as Record<string, unknown>))),
+    dismissals.map((row) => {
+      const record = row as { item_a?: string; item_b?: string };
+      return [text(record.item_a), text(record.item_b)] as [string, string];
+    })
+  );
 }
 
 export async function confirmVintedInventoryMatch(vintedItemId: string, sku: string): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -225,7 +405,87 @@ export async function confirmVintedInventoryMatch(vintedItemId: string, sku: str
     RETURNING id
   `;
   if (!updated.length) return { ok: false, error: "Esa asociación ya está verificada o no existe." };
+  await recordEvent(wantedId, "confirm_match", wantedSku);
+  await refreshInventorySignals();
   return { ok: true };
+}
+
+export async function reviewVintedInventory(input: {
+  vintedItemId: string;
+  action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold";
+  relatedIds: string[];
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const id = input.vintedItemId.trim();
+  if (!id) return { ok: false, error: "Falta la publicación de Vinted." };
+  const sql = getSql();
+  await ensureInventoryTables();
+  const related = [...new Set(input.relatedIds.map((itemId) => itemId.trim()).filter((itemId) => itemId && itemId !== id))];
+  if (input.action === "confirm_duplicate") {
+    const ids = [id, ...related];
+    for (const itemId of ids) {
+      await sql`
+        UPDATE vinted_inventory_links
+        SET duplicate_status = 'confirmed', duplicate_with = ${ids.filter((other) => other !== itemId).join(",")}, updated_at = NOW()
+        WHERE vinted_item_id = ${itemId}
+      `;
+      await recordEvent(itemId, "confirm_duplicate", ids.join(","));
+    }
+    return { ok: true };
+  }
+  if (input.action === "not_duplicate") {
+    const ids = [id, ...related];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const [itemA, itemB] = [ids[i], ids[j]].sort();
+        await sql`
+          INSERT INTO vinted_duplicate_dismissals (item_a, item_b, created_at)
+          VALUES (${itemA}, ${itemB}, NOW())
+          ON CONFLICT (item_a, item_b) DO NOTHING
+        `;
+      }
+    }
+    for (const itemId of ids) {
+      await sql`
+        UPDATE vinted_inventory_links
+        SET duplicate_status = CASE WHEN duplicate_status = 'confirmed' THEN '' ELSE duplicate_status END
+        WHERE vinted_item_id = ${itemId}
+      `;
+    }
+    await recordEvent(id, "not_duplicate", ids.join(","));
+    await refreshInventorySignals();
+    return { ok: true };
+  }
+  if (input.action === "withdrawn") {
+    const updated = await sql`
+      UPDATE vinted_inventory_links
+      SET sold_status = 'withdrawn', withdrawn_at = NOW(), updated_at = NOW()
+      WHERE vinted_item_id = ${id}
+      RETURNING id
+    `;
+    if (!updated.length) return { ok: false, error: "No existe esa publicación." };
+    await recordEvent(id, "withdrawn", "Marcado como retirado de Vinted después de comprobarlo.");
+    return { ok: true };
+  }
+  const updated = await sql`
+    UPDATE vinted_inventory_links
+    SET sold_status = 'not_sold', sold_detail = 'Revisado: no es una venta pendiente.', updated_at = NOW()
+    WHERE vinted_item_id = ${id}
+    RETURNING id
+  `;
+  if (!updated.length) return { ok: false, error: "No existe esa publicación." };
+  await recordEvent(id, "not_sold", "Se dejó de tratar como vendido.");
+  return { ok: true };
+}
+
+export async function listReviewedVintedIds(): Promise<string[]> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const rows = await sql`
+    SELECT DISTINCT vinted_item_id
+    FROM vinted_inventory_events
+    WHERE event_type IN ('confirm_match', 'confirm_duplicate', 'not_duplicate', 'withdrawn', 'not_sold')
+  `;
+  return rows.map((row) => text((row as { vinted_item_id?: string }).vinted_item_id)).filter(Boolean);
 }
 
 export async function findVerifiedVintedUrl(sku: string): Promise<string | null> {

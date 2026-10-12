@@ -23,6 +23,7 @@ function cleanItem(value: unknown): VintedCollectedItem | null {
     photoUrl: String(row.photoUrl || row.photo || "").trim(),
     brand: String(row.brand || "").trim(),
     size: String(row.size || "").trim(),
+    listedSku: String(row.listedSku || row.sku || "").trim(),
   };
 }
 

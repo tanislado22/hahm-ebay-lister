@@ -19,7 +19,7 @@ export function middleware(request: NextRequest) {
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${!isProd ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline'",
     // blob:/data: for in-browser photo resizing previews
-    "img-src 'self' data: blob: https://i.ebayimg.com",
+    "img-src 'self' data: blob: https://i.ebayimg.com https://*.vinted.net",
     "connect-src 'self'",
     "frame-src 'none'",
     "object-src 'none'",

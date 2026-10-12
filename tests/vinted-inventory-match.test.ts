@@ -57,6 +57,37 @@ describe("vinted inventory matching", () => {
     expect(result).toMatchObject({ status: "review", sku: "", suggestedSku: "2443" });
   });
 
+  test("verifies a unique listed SKU and sends a conflicting title to review", () => {
+    const unique = matchVintedListing(
+      {
+        vintedItemId: "5",
+        title: "Different title",
+        url: "https://www.vinted.com/items/5",
+        photoUrl: "",
+        brand: "",
+        size: "",
+        listedSku: "2443",
+      },
+      [coat, other]
+    );
+    expect(unique).toMatchObject({ status: "verified", sku: "2443" });
+
+    const conflict = matchVintedListing(
+      {
+        vintedItemId: "6",
+        title: other.ebayTitle,
+        url: "https://www.vinted.com/items/6",
+        photoUrl: "",
+        brand: "",
+        size: "",
+        listedSku: "2443",
+      },
+      [coat, other]
+    );
+    expect(conflict.status).toBe("review");
+    expect(conflict.sku).toBe("");
+  });
+
   test("leaves an item unmatched when nothing identifies it", () => {
     expect(
       matchVintedListing(

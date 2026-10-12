@@ -144,6 +144,31 @@ async function migrate(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS listed_sku TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS duplicate_status TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS duplicate_with TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS sold_status TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS sold_platform TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS sold_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS sold_detail TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMPTZ`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS vinted_inventory_events (
+      id TEXT PRIMARY KEY,
+      vinted_item_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      detail TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS vinted_duplicate_dismissals (
+      item_a TEXT NOT NULL,
+      item_b TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (item_a, item_b)
+    )
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS vinted_ready_snapshot (
