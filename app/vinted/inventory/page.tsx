@@ -55,7 +55,7 @@ const VIEWS: Array<{ id: View; label: string }> = [
   { id: "all", label: "Todas" },
   { id: "pending", label: "Pendientes" },
   { id: "reviewed", label: "Revisados" },
-  { id: "identified", label: "Identificadas" },
+  { id: "identified", label: "Identificados" },
   { id: "possible", label: "Posible coincidencia" },
   { id: "none", label: "Sin coincidencia" },
   { id: "duplicates", label: "Posibles duplicados" },
@@ -241,7 +241,7 @@ export default function VintedInventoryPage() {
           🛍️
         </span>
         <div>
-          <h1>Inventario Vinted</h1>
+          <h1>Vinted Inventory</h1>
           <p>Asocia publicaciones activas de Vinted con el SKU de eBay. No edita ni retira anuncios.</p>
         </div>
       </header>
@@ -286,6 +286,7 @@ export default function VintedInventoryPage() {
           void load(query);
         }}
       >
+        <p>El precio solo aparece si el registro guardado lo trae. Estos artículos se leen de la tabla existente; esta página no vuelve a importarlos.</p>
         <label>
           Buscar por SKU o título{" "}
           <input value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -328,7 +329,7 @@ export default function VintedInventoryPage() {
                       <p>{item.duplicateStatus === "confirmed" ? "Duplicado confirmado" : "Pendiente de revisión"}</p>
                       <p>
                         <a href={item.url} target="_blank" rel="noopener noreferrer">
-                          Abrir en Vinted
+                          Open in Vinted
                         </a>
                       </p>
                       <button className="btn btn-ghost" type="button" onClick={() => void review(item, "confirm_duplicate", group.itemIds)}>
@@ -376,7 +377,7 @@ export default function VintedInventoryPage() {
                       <td>{saleDate(item.soldAt)}</td>
                       <td>
                         <a href={item.url} target="_blank" rel="noopener noreferrer">
-                          Abrir en Vinted
+                          Open in Vinted
                         </a>
                         <p>
                           <button className="btn btn-ghost" type="button" onClick={() => void review(item, "withdrawn", [])}>
@@ -403,6 +404,7 @@ export default function VintedInventoryPage() {
             <tr>
               <th>Foto</th>
               <th>Título de Vinted</th>
+              <th>Precio</th>
               <th>SKU</th>
               <th>Item ID de eBay</th>
               <th>Coincidencia</th>
@@ -419,7 +421,11 @@ export default function VintedInventoryPage() {
                   {item.soldStatus === "pending_removal" ? <p>Vendido — pendiente de retirar</p> : null}
                   {item.duplicateStatus === "suspected" || item.duplicateStatus === "confirmed" ? <p>Duplicado</p> : null}
                 </td>
-                <td>{item.sku || "—"}</td>
+                <td>—</td>
+                <td>
+                  {item.status === "verified" && item.sku ? item.sku : "—"}
+                  {item.status !== "verified" && item.suggestedSku ? <p>Sugerido: {item.suggestedSku}</p> : null}
+                </td>
                 <td>{item.ebayItemId || "—"}</td>
                 <td>
                   {matchLabel(item)}
@@ -428,7 +434,7 @@ export default function VintedInventoryPage() {
                 <td>
                   <p>
                     <a href={item.url} target="_blank" rel="noopener noreferrer">
-                      Abrir en Vinted
+                      Open in Vinted
                     </a>
                   </p>
                   <p>{ebayLink(item)}</p>

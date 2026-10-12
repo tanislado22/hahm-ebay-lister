@@ -68,6 +68,11 @@ export function prepareCollectedItem(item: VintedCollectedItem): VintedCollected
   };
 }
 
+export function uniqueVerifiedVintedUrl(urls: string[]): string | null {
+  const unique = [...new Set(urls.map((url) => url.trim()).filter(Boolean))];
+  return unique.length === 1 ? unique[0] : null;
+}
+
 export function matchVintedListing(
   item: VintedCollectedItem,
   candidates: EbayInventoryCandidate[]

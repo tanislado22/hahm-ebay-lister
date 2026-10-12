@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { cleanVintedCard, ebayItemUrl, ebaySearchUrl, sizesEquivalent } from "@/lib/vinted/card-text";
 import {
   matchVintedListing,
+  uniqueVerifiedVintedUrl,
   parseInventoryImport,
   parseVintedItemLink,
   prepareCollectedItem,
@@ -148,5 +149,15 @@ describe("vinted inventory matching", () => {
     expect(items).toHaveLength(12);
     expect(items[0].vintedItemId).toBe("1");
     expect(VINTED_SYNC_PILOT_LIMIT).toBe(30);
+  });
+
+  test("includes one verified Vinted url and withholds the link when several differ", () => {
+    expect(uniqueVerifiedVintedUrl([" https://www.vinted.com/items/1 ", "https://www.vinted.com/items/1"])).toBe(
+      "https://www.vinted.com/items/1"
+    );
+    expect(
+      uniqueVerifiedVintedUrl(["https://www.vinted.com/items/1", "https://www.vinted.com/items/2"])
+    ).toBeNull();
+    expect(uniqueVerifiedVintedUrl([])).toBeNull();
   });
 });

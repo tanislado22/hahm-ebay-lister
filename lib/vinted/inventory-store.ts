@@ -3,6 +3,7 @@ import { ensureInventoryTables, getSql } from "@/lib/db";
 import {
   matchVintedListing,
   prepareCollectedItem,
+  uniqueVerifiedVintedUrl,
   type EbayInventoryCandidate,
   type VintedCollectedItem,
   type VintedInventoryMatch,
@@ -632,9 +633,6 @@ export async function findVerifiedVintedUrl(sku: string): Promise<string | null>
     WHERE sku = ${wanted}
       AND match_status = 'verified'
       AND btrim(url) <> ''
-    ORDER BY verified_at DESC NULLS LAST
-    LIMIT 1
   `;
-  const url = text((rows[0] as { url?: string } | undefined)?.url).trim();
-  return url || null;
+  return uniqueVerifiedVintedUrl(rows.map((row) => text((row as { url?: string }).url)));
 }

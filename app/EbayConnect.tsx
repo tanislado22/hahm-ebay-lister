@@ -120,9 +120,16 @@ const r = await fetch(`/api/ebay/status?${params.toString()}`, {
     }
   };
 
-  // If eBay isn't configured on the server, show nothing (the writing flow
-  // still works fine without it).
-  if (!status?.configured) return null;
+  const vintedInventory = (
+    <a className="btn-ghost" href="/vinted/inventory">
+      Vinted Inventory
+    </a>
+  );
+
+  // The Vinted inventory button stays on the main screen even when eBay is not connected.
+  if (!status?.configured) {
+    return <div className="ebay-bar">{vintedInventory}</div>;
+  }
 
   return (
     <div className={`ebay-bar${status.connected ? " connected" : ""}`}>
@@ -130,6 +137,7 @@ const r = await fetch(`/api/ebay/status?${params.toString()}`, {
       {status.connected ? (
         <>
           <span className="ebay-label">eBay account connected</span>
+          {vintedInventory}
           <a className="btn-ghost" href="/ebay/shipping-policy">
             Shipping policy
           </a>
@@ -155,6 +163,7 @@ const r = await fetch(`/api/ebay/status?${params.toString()}`, {
           >
             Open eBay ↗
           </button>
+          {vintedInventory}
           <div className="ebay-paste">
             <label htmlFor="ebay-paste">
               <strong>Step 2:</strong> after you click <em>Agree</em>, copy the
