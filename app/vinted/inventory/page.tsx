@@ -223,21 +223,6 @@ export default function VintedInventoryPage() {
     await load(query);
   }
 
-  async function confirm(item: InventoryItem) {
-    const sku = window.prompt("SKU de eBay para esta publicación", item.suggestedSku || item.listedSku || "");
-    if (!sku?.trim()) return;
-    const response = await apiPost("/api/vinted/inventory/confirm", {
-      vintedItemId: item.vintedItemId,
-      sku: sku.trim(),
-    });
-    const body = (await response.json()) as { ok?: boolean; error?: string };
-    if (!response.ok || !body.ok) {
-      setError(body.error || "No se pudo confirmar.");
-      return;
-    }
-    await load(query);
-  }
-
   async function review(
     item: InventoryItem,
     action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion",
@@ -265,24 +250,133 @@ export default function VintedInventoryPage() {
     await review(item, "set_ebay_item", [], value.trim());
   }
 
-  function directEbayLink(itemId: string) {
-    const direct = itemId ? ebayItemUrl(itemId) : null;
-    if (!direct) return null;
+  async function confirmSku(item: InventoryItem, sku: string) {
+    const wanted = sku.trim();
+    if (!wanted) return;
+    const response = await apiPost("/api/vinted/inventory/confirm", {
+      vintedItemId: item.vintedItemId,
+      sku: wanted,
+    });
+    const body = (await response.json()) as { ok?: boolean; error?: string };
+    if (!response.ok || !body.ok) {
+      setError(body.error || "No se pudo confirmar.");
+      return;
+    }
+    await load(query);
+  }
+
+  function confirm(item: InventoryItem) {
+    const sku = window.prompt("SKU de eBay para esta publicación", item.suggestedSku || item.listedSku || "");
+    if (!sku?.trim()) return;
+    void confirmSku(item, sku);
+  }
+
+  function photoFrame(src: string, className: string) {
+    if (!src) return <span className={`${className} is-empty`} aria-hidden="true" />;
+    return <img className={className} src={src} alt="" />;
+  }
+
+  function itemCard(item: InventoryItem) {
+    const confirmedSku = item.status === "verified" && item.sku ? item.sku : "";
+    const suggestedSku = item.status === "verified" ? "" : item.suggestedSku;
+    const confirmedEbay = item.status === "verified" ? ebayItemUrl(item.ebayItemId) : null;
+    const candidates = item.status === "verified" ? [] : item.candidates || [];
     return (
-      <a href={direct} target="_blank" rel="noopener noreferrer">
-        Open in eBay
-      </a>
+      <article className="vinted-card" key={item.vintedItemId}>
+        <div className="vinted-card-main">
+          {photoFrame(item.photoUrl, "vinted-card-photo")}
+          <div className="vinted-card-body">
+            <h3>{item.title || "Sin título"}</h3>
+            <p className="vinted-sku-confirmed">{confirmedSku ? `SKU ${confirmedSku}` : "SKU sin confirmar"}</p>
+            {suggestedSku ? <p className="vinted-sku-suggested">SKU sugerido: {suggestedSku}</p> : null}
+            <p className="vinted-card-status">{matchLabel(item)}</p>
+            {item.soldStatus === "pending_removal" ? <p>Vendido en {platformLabel(item.soldPlatform)} — {saleDate(item.soldAt)}</p> : null}
+            {item.duplicateStatus === "suspected" || item.duplicateStatus === "confirmed" ? <p>Duplicado</p> : null}
+            <p>{item.reviewedAt ? "Revisado" : "Pendiente de revisión"}</p>
+            {item.detail ? <p className="vinted-card-detail">{item.detail}</p> : null}
+            {confirmedEbay ? <p className="vinted-item-id">Item ID {item.ebayItemId}</p> : null}
+            <div className="vinted-card-actions">
+              <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
+                Abrir en Vinted
+              </a>
+              {confirmedEbay ? (
+                <a className="btn btn-ghost" href={confirmedEbay} target="_blank" rel="noopener noreferrer">
+                  Abrir en eBay
+                </a>
+              ) : null}
+              {item.reviewedAt ? null : (
+                <button className="btn btn-ghost" type="button" onClick={() => void review(item, "mark_reviewed", [])}>
+                  Marcar como revisado
+                </button>
+              )}
+              <button className="btn btn-ghost" type="button" onClick={() => void correctEbay(item)}>
+                Corregir Item ID
+              </button>
+              {item.status !== "verified" ? (
+                <button className="btn btn-ghost" type="button" onClick={() => confirm(item)}>
+                  Confirmar SKU
+                </button>
+              ) : null}
+              {item.status === "review" && suggestedSku && candidates.length === 0 ? (
+                <>
+                  <button className="btn btn-ghost" type="button" onClick={() => void confirmSku(item, suggestedSku)}>
+                    Confirmar asociación
+                  </button>
+                  <button className="btn btn-ghost" type="button" onClick={() => void review(item, "reject_suggestion", [])}>
+                    Rechazar
+                  </button>
+                </>
+              ) : null}
+              {item.soldStatus === "pending_removal" ? (
+                <>
+                  <button className="btn btn-ghost" type="button" onClick={() => void review(item, "withdrawn", [])}>
+                    Retirado de Vinted
+                  </button>
+                  <button className="btn btn-ghost" type="button" onClick={() => void review(item, "not_sold", [])}>
+                    No es esta venta
+                  </button>
+                </>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        {item.status !== "verified" ? (
+          <div className="vinted-candidates">
+            <h4>Posibles coincidencias en tu eBay</h4>
+            {candidates.length === 0 ? <p>Ningún candidato de tu cuenta.</p> : null}
+            {candidates.map((candidate) => {
+              const ebay = ebayItemUrl(candidate.ebayItemId);
+              return (
+                <div className="vinted-candidate" key={`${item.vintedItemId}-${candidate.ebayItemId}-${candidate.sku}`}>
+                  {photoFrame(candidate.photoUrl, "vinted-candidate-photo")}
+                  <div>
+                    <p className="vinted-candidate-title">{candidate.title || "Sin título"}</p>
+                    <p className="vinted-sku-suggested">SKU sugerido: {candidate.sku || "—"}</p>
+                    <div className="vinted-card-actions">
+                      {ebay ? (
+                        <a className="btn btn-ghost" href={ebay} target="_blank" rel="noopener noreferrer">
+                          Abrir en eBay
+                        </a>
+                      ) : (
+                        <span>Sin Item ID de eBay</span>
+                      )}
+                      {candidate.sku ? (
+                        <button className="btn btn-ghost" type="button" onClick={() => void confirmSku(item, candidate.sku)}>
+                          Confirmar asociación
+                        </button>
+                      ) : null}
+                      <button className="btn btn-ghost" type="button" onClick={() => void review(item, "reject_suggestion", [])}>
+                        Rechazar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </article>
     );
-  }
-
-  function ebayLink(item: InventoryItem) {
-    if (item.status !== "verified") return <span>Sin publicación confirmada</span>;
-    return directEbayLink(item.ebayItemId) || <span>Sin Item ID de eBay</span>;
-  }
-
-  function photo(item: InventoryItem) {
-    if (!item.photoUrl) return null;
-    return <img src={item.photoUrl} alt="" width={72} height={72} style={{ objectFit: "cover" }} />;
   }
 
   return (
@@ -403,26 +497,29 @@ export default function VintedInventoryPage() {
           {visibleGroups.map((group) => {
             const members = group.itemIds.map((id) => byId.get(id)).filter((item): item is InventoryItem => Boolean(item));
             return (
-              <article key={group.itemIds.join("-")} className="policy-table-wrap">
+              <article key={group.itemIds.join("-")} className="vinted-card">
                 <p>{group.reason === "sku" ? "Mismo SKU" : "Mismo título y misma fotografía"}</p>
-                <div className="post-all-bar">
+                <div className="vinted-candidates">
                   {members.map((item) => (
-                    <div key={item.vintedItemId}>
-                      {photo(item)}
-                      <p>{item.title || "Sin título"}</p>
-                      <p>SKU: {item.sku || item.listedSku || "—"}</p>
-                      <p>{item.duplicateStatus === "confirmed" ? "Duplicado confirmado" : "Pendiente de revisión"}</p>
-                      <p>
-                        <a href={item.url} target="_blank" rel="noopener noreferrer">
-                          Open in Vinted
-                        </a>
-                      </p>
-                      <button className="btn btn-ghost" type="button" onClick={() => void review(item, "confirm_duplicate", group.itemIds)}>
-                        Son duplicados
-                      </button>{" "}
-                      <button className="btn btn-ghost" type="button" onClick={() => void review(item, "not_duplicate", group.itemIds)}>
-                        Son artículos diferentes
-                      </button>
+                    <div className="vinted-candidate" key={item.vintedItemId}>
+                      {photoFrame(item.photoUrl, "vinted-candidate-photo")}
+                      <div>
+                        <p className="vinted-candidate-title">{item.title || "Sin título"}</p>
+                        <p className="vinted-sku-confirmed">{item.status === "verified" && item.sku ? `SKU ${item.sku}` : "SKU sin confirmar"}</p>
+                        {item.status !== "verified" && item.suggestedSku ? <p className="vinted-sku-suggested">SKU sugerido: {item.suggestedSku}</p> : null}
+                        <p>{item.duplicateStatus === "confirmed" ? "Duplicado confirmado" : "Pendiente de revisión"}</p>
+                        <div className="vinted-card-actions">
+                          <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
+                            Abrir en Vinted
+                          </a>
+                          <button className="btn btn-ghost" type="button" onClick={() => void review(item, "confirm_duplicate", group.itemIds)}>
+                            Son duplicados
+                          </button>
+                          <button className="btn btn-ghost" type="button" onClick={() => void review(item, "not_duplicate", group.itemIds)}>
+                            Son artículos diferentes
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -437,161 +534,17 @@ export default function VintedInventoryPage() {
           <h2>Vendidos — pendiente de retirar</h2>
           {visible.filter((item) => item.soldStatus === "pending_removal").length === 0 ? (
             <p>No hay publicaciones activas con una venta confirmada.</p>
-          ) : null}
-          <div className="policy-table-wrap vinted-inventory-table">
-            <table className="policy-table">
-              <thead>
-                <tr>
-                  <th>Foto</th>
-                  <th>Título</th>
-                  <th>SKU</th>
-                  <th>Venta</th>
-                  <th>Fecha</th>
-                  <th>Vinted</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible
-                  .filter((item) => item.soldStatus === "pending_removal")
-                  .map((item) => (
-                    <tr key={item.vintedItemId}>
-                      <td className="photo-cell">{photo(item)}</td>
-                      <td className="title-cell">{item.title || "Sin título"}</td>
-                      <td className="sku-cell">{item.status === "verified" && item.sku ? item.sku : "—"}</td>
-                      <td className="plain-cell">{platformLabel(item.soldPlatform)}</td>
-                      <td className="plain-cell">{saleDate(item.soldAt)}</td>
-                      <td className="review-cell">
-                        <a href={item.url} target="_blank" rel="noopener noreferrer">
-                          Open in Vinted
-                        </a>
-                        <p>
-                          <button className="btn btn-ghost" type="button" onClick={() => void review(item, "withdrawn", [])}>
-                            Retirado de Vinted
-                          </button>
-                        </p>
-                        <p>
-                          <button className="btn btn-ghost" type="button" onClick={() => void review(item, "not_sold", [])}>
-                            No es esta venta
-                          </button>
-                        </p>
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+          ) : (
+            <div className="vinted-card-list">
+              {visible.filter((item) => item.soldStatus === "pending_removal").map((item) => itemCard(item))}
+            </div>
+          )}
         </section>
       ) : null}
 
-      <div className="policy-table-wrap vinted-inventory-table">
-        <table className="policy-table">
-          <thead>
-            <tr>
-              <th>Foto</th>
-              <th>Título de Vinted</th>
-              <th>Precio</th>
-              <th>SKU</th>
-              <th>Item ID de eBay</th>
-              <th>Coincidencia</th>
-              <th>Candidatos de tu eBay</th>
-              <th>Enlaces</th>
-              <th>Revisión</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((item) => (
-              <tr key={item.vintedItemId}>
-                <td className="photo-cell">{photo(item)}</td>
-                <td className="title-cell">
-                  {item.title || "Sin título"}
-                  {item.soldStatus === "pending_removal" ? <p>Vendido — pendiente de retirar</p> : null}
-                  {item.duplicateStatus === "suspected" || item.duplicateStatus === "confirmed" ? <p>Duplicado</p> : null}
-                </td>
-                <td className="plain-cell">—</td>
-                <td className="sku-cell">
-                  <span>{item.status === "verified" && item.sku ? item.sku : "—"}</span>
-                  {item.status !== "verified" && item.suggestedSku ? <span className="sku-suggested">Sugerido: {item.suggestedSku}</span> : null}
-                </td>
-                <td className="item-id-cell">{item.ebayItemId || "—"}</td>
-                <td className="match-cell">
-                  {matchLabel(item)}
-                  <p>{item.reviewedAt ? "Revisado" : "Pendiente de revisión"}</p>
-                  {item.detail ? <p>{item.detail}</p> : null}
-                </td>
-                <td className="candidate-cell">
-                  {item.status === "verified" ? (
-                    "Asociación confirmada"
-                  ) : item.candidates?.length ? (
-                    item.candidates.map((candidate) => (
-                      <div className="candidate-card" key={`${candidate.ebayItemId}-${candidate.sku}`}>
-                        {candidate.photoUrl ? (
-                          <img className="candidate-photo" src={candidate.photoUrl} alt="" />
-                        ) : (
-                          <span className="candidate-photo candidate-photo-empty" />
-                        )}
-                        <div className="candidate-copy">
-                          <div className="candidate-title">{candidate.title || "Sin título"}</div>
-                          <div className="candidate-sku">SKU {candidate.sku || "—"}</div>
-                          {directEbayLink(candidate.ebayItemId)}
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    "Ningún candidato de tu cuenta"
-                  )}
-                </td>
-                <td className="links-cell">
-                  <p>
-                    <a href={item.url} target="_blank" rel="noopener noreferrer">
-                      Open in Vinted
-                    </a>
-                  </p>
-                  <p>{ebayLink(item)}</p>
-                </td>
-                <td className="review-cell">
-                  {item.reviewedAt ? (
-                    "Revisado"
-                  ) : (
-                    <button className="btn btn-ghost" type="button" onClick={() => void review(item, "mark_reviewed", [])}>
-                      Marcar como revisado
-                    </button>
-                  )}
-                  <p>
-                    <button className="btn btn-ghost" type="button" onClick={() => void correctEbay(item)}>
-                      Corregir Item ID
-                    </button>
-                  </p>
-                  {item.status !== "verified" ? (
-                    <p>
-                      <button className="btn btn-ghost" type="button" onClick={() => void confirm(item)}>
-                        Confirmar SKU
-                      </button>
-                    </p>
-                  ) : null}
-                  {item.status === "review" && item.suggestedSku ? (
-                    <p>
-                      Candidato eBay: {item.suggestedSku}
-                      <br />
-                      <button className="btn btn-ghost" type="button" onClick={() => void confirm(item)}>
-                        Confirmar asociación
-                      </button>{" "}
-                      <button className="btn btn-ghost" type="button" onClick={() => void review(item, "reject_suggestion", [])}>
-                        Rechazar
-                      </button>
-                    </p>
-                  ) : null}
-                  {item.soldStatus === "pending_removal" ? (
-                    <p>
-                      <button className="btn btn-ghost" type="button" onClick={() => void review(item, "withdrawn", [])}>
-                        Retirado de Vinted
-                      </button>
-                    </p>
-                  ) : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="vinted-card-list">
+        {visible.length === 0 && !loading ? <p>No hay artículos en esta vista.</p> : null}
+        {(view === "all" || view === "sold" ? visible.filter((item) => item.soldStatus !== "pending_removal") : visible).map((item) => itemCard(item))}
       </div>
     </main>
   );

@@ -1191,125 +1191,110 @@ a.btn {
 }
 
 .vinted-inventory-page.wrap {
-  max-width: min(1440px, 100%);
+  max-width: min(920px, 100%);
   min-width: 0;
 }
 
-.vinted-inventory-page .btn {
-  white-space: nowrap;
-  width: max-content;
-  max-width: none;
-}
-
-.vinted-inventory-table {
-  overflow-x: auto;
-  overflow-y: visible;
-  max-width: 100%;
-  min-width: 0;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior-x: contain;
-}
-
-.vinted-inventory-table .policy-table {
-  width: max-content;
-  min-width: 100%;
-  table-layout: auto;
-}
-
-.vinted-inventory-table th {
-  white-space: nowrap;
-}
-
-.vinted-inventory-table .photo-cell {
-  width: 5.5rem;
-  min-width: 5.5rem;
-}
-
-.vinted-inventory-table .photo-cell img,
-.vinted-inventory-table .candidate-photo {
-  display: block;
-  width: 72px;
-  height: 72px;
-  object-fit: cover;
-  border-radius: 6px;
-}
-
-.vinted-inventory-table .title-cell {
-  min-width: 16rem;
-  max-width: 24rem;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.vinted-inventory-table .sku-cell,
-.vinted-inventory-table .item-id-cell,
-.vinted-inventory-table .candidate-sku {
-  white-space: nowrap;
-  word-break: keep-all;
-  font-variant-numeric: tabular-nums;
-}
-
-.vinted-inventory-table .sku-suggested {
-  display: block;
-  margin-top: 0.25rem;
-  white-space: nowrap;
-}
-
-.vinted-inventory-table .plain-cell,
-.vinted-inventory-table .links-cell,
-.vinted-inventory-table .links-cell a {
-  white-space: nowrap;
-}
-
-.vinted-inventory-table .match-cell {
-  min-width: 14rem;
-  max-width: 22rem;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.vinted-inventory-table .candidate-cell {
-  min-width: 22rem;
-}
-
-.vinted-inventory-table .candidate-card {
+.vinted-card-list {
   display: grid;
-  grid-template-columns: 72px minmax(12rem, 1fr);
-  gap: 0.65rem;
-  align-items: start;
-  margin: 0 0 0.85rem;
+  gap: 0.85rem;
+  margin-top: 1rem;
 }
 
-.vinted-inventory-table .candidate-photo-empty {
+.vinted-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.9rem;
+}
+
+.vinted-card-main,
+.vinted-candidate {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 0.8rem;
+  align-items: start;
+}
+
+.vinted-card-photo,
+.vinted-candidate-photo,
+.vinted-card-photo.is-empty,
+.vinted-candidate-photo.is-empty {
+  display: block;
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: 8px;
   background: var(--color-surface-sunk);
 }
 
-.vinted-inventory-table .candidate-title {
-  white-space: normal;
-  overflow: visible;
+.vinted-card h3,
+.vinted-candidate-title {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
-.vinted-inventory-table .review-cell {
-  min-width: 16rem;
+.vinted-sku-confirmed,
+.vinted-sku-suggested,
+.vinted-item-id {
+  margin: 0.2rem 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.vinted-inventory-table .review-cell .btn {
-  display: inline-flex;
-  margin: 0.2rem 0.35rem 0.2rem 0;
+.vinted-sku-confirmed {
+  font-size: 1.15rem;
+  font-weight: 700;
 }
 
-@media (max-width: 720px) {
+.vinted-sku-suggested,
+.vinted-card-detail,
+.vinted-card-status {
+  color: var(--color-ink-faint);
+}
+
+.vinted-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.65rem;
+}
+
+.vinted-card-actions .btn {
+  white-space: nowrap;
+}
+
+.vinted-candidates {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.vinted-candidates h4 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+@media (max-width: 640px) {
   .vinted-inventory-page.wrap {
     max-width: 100%;
   }
 
-  .vinted-inventory-table .title-cell {
-    min-width: 14rem;
+  .vinted-card-main,
+  .vinted-candidate {
+    grid-template-columns: 72px minmax(0, 1fr);
   }
 
-  .vinted-inventory-table .candidate-cell {
-    min-width: 18rem;
+  .vinted-card-photo,
+  .vinted-candidate-photo,
+  .vinted-card-photo.is-empty,
+  .vinted-candidate-photo.is-empty {
+    width: 72px;
+    height: 72px;
   }
 }
 
