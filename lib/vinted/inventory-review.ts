@@ -1,3 +1,4 @@
+import { canonicalVintedId } from "@/lib/vinted/duplicate-presence";
 import { normalizeTitle } from "@/lib/vinted/match";
 
 export interface ReviewListing {
@@ -5,10 +6,11 @@ export interface ReviewListing {
   sku: string;
   title: string;
   photoUrl: string;
+  url?: string;
 }
 
 export interface DuplicateGroup {
-  reason: "sku" | "title-photo";
+  reason: "same-listing" | "sku" | "title-photo";
   itemIds: string[];
 }
 
@@ -58,12 +60,43 @@ export function photoIdentity(url: string): string {
   }
 }
 
+function canonicalOf(item: ReviewListing): string {
+  return canonicalVintedId(item.vintedItemId, item.url || "");
+}
+
+function onePerListing(ids: string[], items: ReviewListing[]): string[] {
+  const byId = new Map(items.map((item) => [item.vintedItemId, item]));
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const id of ids) {
+    const item = byId.get(id);
+    const key = item ? canonicalOf(item) : id;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(id);
+  }
+  return unique;
+}
+
 export function findPossibleDuplicates(
   items: ReviewListing[],
   dismissedPairs: Array<[string, string]>
 ): DuplicateGroup[] {
   const dismissed = dismissedSet(dismissedPairs);
   const groups: DuplicateGroup[] = [];
+
+  const byCanonical = new Map<string, string[]>();
+  for (const item of items) {
+    const key = canonicalOf(item);
+    if (!key) continue;
+    const list = byCanonical.get(key) ?? [];
+    list.push(item.vintedItemId);
+    byCanonical.set(key, list);
+  }
+  for (const ids of byCanonical.values()) {
+    const unique = [...new Set(ids)];
+    if (unique.length > 1) groups.push({ reason: "same-listing", itemIds: unique });
+  }
 
   const bySku = new Map<string, string[]>();
   for (const item of items) {
@@ -74,7 +107,8 @@ export function findPossibleDuplicates(
     bySku.set(sku, list);
   }
   for (const ids of bySku.values()) {
-    const open = openMembers(ids, dismissed);
+    const distinct = onePerListing(ids, items);
+    const open = openMembers(distinct, dismissed);
     if (open.length > 1 && groupIsOpen(open, dismissed)) {
       groups.push({ reason: "sku", itemIds: open });
     }
@@ -91,8 +125,8 @@ export function findPossibleDuplicates(
     byTitlePhoto.set(key, list);
   }
   for (const ids of byTitlePhoto.values()) {
-    const unique = [...new Set(ids)];
-    const open = openMembers(unique, dismissed);
+    const distinct = onePerListing([...new Set(ids)], items);
+    const open = openMembers(distinct, dismissed);
     if (open.length > 1 && groupIsOpen(open, dismissed)) {
       const already = groups.some(
         (group) => group.itemIds.length === open.length && group.itemIds.every((id) => open.includes(id))

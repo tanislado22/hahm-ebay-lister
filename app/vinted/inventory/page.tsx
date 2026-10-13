@@ -26,6 +26,7 @@ interface InventoryItem {
   reviewedAt: string;
   candidates: EbayCandidate[];
   archivedAt: string;
+  vintedPresence: "" | "active" | "removed" | "unverified";
 }
 
 interface EbayCandidate {
@@ -36,7 +37,7 @@ interface EbayCandidate {
 }
 
 interface DuplicateGroup {
-  reason: "sku" | "title-photo";
+  reason: "same-listing" | "sku" | "title-photo";
   itemIds: string[];
 }
 
@@ -115,6 +116,8 @@ export default function VintedInventoryPage() {
   const [loading, setLoading] = useState(true);
   const [identifying, setIdentifying] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pendingDrop, setPendingDrop] = useState<string | null>(null);
+  const [syncingDuplicates, setSyncingDuplicates] = useState(false);
   const identifyRun = useRef(false);
   const load = useCallback(async (search: string) => {
     setLoading(true);
@@ -235,7 +238,7 @@ export default function VintedInventoryPage() {
 
   async function review(
     item: InventoryItem,
-    action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion" | "archive" | "restore",
+    action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion" | "archive" | "restore" | "mark_removed" | "drop_removed",
     relatedIds: string[],
     ebayItemId = "",
     sku = ""
@@ -371,6 +374,65 @@ export default function VintedInventoryPage() {
         Eliminar
       </button>
     );
+  }
+
+  async function syncDuplicates() {
+    setSyncingDuplicates(true);
+    setError("");
+    setNotice("");
+    const since = new Date().toISOString();
+    const totals = { checked: 0, active: 0, removed: 0, unverified: 0 };
+    try {
+      for (let round = 0; round < 20; round += 1) {
+        const response = await apiPost("/api/vinted/inventory/presence", { since });
+        const body = (await response.json()) as {
+          ok?: boolean;
+          error?: string;
+          checked?: number;
+          active?: number;
+          removed?: number;
+          unverified?: number;
+          remaining?: number;
+        };
+        if (!response.ok || !body.ok) {
+          setError(body.error || "No se pudo comprobar el estado en Vinted. No se eliminó ningún registro.");
+          break;
+        }
+        totals.checked += body.checked || 0;
+        totals.active += body.active || 0;
+        totals.removed += body.removed || 0;
+        totals.unverified += body.unverified || 0;
+        if (!body.checked || !body.remaining) break;
+      }
+      setNotice(
+        `Comprobadas ${totals.checked}. Activas: ${totals.active}. Eliminadas en Vinted: ${totals.removed}. Sin verificar: ${totals.unverified}. Solo se retiró el registro interno de las eliminadas confirmadas.`
+      );
+    } catch {
+      setError("No se pudo comprobar el estado en Vinted. No se eliminó ningún registro.");
+    } finally {
+      setSyncingDuplicates(false);
+      await load(query);
+    }
+  }
+
+  async function dropRemoved(item: InventoryItem) {
+    setPendingDrop(null);
+    setError("");
+    setItems((current) => current.map((row) => (row.vintedItemId === item.vintedItemId ? { ...row, archivedAt: new Date().toISOString() } : row)));
+    await review(item, "drop_removed", []);
+    await load(query);
+  }
+
+  function presenceLabel(item: InventoryItem): string {
+    if (item.vintedPresence === "active") return "🟢 Activo en Vinted";
+    if (item.vintedPresence === "removed") return "🔴 Eliminado en Vinted";
+    return "🟡 Sin verificar";
+  }
+
+  function groupReason(reason: DuplicateGroup["reason"]): string {
+    if (reason === "same-listing") return "Misma publicación de Vinted: el ID coincide";
+    if (reason === "sku") return "Mismo SKU: comprueba si son dos publicaciones del mismo artículo";
+    return "Mismo título y misma fotografía: comprueba si son el mismo artículo";
   }
 
   function photoFrame(src: string, className: string) {
@@ -597,31 +659,68 @@ export default function VintedInventoryPage() {
       {view === "all" || view === "duplicates" ? (
         <section>
           <h2>Posibles duplicados</h2>
+          <p>Cada publicación se distingue por su ID y su URL. El mismo SKU no basta para tratarlas como duplicadas.</p>
+          <button className="btn btn-primary" type="button" onClick={() => void syncDuplicates()} disabled={syncingDuplicates}>
+            {syncingDuplicates ? "Comprobando Vinted…" : "Sincronizar con Vinted"}
+          </button>
           {visibleGroups.length === 0 ? <p>No hay grupos duplicados en esta vista.</p> : null}
           {visibleGroups.map((group) => {
-            const members = group.itemIds.map((id) => byId.get(id)).filter((item): item is InventoryItem => Boolean(item));
+            const members = group.itemIds.map((id) => byId.get(id)).filter((item): item is InventoryItem => {
+              if (!item) return false;
+              return !item.archivedAt;
+            });
+            if (members.length < 2) return null;
+            const skuText = (item: InventoryItem) => (item.status === "verified" && item.sku ? item.sku : item.sku || item.listedSku || "Sin SKU");
             return (
               <article key={group.itemIds.join("-")} className="vinted-card">
-                <p>{group.reason === "sku" ? "Mismo SKU" : "Mismo título y misma fotografía"}</p>
+                <p>{groupReason(group.reason)}</p>
                 <div className="vinted-candidates">
                   {members.map((item) => (
                     <div className="vinted-candidate" key={item.vintedItemId}>
                       {photoFrame(item.photoUrl, "vinted-candidate-photo")}
                       <div>
                         <p className="vinted-candidate-title">{item.title || "Sin título"}</p>
-                        <p className="vinted-sku-confirmed">{item.status === "verified" && item.sku ? `SKU ${item.sku}` : "SKU sin confirmar"}</p>
-                        {item.status !== "verified" && item.suggestedSku ? <p className="vinted-sku-suggested">SKU sugerido: {item.suggestedSku}</p> : null}
-                        <p>{item.duplicateStatus === "confirmed" ? "Duplicado confirmado" : "Pendiente de revisión"}</p>
+                        <p className="vinted-sku-confirmed">SKU {skuText(item)}</p>
+                        <p>ID {item.vintedItemId}</p>
+                        <p className="vinted-card-detail">{item.url}</p>
+                        <p>{presenceLabel(item)}</p>
+                        {item.duplicateStatus === "confirmed" ? <p>🔵 Duplicado confirmado</p> : null}
                         <div className="vinted-card-actions">
                           <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
                             Abrir en Vinted
                           </a>
-                          <button className="btn btn-ghost" type="button" onClick={() => void review(item, "confirm_duplicate", group.itemIds)}>
-                            Son duplicados
-                          </button>
-                          <button className="btn btn-ghost" type="button" onClick={() => void review(item, "not_duplicate", group.itemIds)}>
-                            Son artículos diferentes
-                          </button>
+                          {group.reason === "same-listing" ? null : (
+                            <>
+                              <button className="btn btn-ghost" type="button" onClick={() => void review(item, "confirm_duplicate", group.itemIds)}>
+                                Son duplicados
+                              </button>
+                              <button className="btn btn-ghost" type="button" onClick={() => void review(item, "not_duplicate", group.itemIds)}>
+                                Son artículos diferentes
+                              </button>
+                            </>
+                          )}
+                          {item.vintedPresence === "removed" ? null : (
+                            <button className="btn btn-ghost" type="button" onClick={() => void review(item, "mark_removed", [])}>
+                              Marcar como eliminada en Vinted
+                            </button>
+                          )}
+                          {item.vintedPresence === "removed" && pendingDrop === item.vintedItemId ? (
+                            <div className="vinted-delete-confirm" role="alertdialog" aria-label="Quitar registro interno">
+                              <p>¿Quitar solo el registro interno de {item.title || "esta publicación"} (ID {item.vintedItemId}, SKU {skuText(item)})? No se elimina la publicación en Vinted ni otros artículos.</p>
+                              <div className="vinted-card-actions">
+                                <button className="btn btn-ghost" type="button" onClick={() => setPendingDrop(null)}>
+                                  Cancelar
+                                </button>
+                                <button className="btn btn-delete" type="button" onClick={() => void dropRemoved(item)}>
+                                  Quitar registro eliminado
+                                </button>
+                              </div>
+                            </div>
+                          ) : item.vintedPresence === "removed" ? (
+                            <button className="btn btn-delete" type="button" onClick={() => setPendingDrop(item.vintedItemId)}>
+                              Quitar registro eliminado
+                            </button>
+                          ) : null}
                           {deleteActions(item)}
                         </div>
                       </div>

@@ -136,8 +136,11 @@ export function prepareCollectedItem(item: VintedCollectedItem): VintedCollected
   const fromCard = cleanVintedCard(item.cardText || "");
   const fromTitle = cleanVintedCard(item.title);
   const title = fromTitle.title || fromCard.title || item.title.trim();
+  const link = parseVintedItemLink(item.url);
   return {
     ...item,
+    vintedItemId: link?.vintedItemId || item.vintedItemId.trim(),
+    url: link?.url || item.url,
     title,
     brand: item.brand.trim() || fromCard.brand,
     size: item.size.trim() || fromCard.size || fromTitle.size,

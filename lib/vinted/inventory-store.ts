@@ -28,6 +28,7 @@ import {
   rejectOneCandidate,
   withoutRejectedCandidates,
 } from "@/lib/vinted/candidate-rejection";
+import { planInventoryImport, readVintedListingPresence, type VintedPresence } from "@/lib/vinted/duplicate-presence";
 
 export interface VintedInventoryRow {
   vintedItemId: string;
@@ -53,6 +54,8 @@ export interface VintedInventoryRow {
   reviewedAt: string;
   candidates: EbayMatchCandidate[];
   archivedAt: string;
+  vintedPresence: VintedPresence;
+  vintedPresenceAt: string;
 }
 
 export interface VintedInventoryCounts {
@@ -80,13 +83,19 @@ function timeText(value: unknown): string {
   return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
 }
 
-function reviewListing(item: VintedInventoryRow): { vintedItemId: string; sku: string; title: string; photoUrl: string } {
+function reviewListing(item: VintedInventoryRow): { vintedItemId: string; sku: string; title: string; photoUrl: string; url: string } {
   return {
     vintedItemId: item.vintedItemId,
     sku: item.sku || item.listedSku,
     title: item.title,
     photoUrl: item.photoUrl,
+    url: item.url,
   };
+}
+
+function asPresence(value: string): VintedPresence {
+  if (value === "active" || value === "removed" || value === "unverified") return value;
+  return "";
 }
 
 function asDuplicate(value: string): VintedInventoryRow["duplicateStatus"] {
@@ -127,6 +136,8 @@ function mapRow(row: Record<string, unknown>): VintedInventoryRow {
     reviewedAt: timeText(row.reviewed_at),
     candidates: withoutRejectedCandidates(parseStoredCandidates(row.ebay_candidates), parseRejectedCandidates(row.rejected_candidates)),
     archivedAt: timeText(row.archived_at),
+    vintedPresence: asPresence(text(row.vinted_presence)),
+    vintedPresenceAt: timeText(row.vinted_presence_at),
   };
 }
 
@@ -241,10 +252,16 @@ function validItemId(value: string): string {
   return id.length >= 10 && id.length <= 15 ? id : "";
 }
 
-async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch): Promise<"inserted" | "kept" | "updated"> {
+async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch): Promise<"inserted" | "kept" | "updated" | "skipped"> {
   const sql = getSql();
   await ensureInventoryTables();
   const prepared = prepareCollectedItem(item);
+  const existing = await sql`
+    SELECT archived_at FROM vinted_inventory_links WHERE vinted_item_id = ${prepared.vintedItemId} LIMIT 1
+  `;
+  const stored = existing[0] as { archived_at?: unknown } | undefined;
+  const plan = planInventoryImport(stored ? { archivedAt: timeText(stored.archived_at) || null } : null);
+  if (plan === "skip-archived") return "skipped";
   const id = crypto.randomUUID();
   const verifiedAt = match.status === "verified" ? new Date().toISOString() : null;
   const title = prepared.title || item.title;
@@ -336,12 +353,13 @@ export async function syncVintedInventory(items: VintedCollectedItem[]): Promise
   existing: number;
 }> {
   const candidates = await listEbayMatchCandidates();
-  const result = { received: items.length, inserted: 0, updated: 0, keptVerified: 0, existing: 0 };
+  const result = { received: items.length, inserted: 0, updated: 0, keptVerified: 0, existing: 0, skipped: 0 };
   for (const item of items) {
     const prepared = prepareCollectedItem(item);
     const outcome = await saveMatch(prepared, matchVintedListing(prepared, candidates));
     if (outcome === "inserted") result.inserted += 1;
     else if (outcome === "kept") result.keptVerified += 1;
+    else if (outcome === "skipped") result.skipped += 1;
     else result.updated += 1;
   }
   result.existing = result.keptVerified + result.updated;
@@ -673,6 +691,66 @@ export async function listDuplicateGroups(): Promise<DuplicateGroup[]> {
   );
 }
 
+export async function syncDuplicatePresence(since: string, limit = 15): Promise<{
+  checked: number;
+  active: number;
+  removed: number;
+  unverified: number;
+  remaining: number;
+  since: string;
+}> {
+  const started = since.trim() || new Date().toISOString();
+  const sql = getSql();
+  await ensureInventoryTables();
+  const rows = await sql`SELECT * FROM vinted_inventory_links WHERE archived_at IS NULL`;
+  const dismissals = await sql`SELECT item_a, item_b FROM vinted_duplicate_dismissals`;
+  const items = rows.map((row) => mapRow(row as Record<string, unknown>));
+  const groups = findPossibleDuplicates(
+    items.map((item) => reviewListing(item)),
+    dismissals.map((row) => {
+      const record = row as { item_a?: string; item_b?: string };
+      return [text(record.item_a), text(record.item_b)] as [string, string];
+    })
+  );
+  const byId = new Map(items.map((item) => [item.vintedItemId, item]));
+  const pending = [...new Set(groups.flatMap((group) => group.itemIds))]
+    .filter((id) => {
+      const item = byId.get(id);
+      return Boolean(item) && (!item?.vintedPresenceAt || item.vintedPresenceAt < started);
+    })
+    .sort();
+  const batch = pending.slice(0, Math.min(15, Math.max(1, limit)));
+  const counts = { checked: 0, active: 0, removed: 0, unverified: 0 };
+  for (const id of batch) {
+    const item = byId.get(id);
+    if (!item) continue;
+    const presence = await readVintedListingPresence(item.url);
+    const detail = presence === "active"
+      ? "La publicación responde como disponible."
+      : presence === "removed"
+        ? "La publicación ya no está disponible en Vinted. Se retiró solo este registro interno."
+        : "No se pudo confirmar el estado. No se eliminó el registro.";
+    const updated = await sql`
+      UPDATE vinted_inventory_links
+      SET
+        vinted_presence = ${presence},
+        vinted_presence_at = NOW(),
+        vinted_presence_detail = ${detail},
+        archived_at = CASE WHEN ${presence} = 'removed' THEN NOW() ELSE archived_at END,
+        updated_at = NOW()
+      WHERE vinted_item_id = ${id}
+        AND archived_at IS NULL
+      RETURNING id
+    `;
+    if (!updated.length) continue;
+    counts.checked += 1;
+    if (presence === "active" || presence === "removed" || presence === "unverified") counts[presence] += 1;
+    await recordEvent(id, presence === "removed" ? "archive" : "vinted_presence", detail);
+  }
+  if (counts.removed) await refreshInventorySignals();
+  return { ...counts, remaining: Math.max(0, pending.length - batch.length), since: started };
+}
+
 export async function confirmVintedInventoryMatch(
   vintedItemId: string,
   sku: string,
@@ -739,7 +817,7 @@ export async function confirmVintedInventoryMatch(
 
 export async function reviewVintedInventory(input: {
   vintedItemId: string;
-  action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion" | "archive" | "restore";
+  action: "confirm_duplicate" | "not_duplicate" | "withdrawn" | "not_sold" | "mark_reviewed" | "set_ebay_item" | "reject_suggestion" | "archive" | "restore" | "mark_removed" | "drop_removed";
   relatedIds: string[];
   ebayItemId?: string;
   sku?: string;
@@ -806,6 +884,36 @@ export async function reviewVintedInventory(input: {
     `;
     if (!updated.length) return { ok: false, error: "Esa publicación no está archivada." };
     await recordEvent(id, "restore", "Restaurado al inventario activo.");
+    return { ok: true };
+  }
+  if (input.action === "mark_removed") {
+    const updated = await sql`
+      UPDATE vinted_inventory_links
+      SET
+        vinted_presence = 'removed',
+        vinted_presence_at = NOW(),
+        vinted_presence_detail = 'Marcado manualmente como eliminado en Vinted. El registro interno sigue guardado.',
+        updated_at = NOW()
+      WHERE vinted_item_id = ${id}
+        AND archived_at IS NULL
+      RETURNING id
+    `;
+    if (!updated.length) return { ok: false, error: "No existe esa publicación activa." };
+    await recordEvent(id, "vinted_presence", "Marcado manualmente como eliminado en Vinted.");
+    return { ok: true };
+  }
+  if (input.action === "drop_removed") {
+    const updated = await sql`
+      UPDATE vinted_inventory_links
+      SET archived_at = NOW(), updated_at = NOW()
+      WHERE vinted_item_id = ${id}
+        AND archived_at IS NULL
+        AND vinted_presence = 'removed'
+      RETURNING id
+    `;
+    if (!updated.length) return { ok: false, error: "Ese registro no está marcado como eliminado en Vinted." };
+    await recordEvent(id, "archive", "Se quitó solo este registro interno. No se borró la publicación ni otros artículos.");
+    await refreshInventorySignals();
     return { ok: true };
   }
   if (input.action === "reject_suggestion") {
