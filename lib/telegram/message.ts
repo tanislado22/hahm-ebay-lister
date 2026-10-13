@@ -1,3 +1,5 @@
+import { listingUrlForPlatform } from "@/lib/telegram/sale-links";
+
 export type SalePlatform = "ebay" | "vinted" | "poshmark" | "depop";
 
 const SEPARATOR = "━━━━━━━━━━━━━━━━━━━━";
@@ -89,29 +91,50 @@ function vintedSaleMessage(sku: string, title: string): string {
   ].join("\n");
 }
 
+export interface SaleNoticeLinks {
+  url?: string | null;
+  listingUrl?: string | null;
+}
+
+function openLabel(platform: SalePlatform): string {
+  if (platform === "vinted") return "Abrir en Vinted";
+  if (platform === "poshmark") return "Abrir en Poshmark";
+  if (platform === "depop") return "Abrir en Depop";
+  return "Abrir en eBay";
+}
+
+function linkLine(label: string, url: string): string {
+  return `🔗 <a href="${escapeTelegramHtml(url)}">${escapeTelegramHtml(label)}</a>`;
+}
+
+function appendSaleLinks(lines: string[], platform: SalePlatform, links?: SaleNoticeLinks): void {
+  if (!links) return;
+  const listingUrl = listingUrlForPlatform(platform, links.listingUrl) ?? "";
+  const vintedUrl = listingUrlForPlatform("vinted", links.url) ?? "";
+  if (listingUrl) lines.push(linkLine(openLabel(platform), listingUrl));
+  if (platform === "vinted") return;
+  if (!("url" in links)) return;
+  lines.push(vintedUrl ? linkLine("Abrir en Vinted", vintedUrl) : "🔗 Publicación de Vinted no identificada");
+}
+
 export function saleTelegramMessage(
   platform: SalePlatform,
   sku: string,
   title: string,
-  vintedNotice?: { url: string | null }
+  links?: SaleNoticeLinks
 ): string {
-  if (platform === "vinted") return vintedSaleMessage(sku, title);
-  const item = escapeTelegramHtml(displayTitle(title));
-  const followUp =
-    platform === "ebay"
-      ? "🔍 Si sigue publicado en Vinted, retirarlo manualmente."
-      : "🔍 Si sigue publicado, retirarlo manualmente.";
-  const lines = [
-    "🟢 📦 <b>¡ARTÍCULO VENDIDO!</b>",
-    `🛍️ Plataforma: <b>${platformLabel(platform)}</b>`,
-    `👕 Artículo: ${item}`,
-    `🔢 SKU: ${skuBlock(sku)}`,
-    "⚠️ <b>REVISAR VINTED</b>",
-    followUp,
-  ];
-  if (vintedNotice) {
-    const url = vintedNotice.url?.trim() ?? "";
-    lines.push(url ? `🔗 ${escapeTelegramHtml(url)}` : "🔗 Publicación de Vinted no identificada");
-  }
+  const lines = platform === "vinted"
+    ? vintedSaleMessage(sku, title).split("\n")
+    : [
+        "🟢 📦 <b>¡ARTÍCULO VENDIDO!</b>",
+        `🛍️ Plataforma: <b>${platformLabel(platform)}</b>`,
+        `👕 Artículo: ${escapeTelegramHtml(displayTitle(title))}`,
+        `🔢 SKU: ${skuBlock(sku)}`,
+        "⚠️ <b>REVISAR VINTED</b>",
+        platform === "ebay"
+          ? "🔍 Si sigue publicado en Vinted, retirarlo manualmente."
+          : "🔍 Si sigue publicado, retirarlo manualmente.",
+      ];
+  appendSaleLinks(lines, platform, links);
   return lines.join("\n");
 }

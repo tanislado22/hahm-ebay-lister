@@ -50,11 +50,23 @@ describe("telegram sale message", () => {
     const linked = saleTelegramMessage("ebay", "2830", SAMPLE_TITLE, {
       url: "https://www.vinted.com/items/178425031509-coat",
     });
-    expect(linked).toContain("🔗 https://www.vinted.com/items/178425031509-coat");
+    expect(linked).toContain('<a href="https://www.vinted.com/items/178425031509-coat">Abrir en Vinted</a>');
     const missing = saleTelegramMessage("depop", "2830", SAMPLE_TITLE, { url: null });
     expect(missing).toContain("🔗 Publicación de Vinted no identificada");
     expect(saleTelegramMessage("vinted", "2830", SAMPLE_TITLE, { url: "https://www.vinted.com/items/1" })).not.toContain(
       "Publicación de Vinted no identificada"
+    );
+    const ebayListing = saleTelegramMessage("ebay", "2830", SAMPLE_TITLE, {
+      listingUrl: "https://www.ebay.com/itm/123456789012",
+      url: "https://www.vinted.com/items/178425031509-coat",
+    });
+    expect(ebayListing).toContain('<a href="https://www.ebay.com/itm/123456789012">Abrir en eBay</a>');
+    expect(ebayListing).toContain('<a href="https://www.vinted.com/items/178425031509-coat">Abrir en Vinted</a>');
+    expect(saleTelegramMessage("vinted", "2830", SAMPLE_TITLE, { listingUrl: "https://www.vinted.com/items/178425031222" })).toContain(
+      '<a href="https://www.vinted.com/items/178425031222">Abrir en Vinted</a>'
+    );
+    expect(saleTelegramMessage("ebay", "2830", SAMPLE_TITLE, { listingUrl: "javascript:alert(1)", url: null })).not.toContain(
+      "javascript:"
     );
   });
 

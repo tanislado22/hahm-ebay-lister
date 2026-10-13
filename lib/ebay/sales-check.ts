@@ -4,6 +4,7 @@ import { decideEbaySale } from "@/lib/ebay/sale-decision";
 import { accessTokenFromCookie } from "@/lib/ebay/session";
 import { findListingForEbaySale } from "@/lib/inventory/links";
 import { claimSaleEvent, finishSaleEvent } from "@/lib/inventory/sale-events";
+import { ebayItemUrl } from "@/lib/vinted/card-text";
 import { ebaySaleNotice, isNewTelegramSale } from "@/lib/telegram/ebay-sale";
 import { deliverConfirmedSale, suppressTelegramSale } from "@/lib/telegram/notices";
 import { sendPlatformSaleAlert } from "@/lib/whatsapp/send";
@@ -83,6 +84,7 @@ export async function runEbaySalesCheck(): Promise<EbaySalesCheckResult> {
               externalEventId,
               sku: notice.sku,
               title: notice.title,
+              listingUrl: ebayItemUrl(line.legacyItemId),
             });
             if (delivery === "sent") result.telegramSent += 1;
             else if (delivery === "duplicate") result.telegramDuplicate += 1;

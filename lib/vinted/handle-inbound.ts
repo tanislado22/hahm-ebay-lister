@@ -5,6 +5,7 @@ import { classifyMailboxEmail } from "@/lib/mailbox/sale-email";
 import { resolveSaleIdentity } from "@/lib/vinted/sale-identity";
 import { isNewTelegramSale } from "@/lib/telegram/ebay-sale";
 import { saleTelegramMessage } from "@/lib/telegram/message";
+import { extractPlatformListingUrl } from "@/lib/telegram/sale-links";
 import { deliverConfirmedSale, type TelegramDelivery } from "@/lib/telegram/notices";
 import { sendPlatformSaleAlert } from "@/lib/whatsapp/send";
 
@@ -48,6 +49,7 @@ export async function handleVintedSaleEmail(
   );
   const sku = identity.sku;
   const title = identity.title;
+  const listingUrl = extractPlatformListingUrl(classification.platform, `${text}\n${email.html || ""}`);
 
   if (dryRun) {
     return {
@@ -59,14 +61,19 @@ export async function handleVintedSaleEmail(
         platform: classification.platform,
         sku: sku || null,
         title,
-        message: saleTelegramMessage(classification.platform, sku, title),
+        message: saleTelegramMessage(
+          classification.platform,
+          sku,
+          title,
+          listingUrl ? { listingUrl } : undefined
+        ),
         telegram: "not_sent",
       },
     };
   }
 
   if (classification.platform !== "vinted" || !sku) {
-    const telegram = await notifySale(email.messageId, classification.platform, sku, title);
+    const telegram = await notifySale(email.messageId, classification.platform, sku, title, listingUrl);
     if (telegram === "failed") {
       return { httpStatus: 500, body: { ok: false, error: "Telegram send failed", platform: classification.platform } };
     }
@@ -94,7 +101,7 @@ export async function handleVintedSaleEmail(
     initialStatus: "pending",
   });
 
-  const telegram = await notifySale(email.messageId, "vinted", sku, title);
+  const telegram = await notifySale(email.messageId, "vinted", sku, title, listingUrl);
   if (claim.action === "done") {
     if (telegram === "failed") {
       return { httpStatus: 500, body: { ok: false, error: "Telegram send failed", duplicate: true } };
@@ -140,7 +147,8 @@ async function notifySale(
   messageId: string,
   platform: "ebay" | "vinted" | "poshmark" | "depop",
   sku: string,
-  title: string
+  title: string,
+  listingUrl: string | null
 ): Promise<TelegramDelivery> {
   try {
     return await deliverConfirmedSale({
@@ -148,6 +156,7 @@ async function notifySale(
       externalEventId: messageId,
       sku,
       title,
+      listingUrl,
     });
   } catch (error) {
     console.error("[mailbox/inbound] Telegram failed", messageId, error);

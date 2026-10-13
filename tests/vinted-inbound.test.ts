@@ -238,6 +238,22 @@ describe("vinted inbound", () => {
     expect(deliver).not.toHaveBeenCalled();
   });
 
+  test("dry run keeps a clickable Vinted listing link and does not send Telegram", async () => {
+    const result = await handleVintedSaleEmail(
+      {
+        ...SALE,
+        text: "You sold an item on Vinted\n\nhttps://www.vinted.com/items/178425031509-coat\n",
+        messageId: "gmail-with-link",
+      },
+      { dryRun: true }
+    );
+    expect(result.body.telegram).toBe("not_sent");
+    expect(String(result.body.message)).toContain(
+      '<a href="https://www.vinted.com/items/178425031509-coat">Abrir en Vinted</a>'
+    );
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
   test("sends the manual Vinted notice when the sale has no SKU", async () => {
     const result = await handleVintedSaleEmail({
       ...SALE,
@@ -260,6 +276,7 @@ describe("vinted inbound", () => {
       externalEventId: "gmail-no-sku-live",
       sku: "",
       title: "No identificado",
+      listingUrl: null,
     });
     expect(claim).not.toHaveBeenCalled();
     expect(whatsapp).not.toHaveBeenCalled();

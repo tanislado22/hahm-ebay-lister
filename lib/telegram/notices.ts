@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { ensureInventoryTables, getSql } from "@/lib/db";
 import type { SalePlatform } from "@/lib/telegram/message";
 import { sendTelegramSale } from "@/lib/telegram/send";
+import { saleNoticeIsDuplicate } from "@/lib/telegram/sale-links";
 import { findVerifiedVintedUrl } from "@/lib/vinted/inventory-store";
 
 export type TelegramDelivery = "sent" | "duplicate" | "failed" | "missing";
@@ -85,18 +86,38 @@ async function finishTelegramNotice(
   `;
 }
 
-async function skuAlreadyAnnounced(sku: string): Promise<boolean> {
-  if (!sku) return false;
+async function samePlatformAlreadySent(input: {
+  platform: SalePlatform;
+  externalEventId: string;
+  sku: string;
+}): Promise<boolean> {
   const sql = getSql();
   await ensureInventoryTables();
   const rows = await sql`
-    SELECT id
+    SELECT platform, external_event_id, sku, sent_at
     FROM telegram_sale_notices
-    WHERE sku = ${sku}
-      AND sent_at IS NOT NULL
-    LIMIT 1
+    WHERE sent_at IS NOT NULL
+      AND platform = ${input.platform}
+      AND (
+        external_event_id = ${input.externalEventId}
+        OR (${input.sku} <> '' AND sku = ${input.sku})
+      )
+    LIMIT 5
   `;
-  return rows.length > 0;
+  return saleNoticeIsDuplicate({
+    platform: input.platform,
+    sku: input.sku,
+    externalEventId: input.externalEventId,
+    prior: rows.map((row) => {
+      const record = row as { platform?: string; external_event_id?: string; sku?: string; sent_at?: string | null };
+      return {
+        platform: String(record.platform || ""),
+        sku: String(record.sku || ""),
+        externalEventId: String(record.external_event_id || ""),
+        sent: Boolean(record.sent_at),
+      };
+    }),
+  });
 }
 
 // Remember an old or repeated sale so later cron runs do not send it.
@@ -109,7 +130,7 @@ export async function suppressTelegramSale(input: {
   const sku = input.sku.trim();
   const title = input.title.trim();
   const externalEventId = input.externalEventId.trim();
-  if (!sku || !title || !externalEventId) return;
+  if (!title || !externalEventId) return;
   const sql = getSql();
   await ensureInventoryTables();
   const id = crypto.randomUUID();
@@ -145,12 +166,13 @@ export async function deliverConfirmedSale(input: {
   externalEventId: string;
   sku: string;
   title: string;
+  listingUrl?: string | null;
 }): Promise<TelegramDelivery> {
   const sku = input.sku.trim();
   const title = input.title.trim();
   const externalEventId = input.externalEventId.trim();
   if (!title || !externalEventId) return "missing";
-  if (await skuAlreadyAnnounced(sku)) {
+  if (await samePlatformAlreadySent({ platform: input.platform, externalEventId, sku })) {
     await suppressTelegramSale({ platform: input.platform, externalEventId, sku, title });
     return "duplicate";
   }
@@ -164,11 +186,11 @@ export async function deliverConfirmedSale(input: {
   if (claim.action === "done") return "duplicate";
 
   try {
-    const vintedNotice =
-      input.platform === "vinted"
-        ? undefined
-        : { url: sku ? await findVerifiedVintedUrl(sku).catch(() => null) : null };
-    await sendTelegramSale(input.platform, sku, title, vintedNotice);
+    const vintedUrl = input.platform === "vinted" || !sku ? null : await findVerifiedVintedUrl(sku).catch(() => null);
+    const links = input.platform === "vinted"
+      ? { listingUrl: input.listingUrl }
+      : { listingUrl: input.listingUrl, url: vintedUrl };
+    await sendTelegramSale(input.platform, sku, title, links);
     await finishTelegramNotice(claim.id, { status: "sent" });
     return "sent";
   } catch (error) {

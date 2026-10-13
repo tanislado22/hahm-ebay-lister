@@ -1,4 +1,4 @@
-import { saleTelegramMessage, type SalePlatform } from "@/lib/telegram/message";
+import { saleTelegramMessage, type SaleNoticeLinks, type SalePlatform } from "@/lib/telegram/message";
 
 interface TelegramConfig {
   token: string;
@@ -70,7 +70,7 @@ export async function sendTelegramSale(
   platform: SalePlatform,
   sku: string,
   title: string,
-  vintedNotice?: { url: string | null }
+  vintedNotice?: SaleNoticeLinks
 ): Promise<{ messageId: number }> {
   const cleanTitle = title.trim();
   if (!cleanTitle) {

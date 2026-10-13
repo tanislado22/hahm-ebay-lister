@@ -1,6 +1,8 @@
 /**
  * Lee ventas confirmadas de Vinted, Poshmark y Depop y las envía solo al endpoint de la aplicación.
- * No envía, reenvía, modifica ni elimina correos.
+ * No envía, reenvía, modifica ni elimina correos. No cambia etiquetas ni el estado de lectura,
+ * así que Nifty puede seguir usando el buzón sin interferencia.
+ * Este archivo no cambia DRY_RUN a false.
  *
  * Permisos que debe pedir Google:
  * - Ver tus mensajes y ajustes de Gmail (gmail.readonly).
