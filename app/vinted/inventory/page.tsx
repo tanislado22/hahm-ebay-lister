@@ -6,7 +6,7 @@ import { ebayItemUrl } from "@/lib/vinted/card-text";
 import { rejectOneCandidate } from "@/lib/vinted/candidate-rejection";
 import { duplicateGroupsWithoutArchived } from "@/lib/vinted/inventory-archive";
 import { parseInventoryImport, VINTED_SYNC_PILOT_LIMIT } from "@/lib/vinted/inventory-match";
-import { anchorElementId, listScrollAnchor, scrollDelta, type ListScrollAnchor } from "@/lib/vinted/list-scroll";
+import { anchorElementId, keepWorkingOrder, listScrollHold, readDocumentScroll, writeDocumentScroll, type ListScrollHold } from "@/lib/vinted/list-scroll";
 
 interface InventoryItem {
   vintedItemId: string;
@@ -120,9 +120,8 @@ export default function VintedInventoryPage() {
   const [pendingDrop, setPendingDrop] = useState<string | null>(null);
   const [syncingDuplicates, setSyncingDuplicates] = useState(false);
   const identifyRun = useRef(false);
-  const pendingAnchor = useRef<ListScrollAnchor | null>(null);
-  const quietScroll = useRef(false);
-  const itemsSeen = useRef(items);
+  const pendingAnchor = useRef<ListScrollHold | null>(null);
+  const restoreTimers = useRef<number[]>([]);
   const load = useCallback(async (search: string, mode: "full" | "quiet" = "full") => {
     if (mode === "full") setLoading(true);
     setError("");
@@ -140,10 +139,13 @@ export default function VintedInventoryPage() {
         setError(body.error || "No se pudo leer el inventario.");
         return;
       }
-      if (mode === "quiet") quietScroll.current = true;
+      const incoming = body.items || [];
       setCounts(body.counts || EMPTY_COUNTS);
-      setItems(body.items || []);
+      setItems((current) => (mode === "quiet" && current.length ? keepWorkingOrder(current, incoming) : incoming));
       setGroups(body.groups || []);
+      if (mode === "quiet") window.setTimeout(() => {
+        pendingAnchor.current = null;
+      }, 500);
     } catch {
       if (mode === "quiet") pendingAnchor.current = null;
       setError("No se pudo leer el inventario.");
@@ -213,39 +215,29 @@ export default function VintedInventoryPage() {
     return [...sold, ...rest].map((item) => item.vintedItemId);
   }, [visible, view]);
 
+  function clearRestores() {
+    for (const timer of restoreTimers.current) window.clearTimeout(timer);
+    restoreTimers.current = [];
+  }
+
+  function restorePlace() {
+    const hold = pendingAnchor.current;
+    if (!hold) return;
+    if (Math.abs(readDocumentScroll() - hold.scrollTop) > 1) writeDocumentScroll(hold.scrollTop);
+  }
+
   function rememberPlace(itemId: string) {
     if (pendingAnchor.current) return;
-    const source = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const card = source?.closest("article") ?? document.getElementById(anchorElementId(itemId));
-    if (card) card.setAttribute("data-scroll-hold", itemId);
-    pendingAnchor.current = listScrollAnchor(visibleCardIds, itemId, card ? card.getBoundingClientRect().top : 0);
-    source?.blur();
+    pendingAnchor.current = listScrollHold(visibleCardIds, itemId, readDocumentScroll());
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }
 
   useLayoutEffect(() => {
-    const hold = pendingAnchor.current;
-    const quiet = quietScroll.current;
-    if (quiet) quietScroll.current = false;
-    if (!hold || itemsSeen.current === items) {
-      itemsSeen.current = items;
-      return;
-    }
-    itemsSeen.current = items;
-    const held = document.querySelector(`[data-scroll-hold="${hold.id}"]`);
-    const same = document.getElementById(anchorElementId(hold.id));
-    const next = hold.nextId ? document.getElementById(anchorElementId(hold.nextId)) : null;
-    const node = (held instanceof HTMLElement ? held : null) || same || next;
-    if (node instanceof HTMLElement) {
-      node.removeAttribute("data-scroll-hold");
-      const delta = scrollDelta(node.getBoundingClientRect().top, hold.top);
-      if (Math.abs(delta) > 1) window.scrollBy(0, delta);
-      if (!quiet) {
-        const trackedId = node.id.startsWith("vinted-card-") ? node.id.slice("vinted-card-".length) : hold.id;
-        pendingAnchor.current = { id: trackedId, nextId: "", top: node.getBoundingClientRect().top };
-        return;
-      }
-    }
-    pendingAnchor.current = null;
+    if (!pendingAnchor.current) return;
+    restorePlace();
+    clearRestores();
+    restoreTimers.current = [0, 50, 150, 400].map((delay) => window.setTimeout(restorePlace, delay));
+    return () => clearRestores();
   }, [items]);
 
   const visibleGroups = useMemo(() => {
@@ -302,6 +294,7 @@ export default function VintedInventoryPage() {
     });
     const body = (await response.json()) as { ok?: boolean; error?: string };
     if (!response.ok || !body.ok) {
+      pendingAnchor.current = null;
       setError(body.error || "No se pudo guardar la revisión.");
       return;
     }
@@ -325,6 +318,7 @@ export default function VintedInventoryPage() {
     });
     const body = (await response.json()) as { ok?: boolean; error?: string };
     if (!response.ok || !body.ok) {
+      pendingAnchor.current = null;
       setError(body.error || "No se pudo confirmar.");
       return;
     }
@@ -377,7 +371,10 @@ export default function VintedInventoryPage() {
       sku: candidate.sku,
     });
     const body = (await response.json()) as { ok?: boolean; error?: string };
-    if (!response.ok || !body.ok) setError(body.error || "No se pudo rechazar la coincidencia.");
+    if (!response.ok || !body.ok) {
+      pendingAnchor.current = null;
+      setError(body.error || "No se pudo rechazar la coincidencia.");
+    }
     await load(query, "quiet");
   }
 
@@ -597,7 +594,13 @@ export default function VintedInventoryPage() {
   }
 
   return (
-    <main className="wrap vinted-inventory-page">
+    <main
+      className="wrap vinted-inventory-page"
+      onPointerDown={(event) => {
+        const target = event.target;
+        if (target instanceof Element && target.closest("button")) event.preventDefault();
+      }}
+    >
       <header className="masthead">
         <span className="logo-mark" aria-hidden="true">
           🛍️

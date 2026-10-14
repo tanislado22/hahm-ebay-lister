@@ -1193,6 +1193,10 @@ a.btn {
 .vinted-inventory-page.wrap {
   max-width: min(920px, 100%);
   min-width: 0;
+}
+
+.vinted-inventory-page,
+.vinted-inventory-page * {
   overflow-anchor: none;
 }
 
@@ -1207,7 +1211,6 @@ a.btn {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 0.9rem;
-  overflow-anchor: none;
 }
 
 .vinted-card-main,
