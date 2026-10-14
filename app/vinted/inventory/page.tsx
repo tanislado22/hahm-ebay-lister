@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { ebayItemUrl } from "@/lib/vinted/card-text";
 import { rejectOneCandidate } from "@/lib/vinted/candidate-rejection";
 import { duplicateGroupsWithoutArchived } from "@/lib/vinted/inventory-archive";
 import { parseInventoryImport, VINTED_SYNC_PILOT_LIMIT } from "@/lib/vinted/inventory-match";
+import { anchorElementId, listScrollAnchor, scrollDelta, type ListScrollAnchor } from "@/lib/vinted/list-scroll";
 
 interface InventoryItem {
   vintedItemId: string;
@@ -119,8 +120,11 @@ export default function VintedInventoryPage() {
   const [pendingDrop, setPendingDrop] = useState<string | null>(null);
   const [syncingDuplicates, setSyncingDuplicates] = useState(false);
   const identifyRun = useRef(false);
-  const load = useCallback(async (search: string) => {
-    setLoading(true);
+  const pendingAnchor = useRef<ListScrollAnchor | null>(null);
+  const quietScroll = useRef(false);
+  const itemsSeen = useRef(items);
+  const load = useCallback(async (search: string, mode: "full" | "quiet" = "full") => {
+    if (mode === "full") setLoading(true);
     setError("");
     try {
       const response = await apiGet(`/api/vinted/inventory?q=${encodeURIComponent(search)}`);
@@ -132,16 +136,19 @@ export default function VintedInventoryPage() {
         groups?: DuplicateGroup[];
       };
       if (!response.ok || !body.ok) {
+        if (mode === "quiet") pendingAnchor.current = null;
         setError(body.error || "No se pudo leer el inventario.");
         return;
       }
+      if (mode === "quiet") quietScroll.current = true;
       setCounts(body.counts || EMPTY_COUNTS);
       setItems(body.items || []);
       setGroups(body.groups || []);
     } catch {
+      if (mode === "quiet") pendingAnchor.current = null;
       setError("No se pudo leer el inventario.");
     } finally {
-      setLoading(false);
+      if (mode === "full") setLoading(false);
     }
   }, []);
 
@@ -200,6 +207,47 @@ export default function VintedInventoryPage() {
     });
   }, [items, view]);
 
+  const visibleCardIds = useMemo(() => {
+    const sold = view === "all" || view === "sold" ? visible.filter((item) => item.soldStatus === "pending_removal") : [];
+    const rest = view === "all" || view === "sold" ? visible.filter((item) => item.soldStatus !== "pending_removal") : visible;
+    return [...sold, ...rest].map((item) => item.vintedItemId);
+  }, [visible, view]);
+
+  function rememberPlace(itemId: string) {
+    if (pendingAnchor.current) return;
+    const source = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const card = source?.closest("article") ?? document.getElementById(anchorElementId(itemId));
+    if (card) card.setAttribute("data-scroll-hold", itemId);
+    pendingAnchor.current = listScrollAnchor(visibleCardIds, itemId, card ? card.getBoundingClientRect().top : 0);
+    source?.blur();
+  }
+
+  useLayoutEffect(() => {
+    const hold = pendingAnchor.current;
+    const quiet = quietScroll.current;
+    if (quiet) quietScroll.current = false;
+    if (!hold || itemsSeen.current === items) {
+      itemsSeen.current = items;
+      return;
+    }
+    itemsSeen.current = items;
+    const held = document.querySelector(`[data-scroll-hold="${hold.id}"]`);
+    const same = document.getElementById(anchorElementId(hold.id));
+    const next = hold.nextId ? document.getElementById(anchorElementId(hold.nextId)) : null;
+    const node = (held instanceof HTMLElement ? held : null) || same || next;
+    if (node instanceof HTMLElement) {
+      node.removeAttribute("data-scroll-hold");
+      const delta = scrollDelta(node.getBoundingClientRect().top, hold.top);
+      if (Math.abs(delta) > 1) window.scrollBy(0, delta);
+      if (!quiet) {
+        const trackedId = node.id.startsWith("vinted-card-") ? node.id.slice("vinted-card-".length) : hold.id;
+        pendingAnchor.current = { id: trackedId, nextId: "", top: node.getBoundingClientRect().top };
+        return;
+      }
+    }
+    pendingAnchor.current = null;
+  }, [items]);
+
   const visibleGroups = useMemo(() => {
     const archivedIds = items.filter((item) => item.archivedAt).map((item) => item.vintedItemId);
     const allowed = new Set(visible.map((item) => item.vintedItemId));
@@ -244,6 +292,7 @@ export default function VintedInventoryPage() {
     sku = ""
   ) {
     setError("");
+    rememberPlace(item.vintedItemId);
     const response = await apiPost("/api/vinted/inventory/review", {
       vintedItemId: item.vintedItemId,
       action,
@@ -256,7 +305,7 @@ export default function VintedInventoryPage() {
       setError(body.error || "No se pudo guardar la revisión.");
       return;
     }
-    await load(query);
+    await load(query, "quiet");
   }
 
   async function correctEbay(item: InventoryItem) {
@@ -268,6 +317,7 @@ export default function VintedInventoryPage() {
   async function confirmSku(item: InventoryItem, sku: string, ebayItemId = "") {
     const wanted = sku.trim();
     if (!wanted) return;
+    rememberPlace(item.vintedItemId);
     const response = await apiPost("/api/vinted/inventory/confirm", {
       vintedItemId: item.vintedItemId,
       sku: wanted,
@@ -278,7 +328,7 @@ export default function VintedInventoryPage() {
       setError(body.error || "No se pudo confirmar.");
       return;
     }
-    await load(query);
+    await load(query, "quiet");
   }
 
   function confirm(item: InventoryItem) {
@@ -289,6 +339,7 @@ export default function VintedInventoryPage() {
 
   async function rejectCandidate(item: InventoryItem, candidate: { sku: string; ebayItemId: string }) {
     setError("");
+    rememberPlace(item.vintedItemId);
     setItems((current) =>
       current.map((row) => {
         if (row.vintedItemId !== item.vintedItemId || row.status === "verified") return row;
@@ -327,12 +378,13 @@ export default function VintedInventoryPage() {
     });
     const body = (await response.json()) as { ok?: boolean; error?: string };
     if (!response.ok || !body.ok) setError(body.error || "No se pudo rechazar la coincidencia.");
-    await load(query);
+    await load(query, "quiet");
   }
 
   async function archive(item: InventoryItem) {
     setPendingDelete(null);
     setError("");
+    rememberPlace(item.vintedItemId);
     setItems((current) => current.map((row) => (row.vintedItemId === item.vintedItemId ? { ...row, archivedAt: new Date().toISOString() } : row)));
     const response = await apiPost("/api/vinted/inventory/review", {
       vintedItemId: item.vintedItemId,
@@ -343,7 +395,7 @@ export default function VintedInventoryPage() {
     if (!response.ok || !body.ok) {
       setError(body.error || "No se pudo archivar el artículo.");
     }
-    await load(query);
+    await load(query, "quiet");
   }
 
   function deleteActions(item: InventoryItem) {
@@ -418,9 +470,9 @@ export default function VintedInventoryPage() {
   async function dropRemoved(item: InventoryItem) {
     setPendingDrop(null);
     setError("");
+    rememberPlace(item.vintedItemId);
     setItems((current) => current.map((row) => (row.vintedItemId === item.vintedItemId ? { ...row, archivedAt: new Date().toISOString() } : row)));
     await review(item, "drop_removed", []);
-    await load(query);
   }
 
   function presenceLabel(item: InventoryItem): string {
@@ -446,7 +498,7 @@ export default function VintedInventoryPage() {
     const confirmedEbay = item.status === "verified" ? ebayItemUrl(item.ebayItemId) : null;
     const candidates = item.status === "verified" ? [] : item.candidates || [];
     return (
-      <article className="vinted-card" key={item.vintedItemId}>
+      <article className="vinted-card" key={item.vintedItemId} id={anchorElementId(item.vintedItemId)}>
         <div className="vinted-card-main">
           {photoFrame(item.photoUrl, "vinted-card-photo")}
           <div className="vinted-card-body">
