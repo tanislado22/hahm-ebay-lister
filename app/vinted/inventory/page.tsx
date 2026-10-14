@@ -492,7 +492,7 @@ export default function VintedInventoryPage() {
   function itemCard(item: InventoryItem) {
     const confirmedSku = item.status === "verified" && item.sku ? item.sku : "";
     const suggestedSku = item.status === "verified" ? "" : item.suggestedSku;
-    const confirmedEbay = item.status === "verified" ? ebayItemUrl(item.ebayItemId) : null;
+    const savedEbay = ebayItemUrl(item.ebayItemId);
     const candidates = item.status === "verified" ? [] : item.candidates || [];
     return (
       <article className="vinted-card" key={item.vintedItemId} id={anchorElementId(item.vintedItemId)}>
@@ -507,13 +507,13 @@ export default function VintedInventoryPage() {
             {item.duplicateStatus === "suspected" || item.duplicateStatus === "confirmed" ? <p>Duplicado</p> : null}
             <p>{item.reviewedAt ? "Revisado" : "Pendiente de revisión"}</p>
             {item.detail ? <p className="vinted-card-detail">{item.detail}</p> : null}
-            {confirmedEbay ? <p className="vinted-item-id">Item ID {item.ebayItemId}</p> : null}
+            {savedEbay ? <p className="vinted-item-id">Item ID {item.ebayItemId}</p> : null}
             <div className="vinted-card-actions">
               <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
                 Abrir en Vinted
               </a>
-              {confirmedEbay ? (
-                <a className="btn btn-ghost" href={confirmedEbay} target="_blank" rel="noopener noreferrer">
+              {savedEbay ? (
+                <a className="btn btn-ghost" href={savedEbay} target="_blank" rel="noopener noreferrer">
                   Abrir en eBay
                 </a>
               ) : null}
@@ -530,9 +530,9 @@ export default function VintedInventoryPage() {
                   Confirmar SKU
                 </button>
               ) : null}
-              {item.status === "review" && suggestedSku && candidates.length === 0 ? (
+              {item.status !== "verified" && suggestedSku && candidates.length === 0 ? (
                 <>
-                  <button className="btn btn-ghost" type="button" onClick={() => void confirmSku(item, suggestedSku)}>
+                  <button className="btn btn-ghost" type="button" onClick={() => void confirmSku(item, suggestedSku, item.ebayItemId)}>
                     Confirmar asociación
                   </button>
                   <button className="btn btn-ghost" type="button" onClick={() => void rejectCandidate(item, { sku: suggestedSku, ebayItemId: "" })}>

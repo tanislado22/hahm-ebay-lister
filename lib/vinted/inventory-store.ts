@@ -821,6 +821,7 @@ export async function reviewVintedInventory(input: {
   relatedIds: string[];
   ebayItemId?: string;
   sku?: string;
+  manualItem?: { ebayItemId: string; suggestedSku: string; title: string; detail: string };
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const id = input.vintedItemId.trim();
   if (!id) return { ok: false, error: "Falta la publicación de Vinted." };
@@ -971,32 +972,26 @@ export async function reviewVintedInventory(input: {
     return { ok: true };
   }
   if (input.action === "set_ebay_item") {
-    const ebayItemId = validItemId(input.ebayItemId || "");
-    if (!ebayItemId) return { ok: false, error: "El Item ID de eBay debe tener entre 10 y 15 dígitos." };
-    const known = await sql`
-      SELECT sku FROM platform_listings WHERE regexp_replace(COALESCE(ebay_item_id, ''), '\\D', '', 'g') = ${ebayItemId}
-      UNION
-      SELECT sku FROM ebay_listing_watches WHERE regexp_replace(COALESCE(ebay_item_id, ''), '\\D', '', 'g') = ${ebayItemId}
-    `;
-    const skus = [...new Set(known.map((row) => text((row as { sku?: string }).sku).trim()).filter(Boolean))];
-    if (skus.length > 1) return { ok: false, error: "Ese Item ID aparece en varios SKU. No se cambió la relación." };
-    const sku = skus[0] || "";
+    const manual = input.manualItem;
+    if (!manual?.ebayItemId) return { ok: false, error: "No se pudo verificar el Item ID en tu cuenta de eBay." };
+    const candidates = manual.suggestedSku
+      ? [{ sku: manual.suggestedSku, title: manual.title, ebayItemId: manual.ebayItemId, photoUrl: "" }]
+      : [];
     const updated = await sql`
       UPDATE vinted_inventory_links
       SET
-        ebay_item_id = ${ebayItemId},
-        sku = CASE WHEN ${sku} <> '' THEN ${sku} ELSE sku END,
-        suggested_sku = CASE WHEN ${sku} <> '' THEN '' ELSE suggested_sku END,
-        match_status = CASE WHEN ${sku} <> '' THEN 'verified' ELSE match_status END,
-        detail = 'Item ID de eBay guardado manualmente.',
-        verified_at = CASE WHEN ${sku} <> '' THEN NOW() ELSE verified_at END,
+        ebay_item_id = ${manual.ebayItemId},
+        suggested_sku = ${manual.suggestedSku},
+        ebay_candidates = ${JSON.stringify(candidates)},
+        detail = ${manual.detail},
         updated_at = NOW()
       WHERE vinted_item_id = ${id}
+        AND match_status <> 'verified'
+        AND archived_at IS NULL
       RETURNING id
     `;
-    if (!updated.length) return { ok: false, error: "No existe esa publicación." };
-    await recordEvent(id, "set_ebay_item", sku ? `${ebayItemId} ${sku}` : ebayItemId);
-    await refreshInventorySignals();
+    if (!updated.length) return { ok: false, error: "Esa asociación ya está verificada o no existe." };
+    await recordEvent(id, "set_ebay_item", manual.suggestedSku ? `${manual.ebayItemId} ${manual.suggestedSku}` : manual.ebayItemId);
     return { ok: true };
   }
   if (input.action === "withdrawn") {
