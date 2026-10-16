@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { EBAY_COOKIE, accessTokenFromCookie } from "@/lib/ebay/session";
 import { guardApiRequest } from "@/lib/api-guard";
 import { uploadPhotos } from "@/lib/ebay/publish";
+import { ebayPublishBlockedForGuatemala } from "@/lib/markets/client-market";
+import { GUATEMALA_EBAY_BLOCKED } from "@/lib/markets/guatemala";
 
 // Uploads ONE small batch of photos to eBay Picture Services and returns the
 // hosted URLs. The client splits a listing's photos into batches sized well
@@ -23,6 +25,8 @@ interface UploadBody {
   // How many photos of this listing were uploaded in earlier batches — keeps
   // eBay picture names numbered continuously across batches.
   startIndex?: number;
+  market?: string;
+  clientId?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -53,6 +57,9 @@ export async function POST(req: NextRequest) {
       { ok: false, error: `Too many photos in one batch (max ${MAX_PHOTOS_PER_REQUEST}).` },
       { status: 400 }
     );
+  }
+  if (await ebayPublishBlockedForGuatemala(body)) {
+    return NextResponse.json({ ok: false, error: GUATEMALA_EBAY_BLOCKED }, { status: 403 });
   }
 
   let accessToken: string | null;

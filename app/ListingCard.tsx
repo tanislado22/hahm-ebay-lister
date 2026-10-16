@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
-import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
+import { apiPost } from "@/lib/api-client";
+import {
+  formatGuatemalaMoment,
+  formatQuetzales,
+  GUATEMALA_COMP_MESSAGE,
+} from "@/lib/markets/guatemala";
+import type { GuatemalaCompReport, ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
 import { buildStoredZip, vintedPhotoFileName, vintedPhotoZipName } from "@/lib/vinted/photo-zip";
 
@@ -29,7 +35,17 @@ function priceToInput(value: ListingResult["suggested_price"]): string {
   return n === undefined || Number.isNaN(n) ? "" : String(n);
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+function CopyButton({
+  text,
+  label,
+  idle,
+  copiedText = "✓ Copied",
+}: {
+  text: string;
+  label: string;
+  idle?: string;
+  copiedText?: string;
+}) {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
@@ -49,7 +65,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
         }
       }}
     >
-      {copied ? "✓ Copied" : `📋 Copy ${label}`}
+      {copied ? copiedText : idle ?? `📋 Copy ${label}`}
     </button>
   );
 }
@@ -68,6 +84,7 @@ onRemovePhoto: (photoId: string) => void;
 onDelete: (groupId: string) => void;
 onPrepareVinted: (groupId: string, sku: string) => void;
 onMarkVintedPublished: (groupId: string, url: string) => void;
+guatemala?: boolean;
 }
 
 export function ListingCard({
@@ -84,6 +101,7 @@ export function ListingCard({
   onDelete,
   onPrepareVinted,
   onMarkVintedPublished,
+  guatemala = false,
 }: ListingCardProps) {
   const [open, setOpen] = useState(true);
   const listing = group.listing;
@@ -190,7 +208,31 @@ const [soldCompsLoading, setSoldCompsLoading] = useState(false);
 const [soldCompsRequest, setSoldCompsRequest] = useState(0);
 const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
   const [showSoldItems, setShowSoldItems] = useState(false);
+  const [localComps, setLocalComps] = useState<GuatemalaCompReport | null>(
+    group.guatemalaComps ?? null
+  );
   useEffect(() => {
+    if (!guatemala || group.status !== "done") return;
+    if (group.guatemalaComps?.status === "source_not_configured") {
+      setLocalComps(group.guatemalaComps);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await apiPost("/api/markets/guatemala/comps", {});
+        const data = (await response.json()) as GuatemalaCompReport;
+        if (!cancelled && data?.status === "source_not_configured") setLocalComps(data);
+      } catch {
+        if (!cancelled) setLocalComps(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [guatemala, group.status, group.guatemalaComps]);
+  useEffect(() => {
+  if (guatemala) return;
 
   const handleSoldCompsAll = () => {
 
@@ -206,7 +248,7 @@ const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
 
   };
 
-}, []);
+}, [guatemala]);
   const marketMedian =
 
   group.comps?.ok && group.comps.median !== undefined
@@ -226,6 +268,8 @@ const recommendedPrice =
     : marketMedian;
 useEffect(() => {
 
+  if (guatemala) return;
+
   if (soldMedian === null || recommendedPrice === null) return;
 
   onEdit(group.id, {
@@ -234,9 +278,9 @@ useEffect(() => {
 
   });
 
-}, [soldMedian]);
+}, [soldMedian, guatemala]);
 useEffect(() => {
-if (soldCompsRequest === 0) return;
+if (guatemala || soldCompsRequest === 0) return;
 
 
   const titleWords = (listing?.title ?? "").trim().split(/\s+/);
@@ -375,7 +419,7 @@ const keyword = [
 
   };
 
-}, [soldCompsRequest, group.status, listing?.title, listing?.brand, listing?.size]);
+}, [soldCompsRequest, group.status, listing?.title, listing?.brand, listing?.size, guatemala]);
 
   return (
     <article className={`listing-card status-${group.status}`}>
@@ -392,14 +436,23 @@ const keyword = [
           <span className="listing-card-sub">
             {group.status === "writing" && (
               <>
-                <span className="spinner small" aria-hidden="true" /> Writing…
+                <span className="spinner small" aria-hidden="true" />{" "}
+                {guatemala ? "Escribiendo…" : "Writing…"}
               </>
             )}
             {group.status === "done" &&
               (priceMissing ? (
-                <span style={{ color: "var(--color-danger)" }}>⚠️ needs a price</span>
+                <span style={{ color: "var(--color-danger)" }}>
+                  {guatemala ? "⚠️ falta el precio" : "⚠️ needs a price"}
+                </span>
               ) : (
-                <>✅ {formatPrice(listing?.suggested_price)} · ready</>
+                <>
+                  ✅{" "}
+                  {guatemala
+                    ? formatQuetzales(Number(listing?.suggested_price))
+                    : formatPrice(listing?.suggested_price)}{" "}
+                  · {guatemala ? "lista" : "ready"}
+                </>
               ))}
             {group.status === "error" && (
               <span style={{ color: "var(--color-danger)" }}>
@@ -683,9 +736,9 @@ const keyword = [
         <div className="listing-card-body">
           <div className="result-field">
             <label>
-              Title
-              <span className={`count${titleLen > TITLE_LIMIT ? " over" : ""}`}>
-                {titleLen}/{TITLE_LIMIT}
+              {guatemala ? "Título" : "Title"}
+              <span className={`count${titleLen > (guatemala ? 120 : TITLE_LIMIT) ? " over" : ""}`}>
+                {titleLen}/{guatemala ? 120 : TITLE_LIMIT}
               </span>
             </label>
             <input
@@ -695,7 +748,12 @@ const keyword = [
               onChange={(e) => onEdit(group.id, { title: e.target.value })}
             />
             <div className="copy-row">
-              <CopyButton text={listing.title} label="title" />
+              <CopyButton
+                text={listing.title}
+                label="title"
+                idle={guatemala ? "Copiar título" : undefined}
+                copiedText={guatemala ? "✓ Copiado" : undefined}
+              />
             </div>
           </div>
 
@@ -717,10 +775,10 @@ const keyword = [
             </div>
             <div className={`stat editable${priceMissing ? " needs-attention" : ""}`}>
               <label className="k" htmlFor={`price-${group.id}`}>
-                Price
+                {guatemala ? "Precio en quetzales" : "Price"}
               </label>
               <div className="price-input">
-                <span aria-hidden="true">$</span>
+                <span aria-hidden="true">{guatemala ? "Q" : "$"}</span>
                 <input
                   id={`price-${group.id}`}
                   type="number"
@@ -732,11 +790,26 @@ const keyword = [
                     onEdit(group.id, {
                       suggested_price:
                         e.target.value === "" ? "" : Number(e.target.value),
+                      ...(guatemala ? { currency: "GTQ", market: "guatemala" } : {}),
                     })
                   }
                 />
               </div>
-              {group.comps?.ok && group.comps.median !== undefined && (
+              {guatemala && (
+                <div className="comps-line">
+                  <p>{localComps?.message ?? GUATEMALA_COMP_MESSAGE}</p>
+                  <p>Precios anunciados: sin datos.</p>
+                  <p>Ventas comprobadas: sin datos.</p>
+                  <p>
+                    Consultado:{" "}
+                    {formatGuatemalaMoment(
+                      localComps?.queriedAt ?? new Date().toISOString()
+                    )}{" "}
+                    · America/Guatemala
+                  </p>
+                </div>
+              )}
+              {!guatemala && group.comps?.ok && group.comps.median !== undefined && (
                 <span className="comps-line" title={group.comps.basis}>
                   Market: {group.comps.count} similar active listings, $
                   {group.comps.low?.toFixed(0)}–${group.comps.high?.toFixed(0)}
@@ -759,7 +832,7 @@ const keyword = [
                 </span>
               )}
              
-{recommendedPrice !== null && (
+{!guatemala && recommendedPrice !== null && (
 
   <span className="comps-line">
 
@@ -768,7 +841,7 @@ const keyword = [
   </span>
 
 )}
-              {soldCompsLoading && (
+              {!guatemala && soldCompsLoading && (
 
   <span className="comps-line">
 
@@ -778,7 +851,7 @@ const keyword = [
 
 )}
 
-{soldCompsError && (
+{!guatemala && soldCompsError && (
 
   <span className="comps-line">
 
@@ -788,7 +861,7 @@ const keyword = [
 
 )}
 
-{soldComps && !soldCompsLoading && !soldCompsError && (
+{!guatemala && soldComps && !soldCompsLoading && !soldCompsError && (
 
  <>
   <span className="comps-line">
@@ -868,7 +941,7 @@ const keyword = [
             </div>
             <div className="stat editable">
               <label className="k" htmlFor={`cond-${group.id}`}>
-                Condition
+                {guatemala ? "Condición" : "Condition"}
               </label>
               <select
                 id={`cond-${group.id}`}
@@ -884,28 +957,39 @@ const keyword = [
                   )}
                 {CONDITIONS.map((c) => (
                   <option key={c.value} value={c.value}>
-                    {c.label}
+                    {guatemala
+                      ? ({
+                          NEW_WITH_TAGS: "Nueva con etiqueta",
+                          NEW_NO_TAGS: "Nueva sin etiqueta",
+                          EXCELLENT: "Usada · Excelente",
+                          VERY_GOOD: "Usada · Muy buena",
+                          GOOD: "Usada · Buena",
+                          FAIR: "Usada · Regular",
+                        }[c.value] ?? c.label)
+                      : c.label}
                   </option>
                 ))}
               </select>
             </div>
             {listing.brand && (
               <div className="stat">
-                <div className="k">Brand</div>
+                <div className="k">{guatemala ? "Marca" : "Brand"}</div>
                 <div className="v">{listing.brand}</div>
               </div>
             )}
             {(sizeRequired || listing.size) && (
               <div className={`stat editable${sizeMissing ? " needs-attention" : ""}`}>
                 <label className="k" htmlFor={`size-${group.id}`}>
-                  Size
+                  {guatemala ? "Talla" : "Size"}
                 </label>
                 <input
                   id={`size-${group.id}`}
                   type="text"
                   className="size-input"
                   value={listing.size ?? ""}
-                  placeholder={sizeRequired ? "e.g. M, 32x34, 10.5" : "—"}
+                  placeholder={
+                    guatemala ? "por ejemplo M, 32, 10" : sizeRequired ? "e.g. M, 32x34, 10.5" : "—"
+                  }
                   onChange={(e) => onEdit(group.id, { size: e.target.value })}
                 />
               </div>
@@ -914,29 +998,36 @@ const keyword = [
 
           {sizeMissing && (
             <p className="size-warning" role="alert">
-              ⚠️ No size found on the tag. eBay now blocks apparel listings
-              without a standard size — check the photos or measure the item,
-              then fill in Size above before posting.
+              {guatemala
+                ? "No se ve la talla en la etiqueta. Revísala en la foto o mídela, y escríbela arriba."
+                : "⚠️ No size found on the tag. eBay now blocks apparel listings without a standard size — check the photos or measure the item, then fill in Size above before posting."}
             </p>
           )}
 
           {priceMissing && (
             <p className="size-warning" role="alert">
-              ⚠️ No price yet — the analysis couldn&rsquo;t estimate one for
-              this item. Set a price above before posting
-              {group.comps?.ok ? " (see the market check under Price)" : ""}.
+              {guatemala
+                ? "Escribe el precio en quetzales. No hay una comparación local que lo sugiera."
+                : `⚠️ No price yet — the analysis couldn’t estimate one for this item. Set a price above before posting${
+                    group.comps?.ok ? " (see the market check under Price)" : ""
+                  }.`}
             </p>
           )}
 
           <div className="result-field">
-            <label>Description</label>
+            <label>{guatemala ? "Descripción" : "Description"}</label>
             <textarea
               value={listing.description}
               onChange={(e) => onEdit(group.id, { description: e.target.value })}
               rows={8}
             />
             <div className="copy-row">
-              <CopyButton text={listing.description} label="description" />
+              <CopyButton
+                text={listing.description}
+                label="description"
+                idle={guatemala ? "Copiar descripción" : undefined}
+                copiedText={guatemala ? "✓ Copiado" : undefined}
+              />
             </div>
           </div>
 
@@ -955,7 +1046,9 @@ const keyword = [
           )}
 
           {/* eBay posting */}
-          {group.postStatus === "posted" ? (
+          {guatemala ? (
+            <p className="post-hint">Esta prenda no se publica en eBay.</p>
+          ) : group.postStatus === "posted" ? (
             <>
               <p className="post-result ok">
                 ✅ Posted to eBay
@@ -1031,7 +1124,7 @@ const keyword = [
             <p className="post-hint">Connect eBay (top of page) to post this listing.</p>
           )}
 
-          {group.status === "done" && listing && (
+          {!guatemala && group.status === "done" && listing && (
             <div className="post-row">
               <p className="post-result">
                 Vinted:{" "}
@@ -1110,7 +1203,7 @@ const keyword = [
 
 >
 
-  🗑️ Delete
+  {guatemala ? "Eliminar" : "🗑️ Delete"}
 
 </button>
     </article>

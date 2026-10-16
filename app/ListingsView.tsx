@@ -69,6 +69,7 @@ interface ListingsViewProps {
   onPrepareVinted: (groupId: string, sku: string) => void;
   onMarkVintedPublished: (groupId: string, url: string) => void;
   vintedPreparing: boolean;
+  guatemala?: boolean;
   onBack: () => void;
 }
 
@@ -92,6 +93,7 @@ export function ListingsView({
   onPrepareVinted,
   onMarkVintedPublished,
   vintedPreparing,
+  guatemala = false,
   onBack,
 }: ListingsViewProps) {
   const done = groups.filter((g) => g.status === "done").length;
@@ -110,16 +112,21 @@ export function ListingsView({
   return (
     <section className="panel" aria-labelledby="listings-heading">
       <div className="result-head">
-        <h3 id="listings-heading">Your listings</h3>
+        <h3 id="listings-heading">{guatemala ? "Publicaciones" : "Your listings"}</h3>
         <span className="badge">
-          {done}/{groups.length} ready
-          {writing > 0 ? ` · ${writing} writing` : ""}
-          {failed > 0 ? ` · ${failed} failed` : ""}
-          {posted > 0 ? ` · ${posted} posted` : ""}
+          {done}/{groups.length} {guatemala ? "listas" : "ready"}
+          {writing > 0 ? ` · ${writing} ${guatemala ? "escribiendo" : "writing"}` : ""}
+          {failed > 0 ? ` · ${failed} ${guatemala ? "con error" : "failed"}` : ""}
+          {!guatemala && posted > 0 ? ` · ${posted} posted` : ""}
         </span>
       </div>
+      {guatemala ? (
+        <p className="note">
+          El título y la descripción salen en español. El precio se escribe en quetzales. Esta tienda no se publica en eBay.
+        </p>
+      ) : null}
 
-      {ebayConnected && readyToPost > 0 && (
+      {!guatemala && ebayConnected && readyToPost > 0 && (
         <div className="post-all-bar">
           <span>
             {posted > 0
@@ -173,6 +180,7 @@ export function ListingsView({
 
         </div>
       )}
+      {!guatemala && (
       <div className="post-all-bar">
         <span>Prepare items for Vinted. Publishing on Vinted stays manual.</span>
         <button
@@ -190,6 +198,7 @@ export function ListingsView({
           Inventario Vinted
         </a>
       </div>
+      )}
 <button
 
   type="button"
@@ -230,14 +239,16 @@ export function ListingsView({
             onDelete={onDelete}
             onPrepareVinted={onPrepareVinted}
             onMarkVintedPublished={onMarkVintedPublished}
+            guatemala={guatemala}
           />
         ))}
       </div>
 
       <div className="result-actions">
         <button type="button" className="btn btn-ghost" onClick={onBack}>
-          ← Back to items
+          {guatemala ? "← Volver a las prendas" : "← Back to items"}
         </button>
+        {!guatemala && (
         <button
           type="button"
           className="btn btn-ghost"
@@ -298,6 +309,7 @@ export function ListingsView({
         >
           ⬇️ Download spreadsheet (CSV)
         </button>
+        )}
         <button
           type="button"
           className="btn btn-primary"
@@ -310,13 +322,13 @@ export function ListingsView({
             )
           }
         >
-          ⬇️ Download all ({done})
+          {guatemala ? `Descargar textos (${done})` : `⬇️ Download all (${done})`}
         </button>
        
 
       </div>
 
-      {allDone && (
+      {allDone && !guatemala && (
         <p className="footnote" style={{ marginTop: "1.5rem" }}>
           Next phase: post all of these straight to eBay with one click.
         </p>

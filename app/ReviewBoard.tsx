@@ -16,6 +16,7 @@ interface ReviewBoardProps {
   onAddFilesToGroup: (groupId: string, fileList: FileList | null) => void;
   onWriteAll: () => void;
   onBack: () => void;
+  writeLabel?: string;
   onRemovePhoto: (photoId: string) => void;
 }
 
@@ -274,6 +275,7 @@ export function ReviewBoard({
 
   onWriteAll,
   onBack,
+  writeLabel,
 }: ReviewBoardProps) {
   const totalPhotos =
     groups.reduce((n, g) => n + g.photoIds.length, 0) + orphanIds.length;
@@ -425,8 +427,8 @@ export function ReviewBoard({
           onClick={onWriteAll}
           disabled={usableGroups.length === 0}
         >
-          ✍️ Write {usableGroups.length} listing
-          {usableGroups.length === 1 ? "" : "s"}
+          {writeLabel ??
+            `✍️ Write ${usableGroups.length} listing${usableGroups.length === 1 ? "" : "s"}`}
         </button>
       </div>
     </section>

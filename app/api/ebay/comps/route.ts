@@ -5,6 +5,7 @@ import { appToken } from "@/lib/ebay/taxonomy";
 import { searchComps } from "@/lib/ebay/comps";
 import { applyPriceMarkup, priceMarkupPercent } from "@/lib/pricing";
 import type { ListingResult } from "@/lib/types";
+import { requestTargetsGuatemala } from "@/lib/markets/guatemala";
 
 // One Browse-API search; quick.
 export const maxDuration = 30;
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "eBay isn't configured." }, { status: 200 });
   }
 
-  let body: { listing?: ListingResult };
+  let body: { listing?: ListingResult; market?: string };
   try {
     body = await req.json();
   } catch {
@@ -27,6 +28,12 @@ export async function POST(req: NextRequest) {
   }
   if (!body.listing?.title) {
     return NextResponse.json({ ok: false, error: "Missing listing." }, { status: 400 });
+  }
+  if (requestTargetsGuatemala(body)) {
+    return NextResponse.json(
+      { ok: false, error: "Las comparaciones de eBay no se usan para Tienda Guatemala." },
+      { status: 200 }
+    );
   }
 
   try {
