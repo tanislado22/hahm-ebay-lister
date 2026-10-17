@@ -11,6 +11,17 @@ import {
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import { EXISTING_PRUEBA1_TEST_SALE } from "@/lib/markets/guatemala-recorded-test";
 import {
+  GUATEMALA_PURGE_MESSAGES,
+  purgeConfirmText,
+  purgeCounts,
+  samePurgeCounts,
+  type PurgeCorrection,
+  type PurgeCounts,
+  type PurgeGarment,
+  type PurgePhoto,
+  type PurgeSale,
+} from "@/lib/markets/guatemala-purge";
+import {
   GUATEMALA_CORRECTION_MESSAGES,
   saleReasonText,
 } from "@/lib/markets/guatemala-sale-correction";
@@ -1070,4 +1081,209 @@ async function readyPublicCatalogClient(): Promise<string | null> {
   const clientId = await boundGuatemalaClientId();
   if (!clientId || !(await clientIsGuatemala(clientId))) return null;
   return clientId;
+}
+
+function purgeFlag(value: unknown): boolean {
+  return value === true || value === "t" || value === "true";
+}
+
+export async function listGuatemalaPurgePlan(clientId: string): Promise<
+  { ok: true; garments: PurgeGarment[] } | { ok: false; status: 403; error: string }
+> {
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  return { ok: true, garments: await purgeGarmentsFor(clientId, null) };
+}
+
+export async function confirmGuatemalaPurge(input: {
+  clientId: string;
+  itemIds: string[];
+  confirmText: string;
+  expected: PurgeCounts;
+}): Promise<
+  | { ok: true; removed: PurgeGarment[] }
+  | { ok: false; status: 400 | 403 | 404 | 409; error: string; garments?: PurgeGarment[] }
+> {
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const wanted = [...new Set(input.itemIds.map((id) => id.trim()).filter(Boolean))];
+  if (wanted.length === 0) return { ok: false, status: 400, error: GUATEMALA_PURGE_MESSAGES.empty };
+  const garments = await purgeGarmentsFor(input.clientId, wanted);
+  if (garments.length !== wanted.length) {
+    return { ok: false, status: 404, error: GUATEMALA_PURGE_MESSAGES.notFound };
+  }
+  if (input.confirmText !== purgeConfirmText(garments)) {
+    return { ok: false, status: 400, error: GUATEMALA_PURGE_MESSAGES.confirm };
+  }
+  const counts = purgeCounts(garments);
+  if (!samePurgeCounts(counts, input.expected)) {
+    return { ok: false, status: 409, error: GUATEMALA_PURGE_MESSAGES.stale, garments };
+  }
+  const sql = getSql();
+  const removed = await sql`
+    WITH chosen AS (
+      SELECT id
+      FROM guatemala_inventory_items
+      WHERE client_id = ${input.clientId}
+        AND id = ANY(${wanted})
+    ),
+    counts AS (
+      SELECT
+        (SELECT COUNT(*)::int FROM chosen) AS garments,
+        (SELECT COUNT(*)::int FROM guatemala_inventory_photos AS photo WHERE photo.item_id IN (SELECT id FROM chosen)) AS photos,
+        (SELECT COUNT(*)::int FROM guatemala_inventory_sales AS sale WHERE sale.client_id = ${input.clientId} AND sale.item_id IN (SELECT id FROM chosen)) AS sales,
+        (SELECT COUNT(*)::int FROM guatemala_sale_corrections AS correction WHERE correction.client_id = ${input.clientId} AND correction.item_id IN (SELECT id FROM chosen)) AS corrections
+    ),
+    gate AS (
+      SELECT 1
+      FROM counts
+      WHERE garments = ${counts.garments}
+        AND photos = ${counts.photos}
+        AND sales = ${counts.sales}
+        AND corrections = ${counts.corrections}
+    ),
+    removed_corrections AS (
+      DELETE FROM guatemala_sale_corrections AS correction
+      WHERE correction.client_id = ${input.clientId}
+        AND correction.item_id IN (SELECT id FROM chosen)
+        AND EXISTS (SELECT 1 FROM gate)
+      RETURNING correction.id
+    ),
+    removed_sales AS (
+      DELETE FROM guatemala_inventory_sales AS sale
+      WHERE sale.client_id = ${input.clientId}
+        AND sale.item_id IN (SELECT id FROM chosen)
+        AND EXISTS (SELECT 1 FROM gate)
+      RETURNING sale.id
+    ),
+    removed_photos AS (
+      DELETE FROM guatemala_inventory_photos AS photo
+      WHERE photo.item_id IN (SELECT id FROM chosen)
+        AND EXISTS (SELECT 1 FROM gate)
+      RETURNING photo.id
+    ),
+    removed_items AS (
+      DELETE FROM guatemala_inventory_items AS item
+      WHERE item.client_id = ${input.clientId}
+        AND item.id IN (SELECT id FROM chosen)
+        AND EXISTS (SELECT 1 FROM gate)
+      RETURNING item.id
+    )
+    SELECT
+      (SELECT COUNT(*)::int FROM removed_items) AS garments,
+      (SELECT COUNT(*)::int FROM removed_photos) AS photos,
+      (SELECT COUNT(*)::int FROM removed_sales) AS sales,
+      (SELECT COUNT(*)::int FROM removed_corrections) AS corrections
+  `;
+  const deleted = removed[0];
+  if (!deleted || !samePurgeCounts(counts, {
+    garments: Number(deleted.garments ?? 0),
+    photos: Number(deleted.photos ?? 0),
+    sales: Number(deleted.sales ?? 0),
+    corrections: Number(deleted.corrections ?? 0),
+  })) {
+    return {
+      ok: false,
+      status: 409,
+      error: GUATEMALA_PURGE_MESSAGES.stale,
+      garments: await purgeGarmentsFor(input.clientId, wanted),
+    };
+  }
+  return { ok: true, removed: garments };
+}
+
+async function purgeGarmentsFor(clientId: string, itemIds: string[] | null): Promise<PurgeGarment[]> {
+  const sql = getSql();
+  const items = itemIds
+    ? await sql`
+        SELECT id, sku, title, status, price_gtq::text AS price_gtq
+        FROM guatemala_inventory_items
+        WHERE client_id = ${clientId}
+          AND id = ANY(${itemIds})
+        ORDER BY sku
+      `
+    : await sql`
+        SELECT id, sku, title, status, price_gtq::text AS price_gtq
+        FROM guatemala_inventory_items
+        WHERE client_id = ${clientId}
+        ORDER BY sku
+      `;
+  if (items.length === 0) return [];
+  const ids = items.map((item) => String(item.id));
+  const photos = await sql`
+    SELECT id, item_id, position
+    FROM guatemala_inventory_photos
+    WHERE item_id = ANY(${ids})
+    ORDER BY item_id, position
+  `;
+  const sales = await sql`
+    SELECT id, item_id, sku, published_price_gtq::text AS published_price_gtq,
+      charged_price_gtq::text AS charged_price_gtq,
+      current_charged_price_gtq::text AS current_charged_price_gtq,
+      sold_at, is_test, voided_at, sold_by_role, sold_by_username
+    FROM guatemala_inventory_sales
+    WHERE client_id = ${clientId}
+      AND item_id = ANY(${ids})
+    ORDER BY sold_at
+  `;
+  const corrections = await sql`
+    SELECT id, sale_id, item_id, action, previous_charged_price_gtq::text AS previous_charged_price_gtq,
+      new_charged_price_gtq::text AS new_charged_price_gtq, reason, created_at, actor_role
+    FROM guatemala_sale_corrections
+    WHERE client_id = ${clientId}
+      AND item_id = ANY(${ids})
+    ORDER BY created_at
+  `;
+  return items.map((item) => {
+    const itemId = String(item.id);
+    const itemSales: PurgeSale[] = sales
+      .filter((sale) => String(sale.item_id) === itemId)
+      .map((sale) => ({
+        id: String(sale.id),
+        sku: String(sale.sku),
+        publishedPriceGtq: normalizePriceText(sale.published_price_gtq),
+        chargedPriceGtq: normalizePriceText(sale.charged_price_gtq),
+        currentChargedPriceGtq: sale.current_charged_price_gtq
+          ? normalizePriceText(sale.current_charged_price_gtq)
+          : null,
+        soldAt: isoTimestamp(sale.sold_at),
+        isTest: purgeFlag(sale.is_test),
+        voidedAt: sale.voided_at ? isoTimestamp(sale.voided_at) : null,
+        soldByRole: sale.sold_by_role === "encargado" || sale.sold_by_role === "propietario" ? sale.sold_by_role : null,
+        soldByUsername: sale.sold_by_username ? String(sale.sold_by_username) : null,
+      }));
+    const itemPhotos: PurgePhoto[] = photos
+      .filter((photo) => String(photo.item_id) === itemId)
+      .map((photo) => ({ id: String(photo.id), position: Number(photo.position) }));
+    const itemCorrections: PurgeCorrection[] = corrections
+      .filter((correction) => String(correction.item_id) === itemId)
+      .map((correction) => ({
+        id: String(correction.id),
+        saleId: String(correction.sale_id),
+        action: correction.action === "anular" ? "anular" : "corregir",
+        previousChargedPriceGtq: normalizePriceText(correction.previous_charged_price_gtq),
+        newChargedPriceGtq: correction.new_charged_price_gtq
+          ? normalizePriceText(correction.new_charged_price_gtq)
+          : null,
+        reason: String(correction.reason ?? ""),
+        createdAt: isoTimestamp(correction.created_at),
+        actorRole: "propietario",
+      }));
+    return {
+      id: itemId,
+      clientId,
+      sku: String(item.sku),
+      title: String(item.title ?? ""),
+      status: item.status === "vendida" ? "vendida" : "disponible",
+      priceGtq: normalizePriceText(item.price_gtq),
+      suggested: itemSales.some((sale) => sale.isTest),
+      photos: itemPhotos,
+      sales: itemSales,
+      corrections: itemCorrections,
+    };
+  });
 }
