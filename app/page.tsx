@@ -1561,6 +1561,15 @@ const draftAll = async () => {
         Identificador: {selectedClientId}
       </p>
     )}
+    {guatemalaActiveRef.current && selectedClientId && (
+      <a
+        className="btn btn-primary"
+        href={`/guatemala/inventario?clientId=${encodeURIComponent(selectedClientId)}`}
+        style={{ fontSize: "20px", marginTop: "16px", marginLeft: 0 }}
+      >
+        Inventario
+      </a>
+    )}
     {workMode === "client" && (
 <>
   <input
@@ -1980,6 +1989,9 @@ const draftAll = async () => {
           onMarkVintedPublished={(groupId, url) => void markVintedPublished(groupId, url)}
           vintedPreparing={vintedPreparing}
           guatemala={guatemalaActiveRef.current}
+          inventoryClientId={
+            guatemalaActiveRef.current ? selectedClientId ?? undefined : undefined
+          }
           skuNotice={
             guatemalaActiveRef.current
               ? guatemalaDuplicateSkuMessage(usableGroups.map((group) => group.sku))

@@ -71,6 +71,7 @@ interface ListingsViewProps {
   vintedPreparing: boolean;
   guatemala?: boolean;
   skuNotice?: string;
+  inventoryClientId?: string;
   onBack: () => void;
 }
 
@@ -96,6 +97,7 @@ export function ListingsView({
   vintedPreparing,
   guatemala = false,
   skuNotice,
+  inventoryClientId,
   onBack,
 }: ListingsViewProps) {
   const done = groups.filter((g) => g.status === "done").length;
@@ -247,6 +249,7 @@ export function ListingsView({
             onPrepareVinted={onPrepareVinted}
             onMarkVintedPublished={onMarkVintedPublished}
             guatemala={guatemala}
+            inventoryClientId={inventoryClientId}
           />
         ))}
       </div>

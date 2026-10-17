@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
 import { apiPost } from "@/lib/api-client";
 import {
@@ -8,6 +8,7 @@ import {
   formatQuetzales,
   GUATEMALA_COMP_MESSAGE,
 } from "@/lib/markets/guatemala";
+import { GUATEMALA_INVENTORY_MESSAGES } from "@/lib/markets/guatemala-inventory";
 import type { GuatemalaCompReport, ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
 import { buildStoredZip, vintedPhotoFileName, vintedPhotoZipName } from "@/lib/vinted/photo-zip";
@@ -85,6 +86,7 @@ onDelete: (groupId: string) => void;
 onPrepareVinted: (groupId: string, sku: string) => void;
 onMarkVintedPublished: (groupId: string, url: string) => void;
 guatemala?: boolean;
+inventoryClientId?: string;
 }
 
 export function ListingCard({
@@ -102,6 +104,7 @@ export function ListingCard({
   onPrepareVinted,
   onMarkVintedPublished,
   guatemala = false,
+  inventoryClientId,
 }: ListingCardProps) {
   const [open, setOpen] = useState(true);
   const listing = group.listing;
@@ -109,6 +112,10 @@ export function ListingCard({
   const [zoomedPhoto, setZoomedPhoto] = useState<Photo | null>(null);
   const [preparingVintedPhotos, setPreparingVintedPhotos] = useState(false);
   const [vintedPhotoError, setVintedPhotoError] = useState<string | null>(null);
+  const [savingInventory, setSavingInventory] = useState(false);
+  const [inventoryNote, setInventoryNote] = useState("");
+  const [inventoryError, setInventoryError] = useState(false);
+  const savingInventoryRef = useRef(false);
   const cover = photoById(group.photoIds[0]);
 useEffect(() => {
 
@@ -155,6 +162,49 @@ useEffect(() => {
       setVintedPhotoError((error as Error).message || "Could not prepare the photos.");
     } finally {
       setPreparingVintedPhotos(false);
+    }
+  };
+
+  const saveToInventory = async () => {
+    if (!guatemala || !listing || savingInventoryRef.current) return;
+    savingInventoryRef.current = true;
+    setSavingInventory(true);
+    setInventoryNote("");
+    setInventoryError(false);
+    try {
+      const photos = group.photoIds
+        .map((id) => photoById(id))
+        .filter((photo): photo is Photo => Boolean(photo?.data))
+        .map((photo) => ({ mediaType: photo.mediaType, data: photo.data }));
+      const response = await apiPost("/api/markets/guatemala/inventory", {
+        clientId: inventoryClientId,
+        sourceGroupId: group.id,
+        sku: group.sku,
+        title: listing.title,
+        description: listing.description,
+        brand: listing.brand ?? "",
+        size: listing.size ?? "",
+        condition: listing.condition ?? "",
+        price: listing.suggested_price,
+        photos,
+      });
+      const body = (await response.json()) as { ok?: boolean; action?: string; error?: string };
+      if (!response.ok || !body.ok) {
+        setInventoryError(true);
+        setInventoryNote(body.error || "No se pudo guardar la prenda.");
+        return;
+      }
+      setInventoryNote(
+        body.action === "already_saved"
+          ? GUATEMALA_INVENTORY_MESSAGES.already
+          : GUATEMALA_INVENTORY_MESSAGES.saved
+      );
+    } catch {
+      setInventoryError(true);
+      setInventoryNote("No se pudo guardar la prenda.");
+    } finally {
+      savingInventoryRef.current = false;
+      setSavingInventory(false);
     }
   };
 
@@ -1051,7 +1101,26 @@ const keyword = [
 
           {/* eBay posting */}
           {guatemala ? (
-            <p className="post-hint">Esta prenda no se publica en eBay.</p>
+            <>
+              {group.status === "done" && listing ? (
+                <div className="post-row">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={savingInventory}
+                    onClick={() => void saveToInventory()}
+                  >
+                    {savingInventory ? "Guardando…" : "Guardar en inventario"}
+                  </button>
+                  {inventoryNote ? (
+                    <p className={inventoryError ? "post-result err" : "post-result ok"} role="status">
+                      {inventoryNote}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              <p className="post-hint">Esta prenda no se publica en eBay.</p>
+            </>
           ) : group.postStatus === "posted" ? (
             <>
               <p className="post-result ok">
