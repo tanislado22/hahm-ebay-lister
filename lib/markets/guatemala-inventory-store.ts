@@ -3,6 +3,10 @@ import { clientIsGuatemala } from "@/lib/markets/client-market";
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import { EXISTING_PRUEBA1_TEST_SALE } from "@/lib/markets/guatemala-recorded-test";
 import {
+  GUATEMALA_CORRECTION_MESSAGES,
+  saleReasonText,
+} from "@/lib/markets/guatemala-sale-correction";
+import {
   guatemalaSalesRange,
   parseSalesReportPeriod,
   type SalesReportPeriod,
@@ -142,6 +146,39 @@ async function createGuatemalaInventoryTables(): Promise<void> {
   await sql`
     ALTER TABLE guatemala_inventory_sales
     ADD COLUMN IF NOT EXISTS sold_by_username TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS current_charged_price_gtq NUMERIC(12, 2)
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_sale_corrections (
+      id TEXT PRIMARY KEY,
+      sale_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      previous_charged_price_gtq NUMERIC(12, 2) NOT NULL,
+      new_charged_price_gtq NUMERIC(12, 2),
+      reason TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      actor_account_id TEXT,
+      actor_username TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    DROP CONSTRAINT IF EXISTS guatemala_inventory_sales_item_id_key
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS guatemala_inventory_sales_one_active_item
+    ON guatemala_inventory_sales (item_id)
+    WHERE voided_at IS NULL
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS guatemala_schema_flags (
@@ -392,12 +429,12 @@ export async function listGuatemalaInventory(
     ? await sql`
         SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq, item.status,
           photo.id AS photo_id, photo.media_type, photo.data,
-          sale.charged_price_gtq::text AS charged_price_gtq,
+          COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq)::text AS charged_price_gtq,
           sale.published_price_gtq::text AS published_price_gtq,
           sale.is_test AS sale_is_test
         FROM guatemala_inventory_items AS item
         LEFT JOIN guatemala_inventory_sales AS sale
-          ON sale.item_id = item.id AND sale.client_id = item.client_id
+          ON sale.item_id = item.id AND sale.client_id = item.client_id AND sale.voided_at IS NULL
         LEFT JOIN LATERAL (
           SELECT id, media_type, data
           FROM guatemala_inventory_photos
@@ -413,12 +450,12 @@ export async function listGuatemalaInventory(
     : await sql`
         SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq, item.status,
           photo.id AS photo_id, photo.media_type, photo.data,
-          sale.charged_price_gtq::text AS charged_price_gtq,
+          COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq)::text AS charged_price_gtq,
           sale.published_price_gtq::text AS published_price_gtq,
           sale.is_test AS sale_is_test
         FROM guatemala_inventory_items AS item
         LEFT JOIN guatemala_inventory_sales AS sale
-          ON sale.item_id = item.id AND sale.client_id = item.client_id
+          ON sale.item_id = item.id AND sale.client_id = item.client_id AND sale.voided_at IS NULL
         LEFT JOIN LATERAL (
           SELECT id, media_type, data
           FROM guatemala_inventory_photos
@@ -480,23 +517,50 @@ export async function readGuatemalaInventoryItem(
 async function saleFor(clientId: string, itemId: string): Promise<GuatemalaSaleSnapshot | null> {
   const sql = getSql();
   const rows = await sql`
-    SELECT sku, published_price_gtq::text AS published_price_gtq,
-      charged_price_gtq::text AS charged_price_gtq, sold_at, is_test,
-      sold_by_role, sold_by_username
+    SELECT id, sku, published_price_gtq::text AS published_price_gtq,
+      charged_price_gtq::text AS charged_price_gtq,
+      current_charged_price_gtq::text AS current_charged_price_gtq,
+      sold_at, is_test, voided_at, sold_by_role, sold_by_username
     FROM guatemala_inventory_sales
     WHERE item_id = ${itemId} AND client_id = ${clientId}
+    ORDER BY (voided_at IS NULL) DESC, sold_at DESC
     LIMIT 1
   `;
   const row = rows[0];
   if (!row) return null;
+  const corrections = await sql`
+    SELECT id, action, previous_charged_price_gtq::text AS previous_charged_price_gtq,
+      new_charged_price_gtq::text AS new_charged_price_gtq, reason, created_at, actor_role, actor_username
+    FROM guatemala_sale_corrections
+    WHERE item_id = ${itemId} AND client_id = ${clientId}
+    ORDER BY created_at ASC
+  `;
+  const original = normalizePriceText(row.charged_price_gtq);
   return {
+    id: String(row.id),
     sku: String(row.sku),
     publishedPriceGtq: normalizePriceText(row.published_price_gtq),
-    chargedPriceGtq: normalizePriceText(row.charged_price_gtq),
+    originalChargedPriceGtq: original,
+    chargedPriceGtq: row.current_charged_price_gtq
+      ? normalizePriceText(row.current_charged_price_gtq)
+      : original,
     soldAt: isoTimestamp(row.sold_at),
     isTest: row.is_test === true || row.is_test === "t" || row.is_test === "true",
+    voidedAt: row.voided_at ? isoTimestamp(row.voided_at) : null,
     soldByRole: row.sold_by_role === "encargado" || row.sold_by_role === "propietario" ? row.sold_by_role : null,
     soldByUsername: row.sold_by_username ? String(row.sold_by_username) : null,
+    corrections: corrections.map((correction) => ({
+      id: String(correction.id),
+      action: correction.action === "anular" ? "anular" : "corregir",
+      previousChargedPriceGtq: normalizePriceText(correction.previous_charged_price_gtq),
+      newChargedPriceGtq: correction.new_charged_price_gtq
+        ? normalizePriceText(correction.new_charged_price_gtq)
+        : null,
+      reason: String(correction.reason ?? ""),
+      createdAt: isoTimestamp(correction.created_at),
+      actorRole: "propietario" as const,
+      actorUsername: correction.actor_username ? String(correction.actor_username) : null,
+    })),
   };
 }
 
@@ -613,6 +677,168 @@ export async function confirmGuatemalaSale(input: {
   };
 }
 
+export async function correctGuatemalaSale(input: {
+  clientId: string;
+  itemId: string;
+  action: "corregir" | "anular";
+  correctionId: string;
+  reason: unknown;
+  chargedPrice?: unknown;
+  expectedChargedPrice: unknown;
+  actor: SaleActor;
+}): Promise<
+  | { ok: true; available: number; sale: GuatemalaSaleSnapshot }
+  | { ok: false; status: 400 | 403 | 404 | 409; error: string }
+> {
+  if (input.actor.role !== "propietario") {
+    return { ok: false, status: 403, error: GUATEMALA_CORRECTION_MESSAGES.forbidden };
+  }
+  const correctionId = input.correctionId.trim();
+  const reason = saleReasonText(input.reason);
+  if (!correctionId || !reason) {
+    return { ok: false, status: 400, error: GUATEMALA_CORRECTION_MESSAGES.reasonRequired };
+  }
+  const nextPrice = input.action === "corregir" ? quetzalPriceText(input.chargedPrice) : null;
+  if (input.action === "corregir" && !nextPrice) {
+    return { ok: false, status: 400, error: GUATEMALA_SALE_MESSAGES.priceInvalid };
+  }
+  const expected = quetzalPriceText(input.expectedChargedPrice);
+  if (!expected) return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.stale };
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const replay = await replayCorrection(input.clientId, input.itemId, correctionId, input.action);
+  if (replay) return replay;
+  const sql = getSql();
+  let saved: Record<string, unknown> | undefined;
+  try {
+    const rows =
+      input.action === "anular"
+        ? await sql`
+            WITH sale_row AS (
+              SELECT id, item_id, client_id,
+                COALESCE(current_charged_price_gtq, charged_price_gtq) AS effective
+              FROM guatemala_inventory_sales
+              WHERE item_id = ${input.itemId}
+                AND client_id = ${input.clientId}
+                AND voided_at IS NULL
+            ),
+            opened AS (
+              UPDATE guatemala_inventory_items AS item
+              SET status = ${GUATEMALA_INVENTORY_STATUS}
+              FROM sale_row
+              WHERE item.id = sale_row.item_id
+                AND item.client_id = sale_row.client_id
+                AND item.status = ${GUATEMALA_SOLD_STATUS}
+                AND sale_row.effective = ${expected}::numeric
+              RETURNING item.id
+            ),
+            voided AS (
+              UPDATE guatemala_inventory_sales AS sale
+              SET voided_at = NOW()
+              FROM sale_row, opened
+              WHERE sale.id = sale_row.id
+              RETURNING sale.id
+            )
+            INSERT INTO guatemala_sale_corrections (
+              id, sale_id, client_id, item_id, action,
+              previous_charged_price_gtq, new_charged_price_gtq,
+              reason, actor_role, actor_account_id, actor_username
+            )
+            SELECT ${correctionId}, voided.id, ${input.clientId}, ${input.itemId}, 'anular',
+              ${expected}::numeric, NULL, ${reason}, 'propietario', ${input.actor.accountId}, ${input.actor.username}
+            FROM voided
+            RETURNING sale_id
+          `
+        : await sql`
+            WITH sale_row AS (
+              SELECT sale.id, sale.item_id,
+                COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq) AS effective
+              FROM guatemala_inventory_sales AS sale
+              INNER JOIN guatemala_inventory_items AS item
+                ON item.id = sale.item_id AND item.client_id = sale.client_id
+              WHERE sale.item_id = ${input.itemId}
+                AND sale.client_id = ${input.clientId}
+                AND sale.voided_at IS NULL
+                AND item.status = ${GUATEMALA_SOLD_STATUS}
+            ),
+            updated AS (
+              UPDATE guatemala_inventory_sales AS sale
+              SET current_charged_price_gtq = ${nextPrice}::numeric
+              FROM sale_row
+              WHERE sale.id = sale_row.id
+                AND sale_row.effective = ${expected}::numeric
+                AND sale_row.effective <> ${nextPrice}::numeric
+              RETURNING sale.id
+            )
+            INSERT INTO guatemala_sale_corrections (
+              id, sale_id, client_id, item_id, action,
+              previous_charged_price_gtq, new_charged_price_gtq,
+              reason, actor_role, actor_account_id, actor_username
+            )
+            SELECT ${correctionId}, updated.id, ${input.clientId}, ${input.itemId}, 'corregir',
+              ${expected}::numeric, ${nextPrice}::numeric, ${reason}, 'propietario',
+              ${input.actor.accountId}, ${input.actor.username}
+            FROM updated
+            RETURNING sale_id
+          `;
+    saved = rows[0];
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      const raced = await replayCorrection(input.clientId, input.itemId, correctionId, input.action);
+      if (raced) return raced;
+      return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.stale };
+    }
+    throw error;
+  }
+  if (!saved) {
+    const current = await saleFor(input.clientId, input.itemId);
+    if (!current) return { ok: false, status: 404, error: GUATEMALA_CORRECTION_MESSAGES.notFound };
+    if (current.voidedAt) return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.voided };
+    if (input.action === "corregir" && current.chargedPriceGtq === nextPrice) {
+      return { ok: false, status: 400, error: GUATEMALA_CORRECTION_MESSAGES.priceUnchanged };
+    }
+    return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.stale };
+  }
+  const counts = await sql`
+    SELECT COUNT(*)::int AS available
+    FROM guatemala_inventory_items
+    WHERE client_id = ${input.clientId} AND status = ${GUATEMALA_INVENTORY_STATUS}
+  `;
+  const sale = await saleFor(input.clientId, input.itemId);
+  if (!sale) return { ok: false, status: 404, error: GUATEMALA_CORRECTION_MESSAGES.notFound };
+  return { ok: true, available: Number(counts[0]?.available ?? 0), sale };
+}
+
+async function replayCorrection(
+  clientId: string,
+  itemId: string,
+  correctionId: string,
+  action: "corregir" | "anular"
+): Promise<{ ok: true; available: number; sale: GuatemalaSaleSnapshot } | { ok: false; status: 409; error: string } | null> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT sale_id, item_id, client_id, action
+    FROM guatemala_sale_corrections
+    WHERE id = ${correctionId}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  if (String(row.client_id) !== clientId || String(row.item_id) !== itemId || String(row.action) !== action) {
+    return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.stale };
+  }
+  const counts = await sql`
+    SELECT COUNT(*)::int AS available
+    FROM guatemala_inventory_items
+    WHERE client_id = ${clientId} AND status = ${GUATEMALA_INVENTORY_STATUS}
+  `;
+  const sale = await saleFor(clientId, itemId);
+  if (!sale) return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.stale };
+  return { ok: true, available: Number(counts[0]?.available ?? 0), sale };
+}
+
 export interface SalesReportRow {
   itemId: string;
   sku: string;
@@ -665,7 +891,7 @@ export async function listGuatemalaSalesReport(input: {
   const rows = await sql`
     SELECT sale.item_id, sale.sku, item.title,
       sale.published_price_gtq::text AS published_price_gtq,
-      sale.charged_price_gtq::text AS charged_price_gtq,
+      COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq)::text AS charged_price_gtq,
       sale.sold_at, sale.is_test,
       photo.id AS photo_id, photo.media_type, photo.data
     FROM guatemala_inventory_sales AS sale
@@ -681,6 +907,7 @@ export async function listGuatemalaSalesReport(input: {
     WHERE sale.client_id = ${input.clientId}
       AND sale.sold_at >= ${built.range.start}
       AND sale.sold_at < ${built.range.end}
+      AND sale.voided_at IS NULL
       AND (${input.includeTests} OR sale.is_test = FALSE)
     ORDER BY sale.sold_at DESC
   `;

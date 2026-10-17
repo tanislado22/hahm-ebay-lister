@@ -16,14 +16,29 @@ import {
 } from "@/lib/markets/guatemala-inventory";
 import "./inventory.css";
 
+interface SaleCorrectionInfo {
+  id: string;
+  action: "corregir" | "anular";
+  previousChargedPriceGtq: string;
+  newChargedPriceGtq: string | null;
+  reason: string;
+  createdAt: string;
+  actorRole: "propietario";
+  actorUsername: string | null;
+}
+
 interface SaleInfo {
+  id?: string;
   sku: string;
   publishedPriceGtq: string;
   chargedPriceGtq: string;
+  originalChargedPriceGtq?: string;
   soldAt: string;
   isTest?: boolean;
+  voidedAt?: string | null;
   soldByRole?: "propietario" | "encargado" | null;
   soldByUsername?: string | null;
+  corrections?: SaleCorrectionInfo[];
 }
 
 interface ListItem {
@@ -80,6 +95,13 @@ export function InventoryScreen({
   const [saleError, setSaleError] = useState("");
   const [savingSale, setSavingSale] = useState(false);
   const savingSaleRef = useRef(false);
+  const [correctionStep, setCorrectionStep] = useState<"price" | "price-summary" | "void" | "void-summary" | null>(null);
+  const [correctionPrice, setCorrectionPrice] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [correctionError, setCorrectionError] = useState("");
+  const [savingCorrection, setSavingCorrection] = useState(false);
+  const savingCorrectionRef = useRef(false);
+  const correctionIdRef = useRef("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -212,6 +234,71 @@ export function InventoryScreen({
     }
   }
 
+  const correctedPrice = quetzalPriceText(correctionPrice);
+  const reasonText = correctionReason.trim();
+
+  function openCorrection(step: "price-summary" | "void-summary") {
+    correctionIdRef.current = crypto.randomUUID();
+    setCorrectionError("");
+    setCorrectionStep(step);
+  }
+
+  async function submitCorrection(action: "corregir" | "anular") {
+    if (!detail?.sale || savingCorrectionRef.current) return;
+    if (reasonText.length < 3) {
+      setCorrectionError("Escribe el motivo.");
+      return;
+    }
+    savingCorrectionRef.current = true;
+    setSavingCorrection(true);
+    setCorrectionError("");
+    try {
+      const response = await storeRequest(
+        `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}/sale/correction`,
+        {
+          clientId,
+          action,
+          reason: reasonText,
+          correctionId: correctionIdRef.current,
+          expectedChargedPrice: detail.sale.chargedPriceGtq,
+          chargedPrice: action === "corregir" ? correctedPrice : undefined,
+        }
+      );
+      const body = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        available?: number;
+        sale?: SaleInfo;
+      };
+      if (!response.ok || !body.ok || !body.sale) {
+        setCorrectionError(body.error || "No se pudo guardar la corrección.");
+        if (response.status === 409) {
+          const again = await storeRequest(
+            `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}?clientId=${encodeURIComponent(clientId)}`
+          );
+          const fresh = (await again.json()) as { ok?: boolean; item?: DetailItem };
+          if (again.ok && fresh.ok && fresh.item) setDetail(fresh.item);
+        }
+        return;
+      }
+      setAvailable(body.available ?? available);
+      setDetail({
+        ...detail,
+        status: body.sale.voidedAt ? "disponible" : "vendida",
+        chargedPriceGtq: body.sale.voidedAt ? null : body.sale.chargedPriceGtq,
+        sale: body.sale,
+      });
+      setCorrectionStep(null);
+      setCorrectionPrice("");
+      setCorrectionReason("");
+    } catch {
+      setCorrectionError("No se pudo guardar la corrección.");
+    } finally {
+      savingCorrectionRef.current = false;
+      setSavingCorrection(false);
+    }
+  }
+
   return (
     <main className="wrap gt-inventory">
       <header>
@@ -267,6 +354,19 @@ export function InventoryScreen({
                         <dd>Propietario</dd>
                       </div>
                     ) : null}
+                    {detail.sale.originalChargedPriceGtq &&
+                    detail.sale.originalChargedPriceGtq !== detail.sale.chargedPriceGtq ? (
+                      <div>
+                        <dt>Precio cobrado original</dt>
+                        <dd>{formatStoredQuetzales(detail.sale.originalChargedPriceGtq)}</dd>
+                      </div>
+                    ) : null}
+                    {detail.sale.voidedAt ? (
+                      <div>
+                        <dt>Venta anulada</dt>
+                        <dd>{formatGuatemalaMoment(detail.sale.voidedAt)}</dd>
+                      </div>
+                    ) : null}
                   </>
                 ) : null}
                 <div>
@@ -282,6 +382,25 @@ export function InventoryScreen({
                   <dd>{guatemalaConditionLabel(detail.condition) || "—"}</dd>
                 </div>
               </dl>
+              {detail.sale?.corrections && detail.sale.corrections.length > 0 ? (
+                <div className="gt-sale-box">
+                  <h3>Historial</h3>
+                  {detail.sale.corrections.map((correction) => (
+                    <div key={correction.id}>
+                      <p>
+                        {correction.action === "anular" ? "Anulación" : "Corrección"} ·{" "}
+                        {formatGuatemalaMoment(correction.createdAt)} · Propietario
+                      </p>
+                      <p>
+                        {correction.action === "anular"
+                          ? `Antes ${formatStoredQuetzales(correction.previousChargedPriceGtq)}. La venta quedó anulada.`
+                          : `Antes ${formatStoredQuetzales(correction.previousChargedPriceGtq)}. Ahora ${formatStoredQuetzales(correction.newChargedPriceGtq || "")}.`}
+                      </p>
+                      <p>Motivo: {correction.reason}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {detail.description ? <p>{detail.description}</p> : null}
               {detail.status === "disponible" && saleStep === null ? (
                 <button type="button" className="btn btn-primary gt-sale-start" onClick={() => setSaleStep("form")}>
@@ -348,6 +467,160 @@ export function InventoryScreen({
                         setSaleError("");
                       }}
                     >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {!staffMode && detail.status === "vendida" && detail.sale && !detail.sale.voidedAt && correctionStep === null ? (
+                <div className="gt-inventory-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setCorrectionPrice("");
+                      setCorrectionReason("");
+                      setCorrectionError("");
+                      setCorrectionStep("price");
+                    }}
+                  >
+                    Corregir precio cobrado
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setCorrectionReason("");
+                      setCorrectionError("");
+                      setCorrectionStep("void");
+                    }}
+                  >
+                    Anular venta
+                  </button>
+                </div>
+              ) : null}
+              {!staffMode && correctionStep === "price" ? (
+                <form
+                  className="gt-sale-box"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (!correctedPrice) {
+                      setCorrectionError("Escribe un precio cobrado mayor que cero.");
+                      return;
+                    }
+                    if (correctedPrice === detail.sale?.chargedPriceGtq) {
+                      setCorrectionError("El precio cobrado no cambió.");
+                      return;
+                    }
+                    if (reasonText.length < 3) {
+                      setCorrectionError("Escribe el motivo.");
+                      return;
+                    }
+                    openCorrection("price-summary");
+                  }}
+                >
+                  <h3>Corregir precio cobrado</h3>
+                  <p>Precio cobrado actual {formatStoredQuetzales(detail.sale?.chargedPriceGtq || "")}</p>
+                  <label htmlFor="corrected-price">Nuevo precio cobrado</label>
+                  <div className="gt-sale-price">
+                    <span aria-hidden="true">Q</span>
+                    <input
+                      id="corrected-price"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      value={correctionPrice}
+                      onChange={(event) => setCorrectionPrice(event.target.value)}
+                    />
+                  </div>
+                  <label htmlFor="correction-reason">Motivo</label>
+                  <input
+                    id="correction-reason"
+                    type="text"
+                    value={correctionReason}
+                    onChange={(event) => setCorrectionReason(event.target.value)}
+                  />
+                  {correctionError ? <p className="note note-error" role="alert">{correctionError}</p> : null}
+                  <div className="gt-inventory-actions">
+                    <button type="submit" className="btn btn-primary">Continuar</button>
+                    <button type="button" className="btn btn-ghost" onClick={() => setCorrectionStep(null)}>
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+              {!staffMode && correctionStep === "price-summary" && correctedPrice ? (
+                <div className="gt-sale-box">
+                  <h3>Resumen de la corrección</h3>
+                  <p>SKU {detail.sku}</p>
+                  <p>Precio cobrado anterior {formatStoredQuetzales(detail.sale?.chargedPriceGtq || "")}</p>
+                  <p>Precio cobrado nuevo {formatStoredQuetzales(correctedPrice)}</p>
+                  <p>Motivo: {reasonText}</p>
+                  <p>Quién registró la venta no cambia.</p>
+                  {correctionError ? <p className="note note-error" role="alert">{correctionError}</p> : null}
+                  <div className="gt-inventory-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={savingCorrection}
+                      onClick={() => void submitCorrection("corregir")}
+                    >
+                      {savingCorrection ? "Guardando…" : "Confirmar corrección"}
+                    </button>
+                    <button type="button" className="btn btn-ghost" disabled={savingCorrection} onClick={() => setCorrectionStep(null)}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {!staffMode && correctionStep === "void" ? (
+                <form
+                  className="gt-sale-box"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (reasonText.length < 3) {
+                      setCorrectionError("Escribe el motivo.");
+                      return;
+                    }
+                    openCorrection("void-summary");
+                  }}
+                >
+                  <h3>Anular venta</h3>
+                  <p>La prenda volverá a disponibles. La venta original se conserva.</p>
+                  <label htmlFor="void-reason">Motivo</label>
+                  <input
+                    id="void-reason"
+                    type="text"
+                    value={correctionReason}
+                    onChange={(event) => setCorrectionReason(event.target.value)}
+                  />
+                  {correctionError ? <p className="note note-error" role="alert">{correctionError}</p> : null}
+                  <div className="gt-inventory-actions">
+                    <button type="submit" className="btn btn-primary">Continuar</button>
+                    <button type="button" className="btn btn-ghost" onClick={() => setCorrectionStep(null)}>
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+              {!staffMode && correctionStep === "void-summary" ? (
+                <div className="gt-sale-box">
+                  <h3>Resumen de la anulación</h3>
+                  <p>SKU {detail.sku}</p>
+                  <p>Precio cobrado {formatStoredQuetzales(detail.sale?.chargedPriceGtq || "")}</p>
+                  <p>Motivo: {reasonText}</p>
+                  <p>La prenda quedará disponible. Quién registró la venta no cambia.</p>
+                  {correctionError ? <p className="note note-error" role="alert">{correctionError}</p> : null}
+                  <div className="gt-inventory-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={savingCorrection}
+                      onClick={() => void submitCorrection("anular")}
+                    >
+                      {savingCorrection ? "Guardando…" : "Confirmar anulación"}
+                    </button>
+                    <button type="button" className="btn btn-ghost" disabled={savingCorrection} onClick={() => setCorrectionStep(null)}>
                       Cancelar
                     </button>
                   </div>

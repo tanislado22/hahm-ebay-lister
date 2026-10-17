@@ -25,6 +25,7 @@ export interface ReportSale {
   chargedPriceGtq: string;
   soldAt: string;
   isTest: boolean;
+  voided?: boolean;
 }
 
 const WEEKDAY_FROM_MONDAY: Record<string, number> = {
@@ -176,7 +177,7 @@ export function summarizeChargedSales(
   sales: ReportSale[],
   includeTests: boolean
 ): { count: number; totalChargedGtq: string; rows: ReportSale[] } {
-  const rows = sales.filter((sale) => includeTests || !sale.isTest);
+  const rows = sales.filter((sale) => !sale.voided && (includeTests || !sale.isTest));
   const cents = rows.reduce((sum, sale) => sum + priceCents(sale.chargedPriceGtq), 0);
   return { count: rows.length, totalChargedGtq: centsToQuetzales(cents), rows };
 }

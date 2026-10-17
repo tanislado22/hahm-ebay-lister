@@ -55,14 +55,29 @@ export interface PreparedInventoryItem {
   photos: InventoryPhoto[];
 }
 
+export interface SaleCorrectionView {
+  id: string;
+  action: "corregir" | "anular";
+  previousChargedPriceGtq: string;
+  newChargedPriceGtq: string | null;
+  reason: string;
+  createdAt: string;
+  actorRole: "propietario";
+  actorUsername: string | null;
+}
+
 export interface GuatemalaSaleSnapshot {
+  id?: string;
   sku: string;
   publishedPriceGtq: string;
   chargedPriceGtq: string;
+  originalChargedPriceGtq?: string;
   soldAt: string;
   isTest?: boolean;
+  voidedAt?: string | null;
   soldByRole?: "propietario" | "encargado" | null;
   soldByUsername?: string | null;
+  corrections?: SaleCorrectionView[];
 }
 
 export interface StoredInventoryItem extends PreparedInventoryItem {
@@ -261,6 +276,7 @@ export interface RecordedSale {
   soldByRole?: SaleActor["role"] | null;
   soldByAccountId?: string | null;
   soldByUsername?: string | null;
+  voidedAt?: string | null;
 }
 
 export interface SaleBook {
@@ -306,7 +322,7 @@ export function applyGuatemalaSale(
   }
   const alreadySold =
     item.status !== GUATEMALA_INVENTORY_STATUS ||
-    book.sales.some((sale) => sale.itemId === item.id);
+    book.sales.some((sale) => sale.itemId === item.id && !sale.voidedAt);
   if (alreadySold) {
     return {
       book,
