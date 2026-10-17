@@ -11,6 +11,8 @@ import { toImageBlock, type ImageBlock } from "@/lib/images";
 import { optimizeTitle } from "@/lib/titleOptimizer";
 import { applyPriceMarkup, priceMarkupPercent } from "@/lib/pricing";
 import { resolveModel } from "@/lib/models";
+import { isGuatemalaMarket, prepareGuatemalaListing } from "@/lib/markets/guatemala";
+import { buildGuatemalaAnalysisPrompt } from "@/lib/markets/guatemala-prompt";
 import type { AnalyzeRequestBody, ListingResult } from "@/lib/types";
 
 // Analysis takes 20-40s for a multi-photo item on a good day — and far longer
@@ -140,7 +142,10 @@ export async function POST(req: NextRequest) {
   try {
     const deadline = Date.now() + ANALYZE_TIME_BUDGET_MS;
     const profile = await routeProfile(client, imageBlocks, body.profile, routerModel, deadline);
-    const systemPrompt = buildProfiledAnalysisPrompt(profile);
+    const guatemala = isGuatemalaMarket(body.market);
+    const systemPrompt = guatemala
+      ? buildGuatemalaAnalysisPrompt(profile)
+      : buildProfiledAnalysisPrompt(profile);
 
     // Retry up to 3 times, mirroring the Python analyze_photos() loop — but
     // never start an attempt the time budget can't cover.
@@ -172,7 +177,9 @@ export async function POST(req: NextRequest) {
                   ...imageBlocks,
                   {
                     type: "text",
-                    text: "Analyze these photos and return the listing JSON now.",
+                    text: guatemala
+                      ? "Analiza estas fotos y devuelve el JSON ahora. El título y la descripción van en español. No incluyas un precio."
+                      : "Analyze these photos and return the listing JSON now.",
                   },
                 ],
               },
@@ -182,6 +189,9 @@ export async function POST(req: NextRequest) {
         );
         const listing = parseModelJson<ListingResult>(firstText(resp));
         listing.item_profile = profile;
+        if (guatemala) {
+          return NextResponse.json({ ok: true, listing: prepareGuatemalaListing(listing) });
+        }
         // Deterministic title cleanup happens HERE, before the seller reviews —
         // the title on the card is exactly the title that publishes.
         listing.title = optimizeTitle(listing);

@@ -7,6 +7,8 @@ import { skuForVintedPrepare } from "@/lib/sku";
 import { buildReadySnapshot } from "@/lib/vinted/snapshot";
 import { photosForGroupId, replaceVintedReadySnapshot } from "@/lib/vinted/snapshot-store";
 import type { ListingResult } from "@/lib/types";
+import { clientIsGuatemala } from "@/lib/markets/client-market";
+import { requestTargetsGuatemala } from "@/lib/markets/guatemala";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +36,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Select a client before preparing Vinted." }, { status: 400 });
   }
   const items = Array.isArray(body.items) ? body.items : [];
+  if (
+    (await clientIsGuatemala(body.clientId)) ||
+    items.some((item) => requestTargetsGuatemala({ listing: item.listing }))
+  ) {
+    return NextResponse.json(
+      { ok: false, error: "Tienda Guatemala no se prepara para Vinted ni se publica en eBay." },
+      { status: 403 }
+    );
+  }
   if (items.length === 0) {
     return NextResponse.json({ ok: false, error: "No items to prepare." }, { status: 400 });
   }

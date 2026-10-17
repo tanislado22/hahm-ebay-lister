@@ -21,6 +21,8 @@ export interface ListingResult {
   key_features?: string[];
   item_specifics?: Record<string, string>;
   item_profile?: string;
+  market?: string;
+  currency?: string;
 }
 
 export interface AnalyzeRequestBody {
@@ -30,6 +32,19 @@ export interface AnalyzeRequestBody {
   // Optional model overrides; server falls back to its defaults when omitted.
   analysisModel?: string;
   routerModel?: string;
+  market?: string;
+}
+
+export interface GuatemalaCompReport {
+  ok: true;
+  status: "source_not_configured";
+  currency: "GTQ";
+  symbol: "Q";
+  timezone: "America/Guatemala";
+  queriedAt: string;
+  listed: [];
+  sold: [];
+  message: string;
 }
 
 export interface AnalyzeResponse {
@@ -88,6 +103,8 @@ export interface ItemGroup {
   error?: string;
   // Market price check (fetched right after the listing is written)
   comps?: CompsSummary;
+  // Guatemala local comparisons. Empty until a real source is connected.
+  guatemalaComps?: GuatemalaCompReport;
   // eBay posting state (Phase 2)
   postStatus?: PostStatus;
   listingId?: string;

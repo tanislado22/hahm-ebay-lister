@@ -10,6 +10,8 @@ import {
 import { guardApiRequest } from "@/lib/api-guard";
 import { fetchAccountSetup, publishListing } from "@/lib/ebay/publish";
 import type { PublishInput } from "@/lib/ebay/publish";
+import { ebayPublishBlockedForGuatemala } from "@/lib/markets/client-market";
+import { GUATEMALA_EBAY_BLOCKED } from "@/lib/markets/guatemala";
 
 // Photo upload + several eBay calls + recovery loops — give it room.
 // (Uploads now run in parallel, but a 12-photo item with recovery retries can
@@ -34,6 +36,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { success: false, error: "Missing SKU, listing, or photos." },
       { status: 400 }
+    );
+  }
+
+  if (await ebayPublishBlockedForGuatemala(body)) {
+    return NextResponse.json(
+      { success: false, error: GUATEMALA_EBAY_BLOCKED },
+      { status: 403 }
     );
   }
 

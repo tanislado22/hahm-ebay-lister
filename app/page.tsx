@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { accessHeaders, apiPost } from "@/lib/api-client";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { resizeImage } from "@/lib/resize";
+import { exactGuatemalaSku, guatemalaDuplicateSkuMessage } from "@/lib/markets/guatemala";
 import { buildSku, skuForVintedPrepare } from "@/lib/sku";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
@@ -101,7 +102,9 @@ export default function Home() {
   const [vintedPreparing, setVintedPreparing] = useState(false);
   const [workMode, setWorkMode] = useState<"store" | "client">("store");
   const [clientName, setClientName] = useState("");
-  const [clients, setClients] = useState<{ id: string; name: string; active: boolean }[]>([]);
+  const [clients, setClients] = useState<
+    { id: string; name: string; active: boolean; market?: string | null }[]
+  >([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const groupInputRef = useRef<HTMLInputElement>(null);
@@ -132,17 +135,24 @@ const saveClient = () => {
 };
 
   const clientsLoadedRef = useRef(false);
+  const [clientsHydrated, setClientsHydrated] = useState(false);
+  const skipClientSaveRef = useRef(false);
+  const guatemalaActiveRef = useRef(false);
+  const selectedClientIdRef = useRef<string | null>(null);
 const selectedClientSaveReadyRef = useRef(false);
   const workModeSaveReadyRef = useRef(false);
   useEffect(() => {
 
     const savedClients = localStorage.getItem("savedClients");
+    let parsedClients: { id: string; name: string; active: boolean; market?: string | null }[] | null = null;
 
     if (savedClients) {
 
       try {
 
-        setClients(JSON.parse(savedClients));
+        const parsed = JSON.parse(savedClients);
+
+        if (Array.isArray(parsed) && parsed.length > 0) parsedClients = parsed;
 
       } catch {
 
@@ -151,6 +161,38 @@ const selectedClientSaveReadyRef = useRef(false);
       }
 
     }
+
+    if (parsedClients) {
+
+      setClients(parsedClients);
+
+      setClientsHydrated(true);
+
+    } else {
+
+      void fetch("/api/clients", { cache: "no-store" })
+
+        .then(async (response) => {
+
+          if (response.ok) {
+
+            const data = (await response.json()) as {
+              clients?: { id: string; name: string; active: boolean; market?: string | null }[];
+            };
+
+            if (Array.isArray(data.clients)) {
+              skipClientSaveRef.current = true;
+              setClients(data.clients);
+            }
+
+          }
+
+        })
+
+        .finally(() => setClientsHydrated(true));
+
+    }
+
     const savedSelectedClientId = localStorage.getItem("selectedClientId");
 
 if (savedSelectedClientId) {
@@ -171,9 +213,16 @@ if (savedWorkMode === "store" || savedWorkMode === "client") {
 
  useEffect(() => {
 
-  if (!clientsLoadedRef.current) return;
+  if (!clientsHydrated) return;
+
+  if (clients.length === 0) return;
 
   localStorage.setItem("savedClients", JSON.stringify(clients));
+
+  if (skipClientSaveRef.current) {
+    skipClientSaveRef.current = false;
+    return;
+  }
 
   const saveClientsToDatabase = async () => {
 
@@ -197,6 +246,38 @@ if (savedWorkMode === "store" || savedWorkMode === "client") {
 
         console.error("Failed to save clients to database");
 
+      } else {
+
+        const saved = (await response.json()) as {
+          clients?: { id?: string; market?: string | null }[];
+        };
+
+        if (Array.isArray(saved.clients)) {
+
+          setClients((prev) => {
+
+            let changed = false;
+
+            const next = prev.map((client) => {
+
+              const row = saved.clients?.find((item) => item.id === client.id);
+
+              const market = row?.market ?? null;
+
+              if ((client.market ?? null) === market) return client;
+
+              changed = true;
+
+              return { ...client, market };
+
+            });
+
+            return changed ? next : prev;
+
+          });
+
+        }
+
       }
 
     } catch (error) {
@@ -209,7 +290,7 @@ if (savedWorkMode === "store" || savedWorkMode === "client") {
 
   saveClientsToDatabase();
 
-}, [clients]);
+}, [clients, clientsHydrated]);
   useEffect(() => {
 if (!selectedClientSaveReadyRef.current) {
 
@@ -323,10 +404,12 @@ if (!selectedClientSaveReadyRef.current) {
           if (!data?.group) continue;
 
           if (Array.isArray(data.group.photoIds) && data.group.photoIds.length > 0) {
-
-  restoredGroups.push(data.group as ItemGroup);
-
-}
+            const restored = data.group as ItemGroup;
+            if (guatemalaActiveRef.current) {
+              restored.sku = exactGuatemalaSku(restored.sku);
+            }
+            restoredGroups.push(restored);
+          }
 
           if (Array.isArray(data.photos)) {
 
@@ -433,6 +516,11 @@ setStep(
   const photoById = useCallback((id: string) => photoMap.get(id), [photoMap]);
 
   // Latest groups, readable inside async workers without stale closures.
+  selectedClientIdRef.current = selectedClientId;
+  guatemalaActiveRef.current =
+    workMode === "client" &&
+    clients.some((client) => client.id === selectedClientId && client.market === "guatemala");
+
   const groupsRef = useRef(groups);
   useEffect(() => {
     groupsRef.current = groups;
@@ -485,7 +573,9 @@ setStep(
 
                 data: {
 
-                  group,
+                  group: guatemalaActiveRef.current
+                    ? { ...group, sku: exactGuatemalaSku(group.sku) }
+                    : group,
 
                   photos: groupPhotos,
 
@@ -670,9 +760,11 @@ setManualGroups((prev) => [
     setSorting(true);
     setError(null);
     try {
+      const guatemala = guatemalaActiveRef.current;
       // Continue bin lettering after any SKUs already on eBay for this bin.
+      // Tienda Guatemala keeps the typed SKU and does not continue lettering.
       let skuOffset = 0;
-      if (binPrefix.trim()) {
+      if (!guatemala && binPrefix.trim()) {
         try {
           const r = await apiPost("/api/ebay/next-sku", { prefix: binPrefix.trim() });
           const d = (await readJson(r)) as { ok?: boolean; nextIndex?: number };
@@ -694,7 +786,7 @@ setManualGroups((prev) => [
 
       id: newId(),
 
-      sku: buildSku(binPrefix, skuOffset + i),
+      sku: guatemala ? exactGuatemalaSku(binPrefix) : buildSku(binPrefix, skuOffset + i),
 
 
 
@@ -801,7 +893,7 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
 
       const nextGroups: ItemGroup[] = merged.map((g, i) => ({
         id: newId(),
-     sku: buildSku(binPrefix, skuOffset + i),
+     sku: guatemala ? exactGuatemalaSku(binPrefix) : buildSku(binPrefix, skuOffset + i),
         name: g.name,
         clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
         photoIds: g.photoIds,
@@ -974,7 +1066,7 @@ const deleteAll = async () => {
       ...prev,
       {
         id: newId(),
-        sku: binPrefix.trim(),
+        sku: guatemalaActiveRef.current ? exactGuatemalaSku(binPrefix) : binPrefix.trim(),
         name: `new-item-${prev.length + 1}`,
         photoIds: [],
         status: "idle",
@@ -997,23 +1089,47 @@ const deleteAll = async () => {
         )
       );
       try {
+        const guatemala = guatemalaActiveRef.current;
         const res = await apiPost("/api/analyze", {
           profile: "auto",
           images: imgs,
           analysisModel: getAnalysisModel() ?? undefined,
           routerModel: getSortModel() ?? undefined,
+          ...(guatemala ? { market: "guatemala" } : {}),
         });
         const data = (await readJson(res)) as AnalyzeResponse;
         if (!data.ok || !data.listing) {
           throw new Error(data.error || "Could not write this listing.");
         }
+        const listing = guatemala
+          ? { ...data.listing, market: "guatemala", currency: "GTQ", suggested_price: undefined }
+          : data.listing;
+        let guatemalaComps = undefined;
+        if (guatemala) {
+          try {
+            const compsRes = await apiPost("/api/markets/guatemala/comps", {
+              clientId: selectedClientIdRef.current,
+            });
+            const compsData = (await readJson(compsRes)) as ItemGroup["guatemalaComps"];
+            if (compsData?.status === "source_not_configured") guatemalaComps = compsData;
+          } catch {
+            /* the card asks again and still shows that no source is configured */
+          }
+        }
         setGroups((prev) =>
           prev.map((g) =>
             g.id === groupId
-              ? { ...g, status: "done", listing: data.listing }
+              ? {
+                  ...g,
+                  status: "done",
+                  listing,
+                  guatemalaComps,
+                  comps: guatemala ? undefined : g.comps,
+                }
               : g
           )
         );
+        if (guatemala) return;
         // Market price check — advisory and best-effort, so it runs in the
         // background and silently stays hidden if it can't answer.
         void (async () => {
@@ -1066,6 +1182,7 @@ const deleteAll = async () => {
 
   const postGroup = useCallback(
     async (groupId: string) => {
+      if (guatemalaActiveRef.current) return;
       const group = groupsRef.current.find((g) => g.id === groupId);
       if (!group || !group.listing) return;
       const images = group.photoIds
@@ -1189,6 +1306,8 @@ const deleteAll = async () => {
   );
 const draftGroup = async (groupId: string) => {
 
+  if (guatemalaActiveRef.current) return;
+
   const group = groupsRef.current.find((g) => g.id === groupId);
 
   if (!group || !group.listing) return;
@@ -1290,6 +1409,7 @@ const draftAll = async () => {
 
 };
   const prepareVintedGroups = async (groupIds: string[], selectedSku?: string) => {
+    if (guatemalaActiveRef.current) return;
     const selected = groupIds
       .map((id) => groupsRef.current.find((group) => group.id === id))
       .filter((group): group is ItemGroup => Boolean(group?.listing && group.vintedStatus !== "published"))
@@ -1435,6 +1555,33 @@ const draftAll = async () => {
 
 }}>Client Job</button>
 <p style={{ fontSize: "20px", marginTop: "16px" }}>Selected mode: {workMode === "store" ? "My Store" : "Client Job"}</p>
+    {guatemalaActiveRef.current && selectedClientId && (
+      <p className="note" style={{ marginTop: "16px" }}>
+        Tienda Guatemala · mercado Guatemala · español · moneda GTQ · símbolo Q · zona horaria America/Guatemala.
+        Identificador: {selectedClientId}
+      </p>
+    )}
+    {guatemalaActiveRef.current && selectedClientId && (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: "16px" }}>
+        <a
+          className="btn btn-primary"
+          href={`/guatemala/inventario?clientId=${encodeURIComponent(selectedClientId)}`}
+          style={{ fontSize: "20px", marginLeft: 0 }}
+        >
+          Inventario
+        </a>
+        <a
+          className="btn btn-primary"
+          href={`/guatemala/reportes?clientId=${encodeURIComponent(selectedClientId)}`}
+          style={{ fontSize: "20px", marginLeft: 0 }}
+        >
+          Reportes de ventas
+        </a>
+        <a className="btn btn-primary" href="/guatemala/acceso" style={{ fontSize: "20px", marginLeft: 0 }}>
+          Acceso del encargado
+        </a>
+      </div>
+    )}
     {workMode === "client" && (
 <>
   <input
@@ -1666,24 +1813,32 @@ const draftAll = async () => {
 
             <div className="field bin-field">
               <label htmlFor="bin">
-                Bin / SKU code{" "}
-                <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
-                  (where these items are stored)
-                </span>
+                {guatemalaActiveRef.current ? (
+                  "SKU"
+                ) : (
+                  <>
+                    Bin / SKU code{" "}
+                    <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                      (where these items are stored)
+                    </span>
+                  </>
+                )}
               </label>
               <input
                 id="bin"
                 type="text"
-                placeholder="e.g. K75"
+                inputMode="text"
+                placeholder={guatemalaActiveRef.current ? "por ejemplo 12.50.A" : "e.g. K75"}
                 value={binPrefix}
                 onChange={(e) => setBinPrefix(e.target.value)}
-                autoCapitalize="characters"
+                autoCapitalize={guatemalaActiveRef.current ? "off" : "characters"}
+                autoCorrect={guatemalaActiveRef.current ? "off" : undefined}
+                spellCheck={guatemalaActiveRef.current ? false : undefined}
               />
               <span className="field-hint">
-                Each item gets {binPrefix ? `${binPrefix.trim()}-A, ${binPrefix.trim()}-B` : "A, B, C"}
-                … in order, so you can find it in the bin later. If this bin
-                already has listings on eBay, lettering continues where it left
-                off. You can edit any SKU after sorting.
+                {guatemalaActiveRef.current
+                  ? "Cada prenda recibe este SKU tal como lo escribes, con puntos y letras. Si varias prendas quedan con el mismo SKU, cambia uno de ellos."
+                  : `Each item gets ${binPrefix ? `${binPrefix.trim()}-A, ${binPrefix.trim()}-B` : "A, B, C"} … in order, so you can find it in the bin later. If this bin already has listings on eBay, lettering continues where it left off. You can edit any SKU after sorting.`}
               </span>
             </div>
 
@@ -1809,6 +1964,17 @@ const draftAll = async () => {
           onAddFilesToGroup={addFilesToGroup}
           onWriteAll={writeAll}
           onBack={() => setStep("upload")}
+          writeLabel={
+            guatemalaActiveRef.current
+              ? `Escribir título y descripción (${usableGroups.length})`
+              : undefined
+          }
+          skuNotice={
+            guatemalaActiveRef.current
+              ? guatemalaDuplicateSkuMessage(groups.map((group) => group.sku))
+              : undefined
+          }
+          exactSku={guatemalaActiveRef.current}
         />
       )}
 
@@ -1835,6 +2001,15 @@ const draftAll = async () => {
           onPrepareVinted={(groupId, sku) => void prepareVintedGroups([groupId], sku)}
           onMarkVintedPublished={(groupId, url) => void markVintedPublished(groupId, url)}
           vintedPreparing={vintedPreparing}
+          guatemala={guatemalaActiveRef.current}
+          inventoryClientId={
+            guatemalaActiveRef.current ? selectedClientId ?? undefined : undefined
+          }
+          skuNotice={
+            guatemalaActiveRef.current
+              ? guatemalaDuplicateSkuMessage(usableGroups.map((group) => group.sku))
+              : undefined
+          }
           onBack={() => setStep("review")}
         />
       )}

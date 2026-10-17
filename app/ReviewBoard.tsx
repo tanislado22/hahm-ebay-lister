@@ -16,6 +16,9 @@ interface ReviewBoardProps {
   onAddFilesToGroup: (groupId: string, fileList: FileList | null) => void;
   onWriteAll: () => void;
   onBack: () => void;
+  writeLabel?: string;
+  skuNotice?: string;
+  exactSku?: boolean;
   onRemovePhoto: (photoId: string) => void;
 }
 
@@ -274,6 +277,9 @@ export function ReviewBoard({
 
   onWriteAll,
   onBack,
+  writeLabel,
+  skuNotice,
+  exactSku = false,
 }: ReviewBoardProps) {
   const totalPhotos =
     groups.reduce((n, g) => n + g.photoIds.length, 0) + orphanIds.length;
@@ -292,6 +298,11 @@ export function ReviewBoard({
         (the first photo is the eBay cover), or use the menu under any photo to
         move it to another item. Then write all the listings at once.
       </p>
+      {skuNotice ? (
+        <p className="note" role="alert">
+          {skuNotice}
+        </p>
+      ) : null}
 
       <div className="board">
         {groups.map((group) => (
@@ -303,6 +314,14 @@ export function ReviewBoard({
                 value={group.sku}
                 aria-label="Item SKU / bin code"
                 placeholder="SKU"
+                {...(exactSku
+                  ? {
+                      inputMode: "text" as const,
+                      autoCapitalize: "off" as const,
+                      autoCorrect: "off" as const,
+                      spellCheck: false,
+                    }
+                  : {})}
                 onChange={(e) => onRenameSku(group.id, e.target.value)}
               />
               <input
@@ -425,8 +444,8 @@ export function ReviewBoard({
           onClick={onWriteAll}
           disabled={usableGroups.length === 0}
         >
-          ✍️ Write {usableGroups.length} listing
-          {usableGroups.length === 1 ? "" : "s"}
+          {writeLabel ??
+            `✍️ Write ${usableGroups.length} listing${usableGroups.length === 1 ? "" : "s"}`}
         </button>
       </div>
     </section>

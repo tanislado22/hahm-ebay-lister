@@ -11,6 +11,8 @@ import {
 } from "@/lib/ebay/client-connections";
 
 import { guardApiRequest } from "@/lib/api-guard";
+import { ebayPublishBlockedForGuatemala } from "@/lib/markets/client-market";
+import { GUATEMALA_EBAY_BLOCKED } from "@/lib/markets/guatemala";
 import {
 
   fetchAccountSetup,
@@ -487,6 +489,18 @@ export async function POST(req: NextRequest) {
         },
 
         { status: 400 }
+
+      );
+
+    }
+
+    if (await ebayPublishBlockedForGuatemala(body)) {
+
+      return NextResponse.json(
+
+        { success: false, error: GUATEMALA_EBAY_BLOCKED },
+
+        { status: 403 }
 
       );
 

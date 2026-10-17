@@ -1,0 +1,1073 @@
+import { getSql } from "@/lib/db";
+import { boundGuatemalaClientId, clientIsGuatemala } from "@/lib/markets/client-market";
+import {
+  GUATEMALA_CATALOG_MESSAGES,
+  publicCatalogCard,
+  publicCatalogDetailView,
+  type CatalogSourceItem,
+  type PublicCatalogCard,
+  type PublicCatalogDetail,
+} from "@/lib/markets/guatemala-catalog";
+import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
+import { EXISTING_PRUEBA1_TEST_SALE } from "@/lib/markets/guatemala-recorded-test";
+import {
+  GUATEMALA_CORRECTION_MESSAGES,
+  saleReasonText,
+} from "@/lib/markets/guatemala-sale-correction";
+import {
+  guatemalaSalesRange,
+  parseSalesReportPeriod,
+  type SalesReportPeriod,
+} from "@/lib/markets/guatemala-sales-report";
+import {
+  GUATEMALA_INVENTORY_MESSAGES,
+  GUATEMALA_INVENTORY_STATUS,
+  GUATEMALA_SALE_MESSAGES,
+  GUATEMALA_SOLD_STATUS,
+  inventoryLikePattern,
+  inventoryListFilter,
+  prepareInventorySave,
+  quetzalPriceText,
+  resolveInventoryInsert,
+  type GuatemalaSaleSnapshot,
+  type InventoryItemStatus,
+  type InventoryListFilter,
+  type InventoryPhoto,
+  type PreparedInventoryItem,
+  type SaleActor,
+  type StoredInventoryItem,
+} from "@/lib/markets/guatemala-inventory";
+
+export interface InventoryRepository {
+  findBySource(clientId: string, sourceGroupId: string): Promise<StoredInventoryItem | null>;
+  findBySku(clientId: string, sku: string): Promise<StoredInventoryItem | null>;
+  insert(item: PreparedInventoryItem): Promise<StoredInventoryItem | null>;
+}
+
+export type InventorySaveResult =
+  | { ok: true; action: "created" | "already_saved"; item: StoredInventoryItem }
+  | { ok: false; status: 400 | 403 | 409; error: string };
+
+type SaveBody = Parameters<typeof prepareInventorySave>[0];
+
+export async function runInventorySave(
+  repository: InventoryRepository,
+  input: SaveBody,
+  clientAllowed: (clientId: string) => Promise<boolean>
+): Promise<InventorySaveResult> {
+  const prepared = prepareInventorySave(input);
+  if (!prepared.ok) return prepared;
+  if (!(await clientAllowed(prepared.item.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const inserted = await repository.insert(prepared.item);
+  if (inserted) return { ok: true, action: "created", item: inserted };
+  const existingBySource = await repository.findBySource(
+    prepared.item.clientId,
+    prepared.item.sourceGroupId
+  );
+  const existingBySku = await repository.findBySku(prepared.item.clientId, prepared.item.sku);
+  const decision = resolveInventoryInsert(prepared.item, existingBySource, existingBySku);
+  if (decision.action === "already_saved") {
+    return { ok: true, action: "already_saved", item: decision.item };
+  }
+  if (decision.action === "reject") return { ok: false, status: decision.status, error: decision.error };
+  const retried = await repository.insert(prepared.item);
+  if (retried) return { ok: true, action: "created", item: retried };
+  return { ok: false, status: 409, error: GUATEMALA_INVENTORY_MESSAGES.retry };
+}
+
+let ensuring: Promise<void> | null = null;
+
+export function ensureGuatemalaInventoryTables(): Promise<void> {
+  if (!ensuring) {
+    ensuring = createGuatemalaInventoryTables().catch((error) => {
+      ensuring = null;
+      throw error;
+    });
+  }
+  return ensuring;
+}
+
+async function createGuatemalaInventoryTables(): Promise<void> {
+  const sql = getSql();
+  await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_inventory_items (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      source_group_id TEXT NOT NULL,
+      sku TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      brand TEXT NOT NULL DEFAULT '',
+      size TEXT NOT NULL DEFAULT '',
+      condition TEXT NOT NULL DEFAULT '',
+      price_gtq NUMERIC(12, 2) NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'GTQ',
+      status TEXT NOT NULL DEFAULT 'disponible',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (client_id, sku),
+      UNIQUE (client_id, source_group_id)
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_inventory_photos (
+      id TEXT PRIMARY KEY,
+      item_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      media_type TEXT NOT NULL,
+      data TEXT NOT NULL,
+      UNIQUE (item_id, position)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS guatemala_inventory_items_client_idx
+    ON guatemala_inventory_items (client_id)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_inventory_sales (
+      id TEXT PRIMARY KEY,
+      item_id TEXT NOT NULL UNIQUE,
+      client_id TEXT NOT NULL,
+      sku TEXT NOT NULL,
+      published_price_gtq NUMERIC(12, 2) NOT NULL CHECK (published_price_gtq > 0),
+      charged_price_gtq NUMERIC(12, 2) NOT NULL CHECK (charged_price_gtq > 0),
+      sold_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      is_test BOOLEAN NOT NULL DEFAULT FALSE,
+      sold_by_role TEXT,
+      sold_by_account_id TEXT,
+      sold_by_username TEXT
+    )
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT FALSE
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS sold_by_role TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS sold_by_account_id TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS sold_by_username TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS current_charged_price_gtq NUMERIC(12, 2)
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_sale_corrections (
+      id TEXT PRIMARY KEY,
+      sale_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      previous_charged_price_gtq NUMERIC(12, 2) NOT NULL,
+      new_charged_price_gtq NUMERIC(12, 2),
+      reason TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      actor_account_id TEXT,
+      actor_username TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    DROP CONSTRAINT IF EXISTS guatemala_inventory_sales_item_id_key
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS guatemala_inventory_sales_one_active_item
+    ON guatemala_inventory_sales (item_id)
+    WHERE voided_at IS NULL
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_schema_flags (
+      flag TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+}
+
+// Marks the sale already stored for SKU 3002 on Tienda Guatemala as a test.
+// The flag runs once. Later sales keep is_test false even if the SKU is 3002.
+async function markRecordedSku3002SaleAsTest(): Promise<void> {
+  const sql = getSql();
+  await sql`
+    WITH flag AS (
+      INSERT INTO guatemala_schema_flags (flag)
+      VALUES ('mark-existing-guatemala-sku-3002-sale-as-test')
+      ON CONFLICT DO NOTHING
+      RETURNING applied_at
+    )
+    UPDATE guatemala_inventory_sales AS sale
+    SET is_test = TRUE
+    FROM flag
+    WHERE sale.sku = '3002'
+      AND sale.sold_at <= flag.applied_at
+      AND EXISTS (
+        SELECT 1
+        FROM client_markets AS market
+        WHERE market.client_id = sale.client_id
+          AND market.market_code = ${GUATEMALA_MARKET.code}
+      )
+  `;
+}
+
+// Marks the one preview sale of prueba1, Q40 published and Q20 charged at 03:22 Guatemala.
+// The flag runs once and does not change price, date, or author. Later prueba1 sales stay real.
+async function markRecordedPrueba1SaleAsTest(): Promise<void> {
+  const sql = getSql();
+  await sql`
+    WITH flag AS (
+      INSERT INTO guatemala_schema_flags (flag)
+      VALUES ('mark-existing-guatemala-prueba1-q40-q20-20261017T0922-sale-as-test')
+      ON CONFLICT DO NOTHING
+      RETURNING applied_at
+    )
+    UPDATE guatemala_inventory_sales AS sale
+    SET is_test = TRUE
+    FROM flag
+    WHERE sale.sku = ${EXISTING_PRUEBA1_TEST_SALE.sku}
+      AND sale.published_price_gtq = ${EXISTING_PRUEBA1_TEST_SALE.publishedPriceGtq}::numeric
+      AND sale.charged_price_gtq = ${EXISTING_PRUEBA1_TEST_SALE.chargedPriceGtq}::numeric
+      AND sale.sold_at >= ${EXISTING_PRUEBA1_TEST_SALE.soldFromInclusive}::timestamptz
+      AND sale.sold_at < ${EXISTING_PRUEBA1_TEST_SALE.soldToExclusive}::timestamptz
+      AND sale.sold_at <= flag.applied_at
+      AND EXISTS (
+        SELECT 1
+        FROM client_markets AS market
+        WHERE market.client_id = sale.client_id
+          AND market.market_code = ${GUATEMALA_MARKET.code}
+      )
+  `;
+}
+
+interface ItemRow {
+  id: string;
+  client_id: string;
+  source_group_id: string;
+  sku: string;
+  title: string;
+  description: string;
+  brand: string;
+  size: string;
+  condition: string;
+  price_gtq: string;
+  status: string;
+}
+
+function itemStatus(value: unknown): InventoryItemStatus {
+  return value === GUATEMALA_SOLD_STATUS ? GUATEMALA_SOLD_STATUS : GUATEMALA_INVENTORY_STATUS;
+}
+
+function storedFromRow(
+  row: ItemRow,
+  photos: InventoryPhoto[],
+  sale: GuatemalaSaleSnapshot | null = null
+): StoredInventoryItem {
+  return {
+    id: String(row.id),
+    clientId: String(row.client_id),
+    sourceGroupId: String(row.source_group_id),
+    sku: String(row.sku),
+    title: String(row.title ?? ""),
+    description: String(row.description ?? ""),
+    brand: String(row.brand ?? ""),
+    size: String(row.size ?? ""),
+    condition: String(row.condition ?? ""),
+    priceGtq: normalizePriceText(row.price_gtq),
+    photos,
+    status: itemStatus(row.status),
+    sale,
+  };
+}
+
+function normalizePriceText(value: unknown): string {
+  const text = String(value ?? "");
+  const match = /^(\d+)\.(\d+)$/.exec(text);
+  if (!match) return text;
+  return `${match[1]}.${match[2].slice(0, 2).padEnd(2, "0")}`;
+}
+
+async function photosFor(itemId: string): Promise<InventoryPhoto[]> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, media_type, data
+    FROM guatemala_inventory_photos
+    WHERE item_id = ${itemId}
+    ORDER BY position ASC
+  `;
+  return rows.map((row) => ({
+    id: String(row.id),
+    mediaType: String(row.media_type),
+    data: String(row.data),
+  }));
+}
+
+async function findRow(clientId: string, column: "source_group_id" | "sku", value: string): Promise<StoredInventoryItem | null> {
+  const sql = getSql();
+  const rows =
+    column === "sku"
+      ? await sql`
+          SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
+                 price_gtq::text AS price_gtq, status
+          FROM guatemala_inventory_items
+          WHERE client_id = ${clientId} AND sku = ${value}
+          LIMIT 1
+        `
+      : await sql`
+          SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
+                 price_gtq::text AS price_gtq, status
+          FROM guatemala_inventory_items
+          WHERE client_id = ${clientId} AND source_group_id = ${value}
+          LIMIT 1
+        `;
+  const row = rows[0] as ItemRow | undefined;
+  if (!row) return null;
+  return storedFromRow(row, await photosFor(String(row.id)));
+}
+
+function postgresRepository(): InventoryRepository {
+  return {
+    findBySource: (clientId, sourceGroupId) => findRow(clientId, "source_group_id", sourceGroupId),
+    findBySku: (clientId, sku) => findRow(clientId, "sku", sku),
+    insert: insertItem,
+  };
+}
+
+async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryItem | null> {
+  const sql = getSql();
+  const id = crypto.randomUUID();
+  const photoJson = JSON.stringify(
+    item.photos.map((photo, position) => ({
+      id: photo.id,
+      photo_position: position,
+      media_type: photo.mediaType,
+      data: photo.data,
+    }))
+  );
+  const rows = await sql`
+    WITH inserted AS (
+      INSERT INTO guatemala_inventory_items (
+        id, client_id, source_group_id, sku, title, description,
+        brand, size, condition, price_gtq, currency, status
+      )
+      VALUES (
+        ${id},
+        ${item.clientId},
+        ${item.sourceGroupId},
+        ${item.sku},
+        ${item.title},
+        ${item.description},
+        ${item.brand},
+        ${item.size},
+        ${item.condition},
+        ${item.priceGtq}::numeric,
+        'GTQ',
+        ${GUATEMALA_INVENTORY_STATUS}
+      )
+      ON CONFLICT DO NOTHING
+      RETURNING id, client_id, source_group_id, sku, title, description, brand, size, condition,
+        price_gtq::text AS price_gtq, status
+    ),
+    saved_photos AS (
+      INSERT INTO guatemala_inventory_photos (id, item_id, position, media_type, data)
+      SELECT photo.id, inserted.id, photo.photo_position, photo.media_type, photo.data
+      FROM jsonb_to_recordset(${photoJson}::jsonb)
+        AS photo(id text, photo_position int, media_type text, data text)
+      CROSS JOIN inserted
+      RETURNING item_id
+    )
+    SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
+      price_gtq, status
+    FROM inserted
+  `;
+  const row = rows[0] as ItemRow | undefined;
+  if (!row) return null;
+  return storedFromRow(row, item.photos);
+}
+
+export async function saveGuatemalaInventoryItem(input: SaveBody): Promise<InventorySaveResult> {
+  await ensureGuatemalaInventoryTables();
+  return runInventorySave(postgresRepository(), input, clientIsGuatemala);
+}
+
+export interface InventoryListItem {
+  id: string;
+  sku: string;
+  title: string;
+  size: string;
+  priceGtq: string;
+  status: InventoryItemStatus;
+  cover: InventoryPhoto | null;
+  chargedPriceGtq: string | null;
+  publishedPriceGtq: string | null;
+  saleIsTest: boolean;
+}
+
+export async function listGuatemalaInventory(
+  clientId: string,
+  query: string,
+  filterInput: unknown = "disponibles"
+): Promise<{ available: number; items: InventoryListItem[] } | { ok: false; status: 403; error: string }> {
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  await markRecordedSku3002SaleAsTest();
+  await markRecordedPrueba1SaleAsTest();
+  const sql = getSql();
+  const pattern = inventoryLikePattern(query);
+  const filter = inventoryListFilter(filterInput);
+  const status = statusForFilter(filter);
+  const counts = await sql`
+    SELECT COUNT(*)::int AS available
+    FROM guatemala_inventory_items
+    WHERE client_id = ${clientId} AND status = ${GUATEMALA_INVENTORY_STATUS}
+  `;
+  const rows = pattern
+    ? await sql`
+        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq, item.status,
+          photo.id AS photo_id, photo.media_type, photo.data,
+          COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq)::text AS charged_price_gtq,
+          sale.published_price_gtq::text AS published_price_gtq,
+          sale.is_test AS sale_is_test
+        FROM guatemala_inventory_items AS item
+        LEFT JOIN guatemala_inventory_sales AS sale
+          ON sale.item_id = item.id AND sale.client_id = item.client_id AND sale.voided_at IS NULL
+        LEFT JOIN LATERAL (
+          SELECT id, media_type, data
+          FROM guatemala_inventory_photos
+          WHERE item_id = item.id
+          ORDER BY position ASC
+          LIMIT 1
+        ) AS photo ON TRUE
+        WHERE item.client_id = ${clientId}
+          AND (${status}::text IS NULL OR item.status = ${status})
+          AND (item.sku ILIKE ${pattern} ESCAPE '\\' OR item.title ILIKE ${pattern} ESCAPE '\\')
+        ORDER BY item.created_at DESC
+      `
+    : await sql`
+        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq, item.status,
+          photo.id AS photo_id, photo.media_type, photo.data,
+          COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq)::text AS charged_price_gtq,
+          sale.published_price_gtq::text AS published_price_gtq,
+          sale.is_test AS sale_is_test
+        FROM guatemala_inventory_items AS item
+        LEFT JOIN guatemala_inventory_sales AS sale
+          ON sale.item_id = item.id AND sale.client_id = item.client_id AND sale.voided_at IS NULL
+        LEFT JOIN LATERAL (
+          SELECT id, media_type, data
+          FROM guatemala_inventory_photos
+          WHERE item_id = item.id
+          ORDER BY position ASC
+          LIMIT 1
+        ) AS photo ON TRUE
+        WHERE item.client_id = ${clientId}
+          AND (${status}::text IS NULL OR item.status = ${status})
+        ORDER BY item.created_at DESC
+      `;
+  return {
+    available: Number(counts[0]?.available ?? 0),
+    items: rows.map((row) => ({
+      id: String(row.id),
+      sku: String(row.sku),
+      title: String(row.title ?? ""),
+      size: String(row.size ?? ""),
+      priceGtq: normalizePriceText(row.price_gtq),
+      status: itemStatus(row.status),
+      chargedPriceGtq: row.charged_price_gtq ? normalizePriceText(row.charged_price_gtq) : null,
+      publishedPriceGtq: row.published_price_gtq ? normalizePriceText(row.published_price_gtq) : null,
+      saleIsTest: row.sale_is_test === true || row.sale_is_test === "t" || row.sale_is_test === "true",
+      cover:
+        row.photo_id && row.data
+          ? { id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }
+          : null,
+    })),
+  };
+}
+
+function statusForFilter(filter: InventoryListFilter): string | null {
+  if (filter === "disponibles") return GUATEMALA_INVENTORY_STATUS;
+  if (filter === "vendidas") return GUATEMALA_SOLD_STATUS;
+  return null;
+}
+
+export async function readGuatemalaInventoryItem(
+  clientId: string,
+  itemId: string
+): Promise<StoredInventoryItem | { ok: false; status: 403 | 404; error: string }> {
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
+      price_gtq::text AS price_gtq, status
+    FROM guatemala_inventory_items
+    WHERE id = ${itemId} AND client_id = ${clientId}
+    LIMIT 1
+  `;
+  const row = rows[0] as ItemRow | undefined;
+  if (!row) return { ok: false, status: 404, error: GUATEMALA_SALE_MESSAGES.notFound };
+  return storedFromRow(row, await photosFor(itemId), await saleFor(clientId, itemId));
+}
+
+async function saleFor(clientId: string, itemId: string): Promise<GuatemalaSaleSnapshot | null> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, sku, published_price_gtq::text AS published_price_gtq,
+      charged_price_gtq::text AS charged_price_gtq,
+      current_charged_price_gtq::text AS current_charged_price_gtq,
+      sold_at, is_test, voided_at, sold_by_role, sold_by_username
+    FROM guatemala_inventory_sales
+    WHERE item_id = ${itemId} AND client_id = ${clientId}
+    ORDER BY (voided_at IS NULL) DESC, sold_at DESC
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  const corrections = await sql`
+    SELECT id, action, previous_charged_price_gtq::text AS previous_charged_price_gtq,
+      new_charged_price_gtq::text AS new_charged_price_gtq, reason, created_at, actor_role, actor_username
+    FROM guatemala_sale_corrections
+    WHERE item_id = ${itemId} AND client_id = ${clientId}
+    ORDER BY created_at ASC
+  `;
+  const original = normalizePriceText(row.charged_price_gtq);
+  return {
+    id: String(row.id),
+    sku: String(row.sku),
+    publishedPriceGtq: normalizePriceText(row.published_price_gtq),
+    originalChargedPriceGtq: original,
+    chargedPriceGtq: row.current_charged_price_gtq
+      ? normalizePriceText(row.current_charged_price_gtq)
+      : original,
+    soldAt: isoTimestamp(row.sold_at),
+    isTest: row.is_test === true || row.is_test === "t" || row.is_test === "true",
+    voidedAt: row.voided_at ? isoTimestamp(row.voided_at) : null,
+    soldByRole: row.sold_by_role === "encargado" || row.sold_by_role === "propietario" ? row.sold_by_role : null,
+    soldByUsername: row.sold_by_username ? String(row.sold_by_username) : null,
+    corrections: corrections.map((correction) => ({
+      id: String(correction.id),
+      action: correction.action === "anular" ? "anular" : "corregir",
+      previousChargedPriceGtq: normalizePriceText(correction.previous_charged_price_gtq),
+      newChargedPriceGtq: correction.new_charged_price_gtq
+        ? normalizePriceText(correction.new_charged_price_gtq)
+        : null,
+      reason: String(correction.reason ?? ""),
+      createdAt: isoTimestamp(correction.created_at),
+      actorRole: "propietario" as const,
+      actorUsername: correction.actor_username ? String(correction.actor_username) : null,
+    })),
+  };
+}
+
+function isoTimestamp(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  const parsed = new Date(String(value ?? ""));
+  return Number.isNaN(parsed.getTime()) ? String(value ?? "") : parsed.toISOString();
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "23505");
+}
+
+export async function confirmGuatemalaSale(input: {
+  clientId?: unknown;
+  itemId?: unknown;
+  chargedPrice?: unknown;
+  soldBy?: SaleActor | null;
+}): Promise<
+  | {
+      ok: true;
+      available: number;
+      item: { id: string; sku: string; status: InventoryItemStatus; priceGtq: string; sale: GuatemalaSaleSnapshot };
+    }
+  | { ok: false; status: 400 | 403 | 404 | 409; error: string }
+> {
+  const clientId = typeof input.clientId === "string" ? input.clientId.trim() : "";
+  const itemId = typeof input.itemId === "string" ? input.itemId.trim() : "";
+  if (!clientId || !itemId) {
+    return { ok: false, status: 404, error: GUATEMALA_SALE_MESSAGES.notFound };
+  }
+  const chargedPriceGtq = quetzalPriceText(input.chargedPrice);
+  if (!chargedPriceGtq) {
+    return { ok: false, status: 400, error: GUATEMALA_SALE_MESSAGES.priceInvalid };
+  }
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const sql = getSql();
+  const saleId = crypto.randomUUID();
+  const soldByRole = input.soldBy?.role ?? null;
+  const soldByAccountId = input.soldBy?.accountId ?? null;
+  const soldByUsername = input.soldBy?.username ?? null;
+  let rows: Record<string, unknown>[];
+  try {
+    rows = await sql`
+      WITH sold_item AS (
+        UPDATE guatemala_inventory_items
+        SET status = ${GUATEMALA_SOLD_STATUS}
+        WHERE id = ${itemId}
+          AND client_id = ${clientId}
+          AND status = ${GUATEMALA_INVENTORY_STATUS}
+        RETURNING id, client_id, sku, price_gtq
+      ),
+      inserted_sale AS (
+        INSERT INTO guatemala_inventory_sales (
+          id, item_id, client_id, sku, published_price_gtq, charged_price_gtq, sold_at,
+          sold_by_role, sold_by_account_id, sold_by_username
+        )
+        SELECT ${saleId}, sold_item.id, sold_item.client_id, sold_item.sku,
+          sold_item.price_gtq, ${chargedPriceGtq}::numeric, NOW(),
+          ${soldByRole}, ${soldByAccountId}, ${soldByUsername}
+        FROM sold_item
+        RETURNING item_id, sku, published_price_gtq::text AS published_price_gtq,
+          charged_price_gtq::text AS charged_price_gtq, sold_at, sold_by_role, sold_by_username
+      )
+      SELECT item_id, sku, published_price_gtq, charged_price_gtq, sold_at, sold_by_role, sold_by_username
+      FROM inserted_sale
+    `;
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return { ok: false, status: 409, error: GUATEMALA_SALE_MESSAGES.alreadySold };
+    }
+    throw error;
+  }
+  const saved = rows[0];
+  if (!saved) {
+    const existing = await sql`
+      SELECT status
+      FROM guatemala_inventory_items
+      WHERE id = ${itemId} AND client_id = ${clientId}
+      LIMIT 1
+    `;
+    if (!existing[0]) return { ok: false, status: 404, error: GUATEMALA_SALE_MESSAGES.notFound };
+    return { ok: false, status: 409, error: GUATEMALA_SALE_MESSAGES.alreadySold };
+  }
+  const counts = await sql`
+    SELECT COUNT(*)::int AS available
+    FROM guatemala_inventory_items
+    WHERE client_id = ${clientId} AND status = ${GUATEMALA_INVENTORY_STATUS}
+  `;
+  const sale: GuatemalaSaleSnapshot = {
+    sku: String(saved.sku),
+    publishedPriceGtq: normalizePriceText(saved.published_price_gtq),
+    chargedPriceGtq: normalizePriceText(saved.charged_price_gtq),
+    soldAt: isoTimestamp(saved.sold_at),
+    soldByRole:
+      saved.sold_by_role === "encargado" || saved.sold_by_role === "propietario"
+        ? saved.sold_by_role
+        : null,
+    soldByUsername: saved.sold_by_username ? String(saved.sold_by_username) : null,
+  };
+  return {
+    ok: true,
+    available: Number(counts[0]?.available ?? 0),
+    item: {
+      id: itemId,
+      sku: sale.sku,
+      status: GUATEMALA_SOLD_STATUS,
+      priceGtq: sale.publishedPriceGtq,
+      sale,
+    },
+  };
+}
+
+export async function correctGuatemalaSale(input: {
+  clientId: string;
+  itemId: string;
+  action: "corregir" | "anular";
+  correctionId: string;
+  reason: unknown;
+  chargedPrice?: unknown;
+  expectedChargedPrice: unknown;
+  actor: SaleActor;
+}): Promise<
+  | { ok: true; available: number; sale: GuatemalaSaleSnapshot }
+  | { ok: false; status: 400 | 403 | 404 | 409; error: string }
+> {
+  if (input.actor.role !== "propietario") {
+    return { ok: false, status: 403, error: GUATEMALA_CORRECTION_MESSAGES.forbidden };
+  }
+  const correctionId = input.correctionId.trim();
+  const reason = saleReasonText(input.reason);
+  if (!correctionId || !reason) {
+    return { ok: false, status: 400, error: GUATEMALA_CORRECTION_MESSAGES.reasonRequired };
+  }
+  const nextPrice = input.action === "corregir" ? quetzalPriceText(input.chargedPrice) : null;
+  if (input.action === "corregir" && !nextPrice) {
+    return { ok: false, status: 400, error: GUATEMALA_SALE_MESSAGES.priceInvalid };
+  }
+  const expected = quetzalPriceText(input.expectedChargedPrice);
+  if (!expected) return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.stale };
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const replay = await replayCorrection(input.clientId, input.itemId, correctionId, input.action);
+  if (replay) return replay;
+  const sql = getSql();
+  let saved: Record<string, unknown> | undefined;
+  try {
+    const rows =
+      input.action === "anular"
+        ? await sql`
+            WITH sale_row AS (
+              SELECT id, item_id, client_id,
+                COALESCE(current_charged_price_gtq, charged_price_gtq) AS effective
+              FROM guatemala_inventory_sales
+              WHERE item_id = ${input.itemId}
+                AND client_id = ${input.clientId}
+                AND voided_at IS NULL
+            ),
+            opened AS (
+              UPDATE guatemala_inventory_items AS item
+              SET status = ${GUATEMALA_INVENTORY_STATUS}
+              FROM sale_row
+              WHERE item.id = sale_row.item_id
+                AND item.client_id = sale_row.client_id
+                AND item.status = ${GUATEMALA_SOLD_STATUS}
+                AND sale_row.effective = ${expected}::numeric
+              RETURNING item.id
+            ),
+            voided AS (
+              UPDATE guatemala_inventory_sales AS sale
+              SET voided_at = NOW()
+              FROM sale_row, opened
+              WHERE sale.id = sale_row.id
+              RETURNING sale.id
+            )
+            INSERT INTO guatemala_sale_corrections (
+              id, sale_id, client_id, item_id, action,
+              previous_charged_price_gtq, new_charged_price_gtq,
+              reason, actor_role, actor_account_id, actor_username
+            )
+            SELECT ${correctionId}, voided.id, ${input.clientId}, ${input.itemId}, 'anular',
+              ${expected}::numeric, NULL, ${reason}, 'propietario', ${input.actor.accountId}, ${input.actor.username}
+            FROM voided
+            RETURNING sale_id
+          `
+        : await sql`
+            WITH sale_row AS (
+              SELECT sale.id, sale.item_id,
+                COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq) AS effective
+              FROM guatemala_inventory_sales AS sale
+              INNER JOIN guatemala_inventory_items AS item
+                ON item.id = sale.item_id AND item.client_id = sale.client_id
+              WHERE sale.item_id = ${input.itemId}
+                AND sale.client_id = ${input.clientId}
+                AND sale.voided_at IS NULL
+                AND item.status = ${GUATEMALA_SOLD_STATUS}
+            ),
+            updated AS (
+              UPDATE guatemala_inventory_sales AS sale
+              SET current_charged_price_gtq = ${nextPrice}::numeric
+              FROM sale_row
+              WHERE sale.id = sale_row.id
+                AND sale_row.effective = ${expected}::numeric
+                AND sale_row.effective <> ${nextPrice}::numeric
+              RETURNING sale.id
+            )
+            INSERT INTO guatemala_sale_corrections (
+              id, sale_id, client_id, item_id, action,
+              previous_charged_price_gtq, new_charged_price_gtq,
+              reason, actor_role, actor_account_id, actor_username
+            )
+            SELECT ${correctionId}, updated.id, ${input.clientId}, ${input.itemId}, 'corregir',
+              ${expected}::numeric, ${nextPrice}::numeric, ${reason}, 'propietario',
+              ${input.actor.accountId}, ${input.actor.username}
+            FROM updated
+            RETURNING sale_id
+          `;
+    saved = rows[0];
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      const raced = await replayCorrection(input.clientId, input.itemId, correctionId, input.action);
+      if (raced) return raced;
+      return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.stale };
+    }
+    throw error;
+  }
+  if (!saved) {
+    const current = await saleFor(input.clientId, input.itemId);
+    if (!current) return { ok: false, status: 404, error: GUATEMALA_CORRECTION_MESSAGES.notFound };
+    if (current.voidedAt) return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.voided };
+    if (input.action === "corregir" && current.chargedPriceGtq === nextPrice) {
+      return { ok: false, status: 400, error: GUATEMALA_CORRECTION_MESSAGES.priceUnchanged };
+    }
+    return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.stale };
+  }
+  const counts = await sql`
+    SELECT COUNT(*)::int AS available
+    FROM guatemala_inventory_items
+    WHERE client_id = ${input.clientId} AND status = ${GUATEMALA_INVENTORY_STATUS}
+  `;
+  const sale = await saleFor(input.clientId, input.itemId);
+  if (!sale) return { ok: false, status: 404, error: GUATEMALA_CORRECTION_MESSAGES.notFound };
+  return { ok: true, available: Number(counts[0]?.available ?? 0), sale };
+}
+
+async function replayCorrection(
+  clientId: string,
+  itemId: string,
+  correctionId: string,
+  action: "corregir" | "anular"
+): Promise<{ ok: true; available: number; sale: GuatemalaSaleSnapshot } | { ok: false; status: 409; error: string } | null> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT sale_id, item_id, client_id, action
+    FROM guatemala_sale_corrections
+    WHERE id = ${correctionId}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  if (String(row.client_id) !== clientId || String(row.item_id) !== itemId || String(row.action) !== action) {
+    return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.stale };
+  }
+  const counts = await sql`
+    SELECT COUNT(*)::int AS available
+    FROM guatemala_inventory_items
+    WHERE client_id = ${clientId} AND status = ${GUATEMALA_INVENTORY_STATUS}
+  `;
+  const sale = await saleFor(clientId, itemId);
+  if (!sale) return { ok: false, status: 409, error: GUATEMALA_CORRECTION_MESSAGES.stale };
+  return { ok: true, available: Number(counts[0]?.available ?? 0), sale };
+}
+
+export interface SalesReportRow {
+  itemId: string;
+  sku: string;
+  title: string;
+  publishedPriceGtq: string;
+  chargedPriceGtq: string;
+  soldAt: string;
+  isTest: boolean;
+  cover: InventoryPhoto | null;
+}
+
+export async function listGuatemalaSalesReport(input: {
+  clientId: string;
+  period: unknown;
+  from?: unknown;
+  to?: unknown;
+  includeTests: boolean;
+  now?: Date;
+}): Promise<
+  | {
+      ok: true;
+      timezone: typeof GUATEMALA_MARKET.timezone;
+      period: SalesReportPeriod;
+      from: string;
+      to: string;
+      fromLabel: string;
+      toLabel: string;
+      includeTests: boolean;
+      count: number;
+      totalChargedGtq: string;
+      sales: SalesReportRow[];
+    }
+  | { ok: false; status: 400 | 403; error: string }
+> {
+  const period = parseSalesReportPeriod(input.period);
+  const built = guatemalaSalesRange({
+    period,
+    from: input.from,
+    to: input.to,
+    now: input.now,
+  });
+  if (!built.ok) return { ok: false, status: 400, error: built.error };
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  await markRecordedSku3002SaleAsTest();
+  await markRecordedPrueba1SaleAsTest();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT sale.item_id, sale.sku, item.title,
+      sale.published_price_gtq::text AS published_price_gtq,
+      COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq)::text AS charged_price_gtq,
+      sale.sold_at, sale.is_test,
+      photo.id AS photo_id, photo.media_type, photo.data
+    FROM guatemala_inventory_sales AS sale
+    INNER JOIN guatemala_inventory_items AS item
+      ON item.id = sale.item_id AND item.client_id = sale.client_id
+    LEFT JOIN LATERAL (
+      SELECT id, media_type, data
+      FROM guatemala_inventory_photos
+      WHERE item_id = sale.item_id
+      ORDER BY position ASC
+      LIMIT 1
+    ) AS photo ON TRUE
+    WHERE sale.client_id = ${input.clientId}
+      AND sale.sold_at >= ${built.range.start}
+      AND sale.sold_at < ${built.range.end}
+      AND sale.voided_at IS NULL
+      AND (${input.includeTests} OR sale.is_test = FALSE)
+    ORDER BY sale.sold_at DESC
+  `;
+  const sales: SalesReportRow[] = rows.map((row) => ({
+    itemId: String(row.item_id),
+    sku: String(row.sku),
+    title: String(row.title ?? ""),
+    publishedPriceGtq: normalizePriceText(row.published_price_gtq),
+    chargedPriceGtq: normalizePriceText(row.charged_price_gtq),
+    soldAt: isoTimestamp(row.sold_at),
+    isTest: row.is_test === true || row.is_test === "t" || row.is_test === "true",
+    cover:
+      row.photo_id && row.data
+        ? { id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }
+        : null,
+  }));
+  const cents = sales.reduce((sum, sale) => {
+    const [whole, fraction] = sale.chargedPriceGtq.split(".");
+    return sum + Number(whole) * 100 + Number((fraction ?? "00").slice(0, 2));
+  }, 0);
+  return {
+    ok: true,
+    timezone: GUATEMALA_MARKET.timezone,
+    period,
+    from: built.range.from,
+    to: built.range.to,
+    fromLabel: built.range.fromLabel,
+    toLabel: built.range.toLabel,
+    includeTests: input.includeTests,
+    count: sales.length,
+    totalChargedGtq: `${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, "0")}`,
+    sales,
+  };
+}
+
+export async function listPublicGuatemalaCatalog(
+  query: string
+): Promise<{ ok: true; items: PublicCatalogCard[] } | { ok: false; status: 404; error: string }> {
+  const clientId = await readyPublicCatalogClient();
+  if (!clientId) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.unavailable };
+  const sql = getSql();
+  const pattern = inventoryLikePattern(query);
+  const rows = pattern
+    ? await sql`
+        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq,
+          photo.id AS photo_id, photo.media_type, photo.data
+        FROM guatemala_inventory_items AS item
+        LEFT JOIN LATERAL (
+          SELECT id, media_type, data
+          FROM guatemala_inventory_photos
+          WHERE item_id = item.id
+          ORDER BY position ASC
+          LIMIT 1
+        ) AS photo ON TRUE
+        WHERE item.client_id = ${clientId}
+          AND item.status = ${GUATEMALA_INVENTORY_STATUS}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM guatemala_inventory_sales AS sale
+            WHERE sale.item_id = item.id
+              AND sale.client_id = item.client_id
+              AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+          )
+          AND (item.sku ILIKE ${pattern} ESCAPE '\\' OR item.title ILIKE ${pattern} ESCAPE '\\')
+        ORDER BY item.created_at DESC
+      `
+    : await sql`
+        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq,
+          photo.id AS photo_id, photo.media_type, photo.data
+        FROM guatemala_inventory_items AS item
+        LEFT JOIN LATERAL (
+          SELECT id, media_type, data
+          FROM guatemala_inventory_photos
+          WHERE item_id = item.id
+          ORDER BY position ASC
+          LIMIT 1
+        ) AS photo ON TRUE
+        WHERE item.client_id = ${clientId}
+          AND item.status = ${GUATEMALA_INVENTORY_STATUS}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM guatemala_inventory_sales AS sale
+            WHERE sale.item_id = item.id
+              AND sale.client_id = item.client_id
+              AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+          )
+        ORDER BY item.created_at DESC
+      `;
+  return {
+    ok: true,
+    items: rows.map((row) =>
+      publicCatalogCard({
+        id: String(row.id),
+        clientId,
+        sku: String(row.sku),
+        title: String(row.title ?? ""),
+        description: String(row.description ?? ""),
+        size: String(row.size ?? ""),
+        priceGtq: normalizePriceText(row.price_gtq),
+        status: "disponible",
+        photos:
+          row.photo_id && row.data
+            ? [{ id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }]
+            : [],
+        sales: [],
+      })
+    ),
+  };
+}
+
+export async function readPublicGuatemalaCatalogItem(
+  itemId: string
+): Promise<{ ok: true; item: PublicCatalogDetail } | { ok: false; status: 404; error: string }> {
+  const clientId = await readyPublicCatalogClient();
+  if (!clientId) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.unavailable };
+  const sql = getSql();
+  const rows = await sql`
+    SELECT item.id, item.sku, item.title, item.description, item.size, item.price_gtq::text AS price_gtq
+    FROM guatemala_inventory_items AS item
+    WHERE item.id = ${itemId}
+      AND item.client_id = ${clientId}
+      AND item.status = ${GUATEMALA_INVENTORY_STATUS}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM guatemala_inventory_sales AS sale
+        WHERE sale.item_id = item.id
+          AND sale.client_id = item.client_id
+          AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+      )
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.notFound };
+  const photos = await photosFor(String(row.id));
+  const source: CatalogSourceItem = {
+    id: String(row.id),
+    clientId,
+    sku: String(row.sku),
+    title: String(row.title ?? ""),
+    description: String(row.description ?? ""),
+    size: String(row.size ?? ""),
+    priceGtq: normalizePriceText(row.price_gtq),
+    status: "disponible",
+    photos,
+    sales: [],
+  };
+  return { ok: true, item: publicCatalogDetailView(source) };
+}
+
+async function readyPublicCatalogClient(): Promise<string | null> {
+  await ensureGuatemalaInventoryTables();
+  const clientId = await boundGuatemalaClientId();
+  if (!clientId || !(await clientIsGuatemala(clientId))) return null;
+  return clientId;
+}

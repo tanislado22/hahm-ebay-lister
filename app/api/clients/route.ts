@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { neon } from "@neondatabase/serverless";
+import { listClientsWithMarkets } from "@/lib/markets/client-market";
 
 function getSql() {
 
@@ -46,17 +47,9 @@ export async function GET() {
 
   try {
 
-    const sql = await ensureClientsTable();
+    await ensureClientsTable();
 
-    const clients = await sql`
-
-      SELECT id, name, active
-
-      FROM clients
-
-      ORDER BY created_at ASC
-
-    `;
+    const clients = await listClientsWithMarkets();
 
     return NextResponse.json({
 
@@ -132,11 +125,13 @@ export async function POST(request: Request) {
 
     }
 
+    const saved = await listClientsWithMarkets();
+
     return NextResponse.json({
 
       success: true,
 
-      clients,
+      clients: saved,
 
     });
 
