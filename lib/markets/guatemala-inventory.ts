@@ -60,6 +60,7 @@ export interface GuatemalaSaleSnapshot {
   publishedPriceGtq: string;
   chargedPriceGtq: string;
   soldAt: string;
+  isTest?: boolean;
 }
 
 export interface StoredInventoryItem extends PreparedInventoryItem {

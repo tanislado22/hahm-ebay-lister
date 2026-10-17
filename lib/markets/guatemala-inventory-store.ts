@@ -1,5 +1,11 @@
 import { getSql } from "@/lib/db";
 import { clientIsGuatemala } from "@/lib/markets/client-market";
+import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
+import {
+  guatemalaSalesRange,
+  parseSalesReportPeriod,
+  type SalesReportPeriod,
+} from "@/lib/markets/guatemala-sales-report";
 import {
   GUATEMALA_INVENTORY_MESSAGES,
   GUATEMALA_INVENTORY_STATUS,
@@ -112,8 +118,44 @@ async function createGuatemalaInventoryTables(): Promise<void> {
       sku TEXT NOT NULL,
       published_price_gtq NUMERIC(12, 2) NOT NULL CHECK (published_price_gtq > 0),
       charged_price_gtq NUMERIC(12, 2) NOT NULL CHECK (charged_price_gtq > 0),
-      sold_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      sold_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      is_test BOOLEAN NOT NULL DEFAULT FALSE
     )
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT FALSE
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_schema_flags (
+      flag TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+}
+
+// Marks the sale already stored for SKU 3002 on Tienda Guatemala as a test.
+// The flag runs once. Later sales keep is_test false even if the SKU is 3002.
+async function markRecordedSku3002SaleAsTest(): Promise<void> {
+  const sql = getSql();
+  await sql`
+    WITH flag AS (
+      INSERT INTO guatemala_schema_flags (flag)
+      VALUES ('mark-existing-guatemala-sku-3002-sale-as-test')
+      ON CONFLICT DO NOTHING
+      RETURNING applied_at
+    )
+    UPDATE guatemala_inventory_sales AS sale
+    SET is_test = TRUE
+    FROM flag
+    WHERE sale.sku = '3002'
+      AND sale.sold_at <= flag.applied_at
+      AND EXISTS (
+        SELECT 1
+        FROM client_markets AS market
+        WHERE market.client_id = sale.client_id
+          AND market.market_code = ${GUATEMALA_MARKET.code}
+      )
   `;
 }
 
@@ -275,6 +317,9 @@ export interface InventoryListItem {
   priceGtq: string;
   status: InventoryItemStatus;
   cover: InventoryPhoto | null;
+  chargedPriceGtq: string | null;
+  publishedPriceGtq: string | null;
+  saleIsTest: boolean;
 }
 
 export async function listGuatemalaInventory(
@@ -286,6 +331,7 @@ export async function listGuatemalaInventory(
   if (!(await clientIsGuatemala(clientId))) {
     return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
   }
+  await markRecordedSku3002SaleAsTest();
   const sql = getSql();
   const pattern = inventoryLikePattern(query);
   const filter = inventoryListFilter(filterInput);
@@ -298,8 +344,13 @@ export async function listGuatemalaInventory(
   const rows = pattern
     ? await sql`
         SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq, item.status,
-          photo.id AS photo_id, photo.media_type, photo.data
+          photo.id AS photo_id, photo.media_type, photo.data,
+          sale.charged_price_gtq::text AS charged_price_gtq,
+          sale.published_price_gtq::text AS published_price_gtq,
+          sale.is_test AS sale_is_test
         FROM guatemala_inventory_items AS item
+        LEFT JOIN guatemala_inventory_sales AS sale
+          ON sale.item_id = item.id AND sale.client_id = item.client_id
         LEFT JOIN LATERAL (
           SELECT id, media_type, data
           FROM guatemala_inventory_photos
@@ -314,8 +365,13 @@ export async function listGuatemalaInventory(
       `
     : await sql`
         SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq, item.status,
-          photo.id AS photo_id, photo.media_type, photo.data
+          photo.id AS photo_id, photo.media_type, photo.data,
+          sale.charged_price_gtq::text AS charged_price_gtq,
+          sale.published_price_gtq::text AS published_price_gtq,
+          sale.is_test AS sale_is_test
         FROM guatemala_inventory_items AS item
+        LEFT JOIN guatemala_inventory_sales AS sale
+          ON sale.item_id = item.id AND sale.client_id = item.client_id
         LEFT JOIN LATERAL (
           SELECT id, media_type, data
           FROM guatemala_inventory_photos
@@ -336,6 +392,9 @@ export async function listGuatemalaInventory(
       size: String(row.size ?? ""),
       priceGtq: normalizePriceText(row.price_gtq),
       status: itemStatus(row.status),
+      chargedPriceGtq: row.charged_price_gtq ? normalizePriceText(row.charged_price_gtq) : null,
+      publishedPriceGtq: row.published_price_gtq ? normalizePriceText(row.published_price_gtq) : null,
+      saleIsTest: row.sale_is_test === true || row.sale_is_test === "t" || row.sale_is_test === "true",
       cover:
         row.photo_id && row.data
           ? { id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }
@@ -375,7 +434,7 @@ async function saleFor(clientId: string, itemId: string): Promise<GuatemalaSaleS
   const sql = getSql();
   const rows = await sql`
     SELECT sku, published_price_gtq::text AS published_price_gtq,
-      charged_price_gtq::text AS charged_price_gtq, sold_at
+      charged_price_gtq::text AS charged_price_gtq, sold_at, is_test
     FROM guatemala_inventory_sales
     WHERE item_id = ${itemId} AND client_id = ${clientId}
     LIMIT 1
@@ -387,6 +446,7 @@ async function saleFor(clientId: string, itemId: string): Promise<GuatemalaSaleS
     publishedPriceGtq: normalizePriceText(row.published_price_gtq),
     chargedPriceGtq: normalizePriceText(row.charged_price_gtq),
     soldAt: isoTimestamp(row.sold_at),
+    isTest: row.is_test === true || row.is_test === "t" || row.is_test === "true",
   };
 }
 
@@ -489,5 +549,107 @@ export async function confirmGuatemalaSale(input: {
       priceGtq: sale.publishedPriceGtq,
       sale,
     },
+  };
+}
+
+export interface SalesReportRow {
+  itemId: string;
+  sku: string;
+  title: string;
+  publishedPriceGtq: string;
+  chargedPriceGtq: string;
+  soldAt: string;
+  isTest: boolean;
+  cover: InventoryPhoto | null;
+}
+
+export async function listGuatemalaSalesReport(input: {
+  clientId: string;
+  period: unknown;
+  from?: unknown;
+  to?: unknown;
+  includeTests: boolean;
+  now?: Date;
+}): Promise<
+  | {
+      ok: true;
+      timezone: typeof GUATEMALA_MARKET.timezone;
+      period: SalesReportPeriod;
+      from: string;
+      to: string;
+      fromLabel: string;
+      toLabel: string;
+      includeTests: boolean;
+      count: number;
+      totalChargedGtq: string;
+      sales: SalesReportRow[];
+    }
+  | { ok: false; status: 400 | 403; error: string }
+> {
+  const period = parseSalesReportPeriod(input.period);
+  const built = guatemalaSalesRange({
+    period,
+    from: input.from,
+    to: input.to,
+    now: input.now,
+  });
+  if (!built.ok) return { ok: false, status: 400, error: built.error };
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  await markRecordedSku3002SaleAsTest();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT sale.item_id, sale.sku, item.title,
+      sale.published_price_gtq::text AS published_price_gtq,
+      sale.charged_price_gtq::text AS charged_price_gtq,
+      sale.sold_at, sale.is_test,
+      photo.id AS photo_id, photo.media_type, photo.data
+    FROM guatemala_inventory_sales AS sale
+    INNER JOIN guatemala_inventory_items AS item
+      ON item.id = sale.item_id AND item.client_id = sale.client_id
+    LEFT JOIN LATERAL (
+      SELECT id, media_type, data
+      FROM guatemala_inventory_photos
+      WHERE item_id = sale.item_id
+      ORDER BY position ASC
+      LIMIT 1
+    ) AS photo ON TRUE
+    WHERE sale.client_id = ${input.clientId}
+      AND sale.sold_at >= ${built.range.start}
+      AND sale.sold_at < ${built.range.end}
+      AND (${input.includeTests} OR sale.is_test = FALSE)
+    ORDER BY sale.sold_at DESC
+  `;
+  const sales: SalesReportRow[] = rows.map((row) => ({
+    itemId: String(row.item_id),
+    sku: String(row.sku),
+    title: String(row.title ?? ""),
+    publishedPriceGtq: normalizePriceText(row.published_price_gtq),
+    chargedPriceGtq: normalizePriceText(row.charged_price_gtq),
+    soldAt: isoTimestamp(row.sold_at),
+    isTest: row.is_test === true || row.is_test === "t" || row.is_test === "true",
+    cover:
+      row.photo_id && row.data
+        ? { id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }
+        : null,
+  }));
+  const cents = sales.reduce((sum, sale) => {
+    const [whole, fraction] = sale.chargedPriceGtq.split(".");
+    return sum + Number(whole) * 100 + Number((fraction ?? "00").slice(0, 2));
+  }, 0);
+  return {
+    ok: true,
+    timezone: GUATEMALA_MARKET.timezone,
+    period,
+    from: built.range.from,
+    to: built.range.to,
+    fromLabel: built.range.fromLabel,
+    toLabel: built.range.toLabel,
+    includeTests: input.includeTests,
+    count: sales.length,
+    totalChargedGtq: `${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, "0")}`,
+    sales,
   };
 }

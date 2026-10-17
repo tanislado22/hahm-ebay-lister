@@ -21,6 +21,7 @@ interface SaleInfo {
   publishedPriceGtq: string;
   chargedPriceGtq: string;
   soldAt: string;
+  isTest?: boolean;
 }
 
 interface ListItem {
@@ -31,6 +32,9 @@ interface ListItem {
   priceGtq: string;
   status: string;
   cover: InventoryPhoto | null;
+  chargedPriceGtq?: string | null;
+  publishedPriceGtq?: string | null;
+  saleIsTest?: boolean;
 }
 
 interface DetailItem extends ListItem {
@@ -221,6 +225,7 @@ export function InventoryScreen() {
               <span className={`gt-inventory-status${detail.status === "vendida" ? " is-sold" : ""}`}>
                 {guatemalaInventoryStatusLabel(detail.status)}
               </span>
+              {detail.sale?.isTest ? <span className="gt-test-badge">Prueba</span> : null}
               <dl className="gt-inventory-facts">
                 <div>
                   <dt>Precio publicado</dt>
@@ -394,10 +399,20 @@ export function InventoryScreen() {
                 <span>
                   <p className="gt-inventory-sku">SKU {item.sku}</p>
                   <h2>{item.title || "Prenda sin título"}</h2>
-                  <p className="gt-inventory-meta">
-                    {item.size ? `Talla ${item.size} · ` : ""}
-                    {formatStoredQuetzales(item.priceGtq)}
-                  </p>
+                  {item.status === "vendida" && item.chargedPriceGtq ? (
+                    <>
+                      {item.saleIsTest ? <span className="gt-test-badge">Prueba</span> : null}
+                      <p className="gt-sold-for">Vendido por {formatStoredQuetzales(item.chargedPriceGtq)}</p>
+                      <p className="gt-inventory-meta">
+                        Precio publicado {formatStoredQuetzales(item.publishedPriceGtq || item.priceGtq)}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="gt-inventory-meta">
+                      {item.size ? `Talla ${item.size} · ` : ""}
+                      {formatStoredQuetzales(item.priceGtq)}
+                    </p>
+                  )}
                   <span className={`gt-inventory-status${item.status === "vendida" ? " is-sold" : ""}`}>
                     {guatemalaInventoryStatusLabel(item.status)}
                   </span>
@@ -406,6 +421,12 @@ export function InventoryScreen() {
             ))}
           </div>
           <div className="gt-inventory-actions">
+            <a
+              className="btn btn-primary"
+              href={`/guatemala/reportes?clientId=${encodeURIComponent(clientId)}`}
+            >
+              Reportes de ventas
+            </a>
             <a className="btn btn-ghost" href="/">
               Volver a las prendas
             </a>

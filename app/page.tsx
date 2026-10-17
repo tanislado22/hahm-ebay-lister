@@ -1562,13 +1562,22 @@ const draftAll = async () => {
       </p>
     )}
     {guatemalaActiveRef.current && selectedClientId && (
-      <a
-        className="btn btn-primary"
-        href={`/guatemala/inventario?clientId=${encodeURIComponent(selectedClientId)}`}
-        style={{ fontSize: "20px", marginTop: "16px", marginLeft: 0 }}
-      >
-        Inventario
-      </a>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: "16px" }}>
+        <a
+          className="btn btn-primary"
+          href={`/guatemala/inventario?clientId=${encodeURIComponent(selectedClientId)}`}
+          style={{ fontSize: "20px", marginLeft: 0 }}
+        >
+          Inventario
+        </a>
+        <a
+          className="btn btn-primary"
+          href={`/guatemala/reportes?clientId=${encodeURIComponent(selectedClientId)}`}
+          style={{ fontSize: "20px", marginLeft: 0 }}
+        >
+          Reportes de ventas
+        </a>
+      </div>
     )}
     {workMode === "client" && (
 <>

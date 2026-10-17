@@ -218,6 +218,22 @@
   font-size: 1.05rem;
 }
 
+.gt-sold-for {
+  margin: 0.2rem 0;
+  font-weight: 800;
+}
+
+.gt-test-badge {
+  display: inline-flex;
+  margin: 0.2rem 0;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--color-gold-soft);
+  color: oklch(40% 0.08 70);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
 @media (min-width: 800px) {
   .gt-inventory-list {
     grid-template-columns: 1fr 1fr;
