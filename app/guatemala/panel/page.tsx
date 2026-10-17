@@ -12,7 +12,7 @@ export default async function StaffHomePage() {
   return (
     <main>
       <h1>Tienda Guatemala</h1>
-      <p>Hola, {session.username}. Desde aquí puedes ver el inventario, registrar ventas y consultar los reportes.</p>
+      <p>Hola, {session.username}. Desde aquí puedes ver el inventario, registrar ventas, anotar gastos y consultar los reportes.</p>
     </main>
   );
 }

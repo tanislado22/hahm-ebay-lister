@@ -30,13 +30,17 @@ import {
   parseSalesReportPeriod,
   type SalesReportPeriod,
 } from "@/lib/markets/guatemala-sales-report";
+import { listGuatemalaExpenses } from "@/lib/markets/guatemala-expenses-store";
+import { summarizeGuatemalaProfit, type ProfitSummary } from "@/lib/markets/guatemala-expenses";
 import {
+  GUATEMALA_COST_MESSAGES,
   GUATEMALA_INVENTORY_MESSAGES,
   GUATEMALA_INVENTORY_STATUS,
   GUATEMALA_SALE_MESSAGES,
   GUATEMALA_SOLD_STATUS,
   inventoryLikePattern,
   inventoryListFilter,
+  prepareGarmentCost,
   prepareInventorySave,
   quetzalPriceText,
   resolveInventoryInsert,
@@ -205,6 +209,14 @@ async function createGuatemalaInventoryTables(): Promise<void> {
       applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+  await sql`
+    ALTER TABLE guatemala_inventory_items
+    ADD COLUMN IF NOT EXISTS cost_gtq NUMERIC(12, 2)
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_items
+    ADD COLUMN IF NOT EXISTS cost_includes_photography BOOLEAN NOT NULL DEFAULT FALSE
+  `;
 }
 
 // Marks the sale already stored for SKU 3002 on Tienda Guatemala as a test.
@@ -273,6 +285,8 @@ interface ItemRow {
   condition: string;
   price_gtq: string;
   status: string;
+  cost_gtq?: string | null;
+  cost_includes_photography?: boolean | string | null;
 }
 
 function itemStatus(value: unknown): InventoryItemStatus {
@@ -298,7 +312,18 @@ function storedFromRow(
     photos,
     status: itemStatus(row.status),
     sale,
+    costGtq: optionalCostText(row.cost_gtq),
+    costIncludesPhotography: optionalCostText(row.cost_gtq) != null && flag(row.cost_includes_photography),
   };
+}
+
+function flag(value: unknown): boolean {
+  return value === true || value === "t" || value === "true";
+}
+
+function optionalCostText(value: unknown): string | null {
+  if (value == null || value === "") return null;
+  return quetzalPriceText(normalizePriceText(value));
 }
 
 function normalizePriceText(value: unknown): string {
@@ -523,7 +548,8 @@ export async function readGuatemalaInventoryItem(
   const sql = getSql();
   const rows = await sql`
     SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
-      price_gtq::text AS price_gtq, status
+      price_gtq::text AS price_gtq, status,
+      cost_gtq::text AS cost_gtq, cost_includes_photography
     FROM guatemala_inventory_items
     WHERE id = ${itemId} AND client_id = ${clientId}
     LIMIT 1
@@ -531,6 +557,50 @@ export async function readGuatemalaInventoryItem(
   const row = rows[0] as ItemRow | undefined;
   if (!row) return { ok: false, status: 404, error: GUATEMALA_SALE_MESSAGES.notFound };
   return storedFromRow(row, await photosFor(itemId), await saleFor(clientId, itemId));
+}
+
+export async function updateGuatemalaGarmentCost(input: {
+  clientId: string;
+  itemId: string;
+  cost: unknown;
+  includesPhotography: unknown;
+}): Promise<
+  | { ok: true; costGtq: string | null; costIncludesPhotography: boolean; message: string }
+  | { ok: false; status: 400 | 403 | 404; error: string }
+> {
+  const prepared = prepareGarmentCost({
+    cost: input.cost,
+    includesPhotography: input.includesPhotography,
+  });
+  if (!prepared.ok) return prepared;
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const sql = getSql();
+  const rows = prepared.costGtq
+    ? await sql`
+        UPDATE guatemala_inventory_items
+        SET cost_gtq = ${prepared.costGtq}::numeric,
+            cost_includes_photography = ${prepared.includesPhotography}
+        WHERE id = ${input.itemId} AND client_id = ${input.clientId}
+        RETURNING cost_gtq::text AS cost_gtq, cost_includes_photography
+      `
+    : await sql`
+        UPDATE guatemala_inventory_items
+        SET cost_gtq = NULL,
+            cost_includes_photography = FALSE
+        WHERE id = ${input.itemId} AND client_id = ${input.clientId}
+        RETURNING cost_gtq::text AS cost_gtq, cost_includes_photography
+      `;
+  if (!rows[0]) return { ok: false, status: 404, error: GUATEMALA_COST_MESSAGES.notFound };
+  const costGtq = optionalCostText(rows[0].cost_gtq);
+  return {
+    ok: true,
+    costGtq,
+    costIncludesPhotography: costGtq != null && flag(rows[0].cost_includes_photography),
+    message: GUATEMALA_COST_MESSAGES.saved,
+  };
 }
 
 async function saleFor(clientId: string, itemId: string): Promise<GuatemalaSaleSnapshot | null> {
@@ -866,6 +936,8 @@ export interface SalesReportRow {
   chargedPriceGtq: string;
   soldAt: string;
   isTest: boolean;
+  costGtq: string | null;
+  costIncludesPhotography: boolean;
   cover: InventoryPhoto | null;
 }
 
@@ -889,6 +961,7 @@ export async function listGuatemalaSalesReport(input: {
       count: number;
       totalChargedGtq: string;
       sales: SalesReportRow[];
+      profit: ProfitSummary;
     }
   | { ok: false; status: 400 | 403; error: string }
 > {
@@ -912,6 +985,8 @@ export async function listGuatemalaSalesReport(input: {
       sale.published_price_gtq::text AS published_price_gtq,
       COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq)::text AS charged_price_gtq,
       sale.sold_at, sale.is_test,
+      item.cost_gtq::text AS cost_gtq,
+      item.cost_includes_photography,
       photo.id AS photo_id, photo.media_type, photo.data
     FROM guatemala_inventory_sales AS sale
     INNER JOIN guatemala_inventory_items AS item
@@ -938,6 +1013,8 @@ export async function listGuatemalaSalesReport(input: {
     chargedPriceGtq: normalizePriceText(row.charged_price_gtq),
     soldAt: isoTimestamp(row.sold_at),
     isTest: row.is_test === true || row.is_test === "t" || row.is_test === "true",
+    costGtq: optionalCostText(row.cost_gtq),
+    costIncludesPhotography: optionalCostText(row.cost_gtq) != null && flag(row.cost_includes_photography),
     cover:
       row.photo_id && row.data
         ? { id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }
@@ -947,6 +1024,24 @@ export async function listGuatemalaSalesReport(input: {
     const [whole, fraction] = sale.chargedPriceGtq.split(".");
     return sum + Number(whole) * 100 + Number((fraction ?? "00").slice(0, 2));
   }, 0);
+  const expenses = await listGuatemalaExpenses({
+    clientId: input.clientId,
+    from: built.range.from,
+    to: built.range.to,
+  });
+  const profit = summarizeGuatemalaProfit({
+    includeTests: input.includeTests,
+    expenses,
+    garments: sales.map((sale) => ({
+      itemId: sale.itemId,
+      soldInPeriod: true,
+      isTest: sale.isTest,
+      voided: false,
+      chargedPriceGtq: sale.chargedPriceGtq,
+      costGtq: sale.costGtq,
+      costIncludesPhotography: sale.costIncludesPhotography,
+    })),
+  });
   return {
     ok: true,
     timezone: GUATEMALA_MARKET.timezone,
@@ -959,6 +1054,7 @@ export async function listGuatemalaSalesReport(input: {
     count: sales.length,
     totalChargedGtq: `${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, "0")}`,
     sales,
+    profit,
   };
 }
 

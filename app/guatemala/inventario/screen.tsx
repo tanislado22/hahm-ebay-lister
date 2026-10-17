@@ -61,6 +61,8 @@ interface DetailItem extends ListItem {
   condition: string;
   photos: InventoryPhoto[];
   sale?: SaleInfo | null;
+  costGtq?: string | null;
+  costIncludesPhotography?: boolean;
 }
 
 function photoSource(photo: InventoryPhoto): string {
@@ -71,10 +73,12 @@ export function InventoryScreen({
   lockedClientId,
   basePath = "/guatemala/inventario",
   reportsPath = "/guatemala/reportes",
+  expensesPath = "/guatemala/gastos",
 }: {
   lockedClientId?: string;
   basePath?: string;
   reportsPath?: string;
+  expensesPath?: string;
 } = {}) {
   const params = useSearchParams();
   const router = useRouter();
@@ -103,6 +107,12 @@ export function InventoryScreen({
   const [savingCorrection, setSavingCorrection] = useState(false);
   const savingCorrectionRef = useRef(false);
   const correctionIdRef = useRef("");
+  const [costDraft, setCostDraft] = useState("");
+  const [costIncludesPhoto, setCostIncludesPhoto] = useState(false);
+  const [costError, setCostError] = useState("");
+  const [costNotice, setCostNotice] = useState("");
+  const [savingCost, setSavingCost] = useState(false);
+  const savingCostRef = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -167,7 +177,14 @@ export function InventoryScreen({
     setSaleStep(null);
     setChargedDraft("");
     setSaleError("");
+    setCostError("");
+    setCostNotice("");
   }, [itemId]);
+
+  useEffect(() => {
+    setCostDraft(detail?.costGtq ?? "");
+    setCostIncludesPhoto(Boolean(detail?.costIncludesPhotography));
+  }, [detail?.id, detail?.costGtq, detail?.costIncludesPhotography]);
 
   function inventoryHref(next: { item?: string; estado?: InventoryListFilter }) {
     const search = new URLSearchParams({ estado: next.estado ?? filter });
@@ -300,6 +317,51 @@ export function InventoryScreen({
     }
   }
 
+  async function saveCost() {
+    if (!detail || savingCostRef.current) return;
+    const price = costDraft.trim();
+    if (price && !quetzalPriceText(price)) {
+      setCostError("Escribe un costo mayor que cero, o déjalo vacío si todavía no lo conoces.");
+      return;
+    }
+    savingCostRef.current = true;
+    setSavingCost(true);
+    setCostError("");
+    setCostNotice("");
+    try {
+      const response = await storeRequest(
+        `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}/cost`,
+        {
+          clientId,
+          cost: price,
+          includesPhotography: Boolean(price) && costIncludesPhoto,
+        }
+      );
+      const body = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        costGtq?: string | null;
+        costIncludesPhotography?: boolean;
+      };
+      if (!response.ok || !body.ok) {
+        setCostError(body.error || "No se pudo guardar el costo.");
+        return;
+      }
+      setDetail({
+        ...detail,
+        costGtq: body.costGtq ?? null,
+        costIncludesPhotography: Boolean(body.costIncludesPhotography),
+      });
+      setCostNotice(body.message || "Costo guardado.");
+    } catch {
+      setCostError("No se pudo guardar el costo.");
+    } finally {
+      savingCostRef.current = false;
+      setSavingCost(false);
+    }
+  }
+
   return (
     <main className="wrap gt-inventory">
       <header>
@@ -382,6 +444,15 @@ export function InventoryScreen({
                   <dt>Condición</dt>
                   <dd>{guatemalaConditionLabel(detail.condition) || "—"}</dd>
                 </div>
+                {staffMode ? (
+                  <div>
+                    <dt>Costo de la prenda</dt>
+                    <dd>
+                      {detail.costGtq ? formatStoredQuetzales(detail.costGtq) : "Sin costo"}
+                      {detail.costIncludesPhotography ? " · incluye fotografías" : ""}
+                    </dd>
+                  </div>
+                ) : null}
               </dl>
               {detail.sale?.corrections && detail.sale.corrections.length > 0 ? (
                 <div className="gt-sale-box">
@@ -627,6 +698,54 @@ export function InventoryScreen({
                   </div>
                 </div>
               ) : null}
+              {!staffMode ? (
+                <form
+                  className="gt-sale-box"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void saveCost();
+                  }}
+                >
+                  <h3>Costo de la prenda</h3>
+                  <p>Solo entra en la ganancia cuando esta prenda se vende. Si lo dejas vacío, la ganancia queda parcial.</p>
+                  <label htmlFor="garment-cost">Costo</label>
+                  <div className="gt-sale-price">
+                    <span aria-hidden="true">Q</span>
+                    <input
+                      id="garment-cost"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      placeholder="0.00"
+                      value={costDraft}
+                      onChange={(event) => {
+                        setCostDraft(event.target.value);
+                        if (!event.target.value.trim()) setCostIncludesPhoto(false);
+                      }}
+                    />
+                  </div>
+                  <label className="gt-cost-check">
+                    <input
+                      type="checkbox"
+                      checked={costIncludesPhoto}
+                      disabled={!costDraft.trim()}
+                      onChange={(event) => setCostIncludesPhoto(event.target.checked)}
+                    />
+                    El costo incluye el pago de fotografías
+                  </label>
+                  {costError ? (
+                    <p className="note note-error" role="alert">
+                      {costError}
+                    </p>
+                  ) : null}
+                  {costNotice ? <p>{costNotice}</p> : null}
+                  <div className="gt-inventory-actions">
+                    <button type="submit" className="btn btn-primary" disabled={savingCost}>
+                      {savingCost ? "Guardando…" : "Guardar costo"}
+                    </button>
+                  </div>
+                </form>
+              ) : null}
             </>
           ) : null}
           <div className="gt-inventory-actions">
@@ -725,6 +844,9 @@ export function InventoryScreen({
           <div className="gt-inventory-actions">
             <a className="btn btn-primary" href={staffMode ? reportsPath : `${reportsPath}?clientId=${encodeURIComponent(clientId)}`}>
               Reportes de ventas
+            </a>
+            <a className="btn btn-primary" href={staffMode ? expensesPath : `${expensesPath}?clientId=${encodeURIComponent(clientId)}`}>
+              Gastos
             </a>
             {staffMode ? null : (
               <a className="btn btn-ghost" href="/">

@@ -16,6 +16,10 @@
   font-size: 1.05rem;
 }
 
+.gt-staff-nav .btn-primary {
+  margin-left: 0;
+}
+
 .gt-entry,
 .gt-access {
   display: grid;
