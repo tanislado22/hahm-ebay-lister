@@ -18,6 +18,7 @@ interface ReviewBoardProps {
   onBack: () => void;
   writeLabel?: string;
   skuNotice?: string;
+  exactSku?: boolean;
   onRemovePhoto: (photoId: string) => void;
 }
 
@@ -278,6 +279,7 @@ export function ReviewBoard({
   onBack,
   writeLabel,
   skuNotice,
+  exactSku = false,
 }: ReviewBoardProps) {
   const totalPhotos =
     groups.reduce((n, g) => n + g.photoIds.length, 0) + orphanIds.length;
@@ -308,14 +310,18 @@ export function ReviewBoard({
             <header className="board-item-head">
               <input
                 type="text"
-                inputMode="text"
                 className="board-sku"
                 value={group.sku}
                 aria-label="Item SKU / bin code"
                 placeholder="SKU"
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
+                {...(exactSku
+                  ? {
+                      inputMode: "text" as const,
+                      autoCapitalize: "off" as const,
+                      autoCorrect: "off" as const,
+                      spellCheck: false,
+                    }
+                  : {})}
                 onChange={(e) => onRenameSku(group.id, e.target.value)}
               />
               <input

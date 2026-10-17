@@ -1974,6 +1974,7 @@ const draftAll = async () => {
               ? guatemalaDuplicateSkuMessage(groups.map((group) => group.sku))
               : undefined
           }
+          exactSku={guatemalaActiveRef.current}
         />
       )}
 
