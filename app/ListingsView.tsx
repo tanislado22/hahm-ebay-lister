@@ -70,6 +70,7 @@ interface ListingsViewProps {
   onMarkVintedPublished: (groupId: string, url: string) => void;
   vintedPreparing: boolean;
   guatemala?: boolean;
+  skuNotice?: string;
   onBack: () => void;
 }
 
@@ -94,6 +95,7 @@ export function ListingsView({
   onMarkVintedPublished,
   vintedPreparing,
   guatemala = false,
+  skuNotice,
   onBack,
 }: ListingsViewProps) {
   const done = groups.filter((g) => g.status === "done").length;
@@ -123,6 +125,11 @@ export function ListingsView({
       {guatemala ? (
         <p className="note">
           El título y la descripción salen en español. El precio se escribe en quetzales. Esta tienda no se publica en eBay.
+        </p>
+      ) : null}
+      {skuNotice ? (
+        <p className="note" role="alert">
+          {skuNotice}
         </p>
       ) : null}
 

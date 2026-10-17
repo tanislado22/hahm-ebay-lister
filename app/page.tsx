@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { accessHeaders, apiPost } from "@/lib/api-client";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { resizeImage } from "@/lib/resize";
+import { exactGuatemalaSku, guatemalaDuplicateSkuMessage } from "@/lib/markets/guatemala";
 import { buildSku, skuForVintedPrepare } from "@/lib/sku";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
@@ -403,10 +404,12 @@ if (!selectedClientSaveReadyRef.current) {
           if (!data?.group) continue;
 
           if (Array.isArray(data.group.photoIds) && data.group.photoIds.length > 0) {
-
-  restoredGroups.push(data.group as ItemGroup);
-
-}
+            const restored = data.group as ItemGroup;
+            if (guatemalaActiveRef.current) {
+              restored.sku = exactGuatemalaSku(restored.sku);
+            }
+            restoredGroups.push(restored);
+          }
 
           if (Array.isArray(data.photos)) {
 
@@ -570,7 +573,9 @@ setStep(
 
                 data: {
 
-                  group,
+                  group: guatemalaActiveRef.current
+                    ? { ...group, sku: exactGuatemalaSku(group.sku) }
+                    : group,
 
                   photos: groupPhotos,
 
@@ -755,9 +760,11 @@ setManualGroups((prev) => [
     setSorting(true);
     setError(null);
     try {
+      const guatemala = guatemalaActiveRef.current;
       // Continue bin lettering after any SKUs already on eBay for this bin.
+      // Tienda Guatemala keeps the typed SKU and does not continue lettering.
       let skuOffset = 0;
-      if (binPrefix.trim()) {
+      if (!guatemala && binPrefix.trim()) {
         try {
           const r = await apiPost("/api/ebay/next-sku", { prefix: binPrefix.trim() });
           const d = (await readJson(r)) as { ok?: boolean; nextIndex?: number };
@@ -779,7 +786,7 @@ setManualGroups((prev) => [
 
       id: newId(),
 
-      sku: buildSku(binPrefix, skuOffset + i),
+      sku: guatemala ? exactGuatemalaSku(binPrefix) : buildSku(binPrefix, skuOffset + i),
 
 
 
@@ -886,7 +893,7 @@ clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
 
       const nextGroups: ItemGroup[] = merged.map((g, i) => ({
         id: newId(),
-     sku: buildSku(binPrefix, skuOffset + i),
+     sku: guatemala ? exactGuatemalaSku(binPrefix) : buildSku(binPrefix, skuOffset + i),
         name: g.name,
         clientId: workMode === "client" ? selectedClientId ?? undefined : undefined,
         photoIds: g.photoIds,
@@ -1059,7 +1066,7 @@ const deleteAll = async () => {
       ...prev,
       {
         id: newId(),
-        sku: binPrefix.trim(),
+        sku: guatemalaActiveRef.current ? exactGuatemalaSku(binPrefix) : binPrefix.trim(),
         name: `new-item-${prev.length + 1}`,
         photoIds: [],
         status: "idle",
@@ -1785,24 +1792,32 @@ const draftAll = async () => {
 
             <div className="field bin-field">
               <label htmlFor="bin">
-                Bin / SKU code{" "}
-                <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
-                  (where these items are stored)
-                </span>
+                {guatemalaActiveRef.current ? (
+                  "SKU"
+                ) : (
+                  <>
+                    Bin / SKU code{" "}
+                    <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                      (where these items are stored)
+                    </span>
+                  </>
+                )}
               </label>
               <input
                 id="bin"
                 type="text"
-                placeholder="e.g. K75"
+                inputMode="text"
+                placeholder={guatemalaActiveRef.current ? "por ejemplo 12.50.A" : "e.g. K75"}
                 value={binPrefix}
                 onChange={(e) => setBinPrefix(e.target.value)}
-                autoCapitalize="characters"
+                autoCapitalize={guatemalaActiveRef.current ? "off" : "characters"}
+                autoCorrect={guatemalaActiveRef.current ? "off" : undefined}
+                spellCheck={guatemalaActiveRef.current ? false : undefined}
               />
               <span className="field-hint">
-                Each item gets {binPrefix ? `${binPrefix.trim()}-A, ${binPrefix.trim()}-B` : "A, B, C"}
-                … in order, so you can find it in the bin later. If this bin
-                already has listings on eBay, lettering continues where it left
-                off. You can edit any SKU after sorting.
+                {guatemalaActiveRef.current
+                  ? "Cada prenda recibe este SKU tal como lo escribes, con puntos y letras. Si varias prendas quedan con el mismo SKU, cambia uno de ellos."
+                  : `Each item gets ${binPrefix ? `${binPrefix.trim()}-A, ${binPrefix.trim()}-B` : "A, B, C"} … in order, so you can find it in the bin later. If this bin already has listings on eBay, lettering continues where it left off. You can edit any SKU after sorting.`}
               </span>
             </div>
 
@@ -1933,6 +1948,11 @@ const draftAll = async () => {
               ? `Escribir título y descripción (${usableGroups.length})`
               : undefined
           }
+          skuNotice={
+            guatemalaActiveRef.current
+              ? guatemalaDuplicateSkuMessage(groups.map((group) => group.sku))
+              : undefined
+          }
         />
       )}
 
@@ -1960,6 +1980,11 @@ const draftAll = async () => {
           onMarkVintedPublished={(groupId, url) => void markVintedPublished(groupId, url)}
           vintedPreparing={vintedPreparing}
           guatemala={guatemalaActiveRef.current}
+          skuNotice={
+            guatemalaActiveRef.current
+              ? guatemalaDuplicateSkuMessage(usableGroups.map((group) => group.sku))
+              : undefined
+          }
           onBack={() => setStep("review")}
         />
       )}

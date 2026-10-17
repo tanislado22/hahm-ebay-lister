@@ -767,9 +767,13 @@ const keyword = [
               <input
                 id={`sku-${group.id}`}
                 type="text"
+                inputMode="text"
                 className="size-input"
                 value={group.sku}
                 disabled={group.postStatus === "posted"}
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
                 onChange={(e) => onRenameSku(group.id, e.target.value)}
               />
             </div>

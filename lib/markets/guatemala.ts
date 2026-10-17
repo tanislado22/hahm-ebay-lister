@@ -21,6 +21,33 @@ export function isGuatemalaMarket(market: unknown): boolean {
   return market === GUATEMALA_MARKET.code;
 }
 
+// The typed SKU stays text. Dots, letters, and a trailing zero are kept, and
+// nothing appends a bin letter such as "-A".
+export function exactGuatemalaSku(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  return String(value);
+}
+
+export function guatemalaDuplicateSkuMessage(skus: string[]): string {
+  const counts = new Map<string, number>();
+  for (const sku of skus) counts.set(sku, (counts.get(sku) ?? 0) + 1);
+  const repeated = [...counts.entries()].filter(([, count]) => count > 1);
+  if (repeated.length === 0) return "";
+  const named = repeated.map(([sku]) => sku).filter((sku) => sku !== "");
+  const parts: string[] = [];
+  if (named.length === 1) {
+    parts.push(`Varias prendas tienen el SKU ${named[0]}.`);
+  } else if (named.length > 1) {
+    parts.push(`Varias prendas comparten estos SKU: ${named.join(", ")}.`);
+  }
+  if (repeated.some(([sku]) => sku === "")) {
+    parts.push("Varias prendas no tienen SKU.");
+  }
+  parts.push("Asigna un SKU diferente a cada prenda.");
+  return parts.join(" ");
+}
+
 export function requestTargetsGuatemala(body: {
   market?: unknown;
   listing?: { market?: unknown } | null;

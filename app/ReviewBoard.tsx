@@ -17,6 +17,7 @@ interface ReviewBoardProps {
   onWriteAll: () => void;
   onBack: () => void;
   writeLabel?: string;
+  skuNotice?: string;
   onRemovePhoto: (photoId: string) => void;
 }
 
@@ -276,6 +277,7 @@ export function ReviewBoard({
   onWriteAll,
   onBack,
   writeLabel,
+  skuNotice,
 }: ReviewBoardProps) {
   const totalPhotos =
     groups.reduce((n, g) => n + g.photoIds.length, 0) + orphanIds.length;
@@ -294,6 +296,11 @@ export function ReviewBoard({
         (the first photo is the eBay cover), or use the menu under any photo to
         move it to another item. Then write all the listings at once.
       </p>
+      {skuNotice ? (
+        <p className="note" role="alert">
+          {skuNotice}
+        </p>
+      ) : null}
 
       <div className="board">
         {groups.map((group) => (
@@ -301,10 +308,14 @@ export function ReviewBoard({
             <header className="board-item-head">
               <input
                 type="text"
+                inputMode="text"
                 className="board-sku"
                 value={group.sku}
                 aria-label="Item SKU / bin code"
                 placeholder="SKU"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
                 onChange={(e) => onRenameSku(group.id, e.target.value)}
               />
               <input

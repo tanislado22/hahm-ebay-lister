@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { buildGuatemalaAnalysisPrompt } from "@/lib/markets/guatemala-prompt";
 import {
+  exactGuatemalaSku,
   formatQuetzales,
   guatemalaCompReport,
+  guatemalaDuplicateSkuMessage,
   prepareGuatemalaListing,
   requestTargetsGuatemala,
 } from "@/lib/markets/guatemala";
+import { buildSku } from "@/lib/sku";
 import type { ListingResult } from "@/lib/types";
 
 const listing: ListingResult = {
@@ -55,5 +58,28 @@ describe("Tienda Guatemala", () => {
   it("muestra el quetzal con Q", () => {
     expect(formatQuetzales(15)).toBe("Q15.00");
     expect(formatQuetzales(30.5)).toBe("Q30.50");
+  });
+
+  it("conserva el SKU como texto, con puntos y letras", () => {
+    expect(exactGuatemalaSku("12.50.A")).toBe("12.50.A");
+    expect(exactGuatemalaSku("K.75b")).toBe("K.75b");
+    expect(exactGuatemalaSku("12.50")).not.toBe(buildSku("12.50", 0));
+    const saved = JSON.parse(JSON.stringify({ sku: exactGuatemalaSku("12.50") })) as { sku: unknown };
+    expect(saved.sku).toBe("12.50");
+    expect(typeof saved.sku).toBe("string");
+    expect(exactGuatemalaSku(saved.sku)).toBe("12.50");
+  });
+
+  it("avisa cuando varias prendas comparten el mismo SKU", () => {
+    expect(guatemalaDuplicateSkuMessage(["12.50", "12.51"])).toBe("");
+    const notice = guatemalaDuplicateSkuMessage(["12.50.A", "12.50.A", "12.51"]);
+    expect(notice).toContain("12.50.A");
+    expect(notice).toContain("Asigna un SKU diferente a cada prenda.");
+    expect(guatemalaDuplicateSkuMessage(["", ""])).toContain("no tienen SKU");
+  });
+
+  it("My Store sigue agregando la letra del código de caja", () => {
+    expect(buildSku("K75", 0)).toBe("K75-A");
+    expect(buildSku("K75", 1)).toBe("K75-B");
   });
 });
