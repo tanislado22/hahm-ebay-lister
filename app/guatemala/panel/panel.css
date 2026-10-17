@@ -1,0 +1,72 @@
+.gt-staff h1 {
+  font-family: var(--font-display);
+  font-size: clamp(1.8rem, 1.2rem + 2vw, 2.4rem);
+  margin: 0 0 0.4rem;
+}
+
+.gt-staff-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.gt-staff-nav .btn {
+  min-height: 48px;
+  font-size: 1.05rem;
+}
+
+.gt-entry,
+.gt-access {
+  display: grid;
+  gap: 1rem;
+  max-width: 40rem;
+}
+
+.gt-entry h1,
+.gt-access h1 {
+  font-family: var(--font-display);
+  font-size: clamp(1.8rem, 1.2rem + 2vw, 2.4rem);
+  margin: 0;
+}
+
+.gt-entry form,
+.gt-access form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.gt-entry label,
+.gt-access label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 700;
+}
+
+.gt-entry input,
+.gt-access input,
+.gt-access select {
+  min-height: 48px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  padding: 0.7rem 0.9rem;
+  font-size: 1.05rem;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.gt-invite-code {
+  font-family: ui-monospace, Consolas, monospace;
+  word-break: break-all;
+  font-size: 1.05rem;
+}
+
+.gt-account-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--color-border);
+}

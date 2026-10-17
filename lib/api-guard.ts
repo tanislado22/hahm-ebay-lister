@@ -25,6 +25,15 @@ const RATE_LIMIT_MAX_REQUESTS = 40;
 // has its own map), but it blunts burst abuse at zero infra cost.
 const hits = new Map<string, number[]>();
 
+export function ownerAccessGranted(req: NextRequest): boolean {
+  const secret = process.env.APP_SECRET;
+  if (!secret) {
+    return process.env.NODE_ENV !== "production" && process.env.VERCEL_ENV !== "production";
+  }
+  const provided = req.headers.get("x-app-secret") ?? "";
+  return Boolean(provided) && timingSafeEqual(provided, secret);
+}
+
 function timingSafeEqual(a: string, b: string): boolean {
   const ha = crypto.createHash("sha256").update(a).digest();
   const hb = crypto.createHash("sha256").update(b).digest();

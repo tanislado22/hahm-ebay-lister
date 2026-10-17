@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { apiGet } from "@/lib/api-client";
+import { guatemalaRequest } from "../request";
 import { formatGuatemalaMoment } from "@/lib/markets/guatemala";
 import { formatStoredQuetzales } from "@/lib/markets/guatemala-inventory";
 import type { InventoryPhoto } from "@/lib/markets/guatemala-inventory";
@@ -46,10 +46,19 @@ function photoSource(photo: InventoryPhoto): string {
   return `data:${photo.mediaType};base64,${photo.data}`;
 }
 
-export function SalesReportScreen() {
+export function SalesReportScreen({
+  lockedClientId,
+  basePath = "/guatemala/reportes",
+  inventoryPath = "/guatemala/inventario",
+}: {
+  lockedClientId?: string;
+  basePath?: string;
+  inventoryPath?: string;
+} = {}) {
   const params = useSearchParams();
   const router = useRouter();
-  const clientId = params.get("clientId") ?? "";
+  const staffMode = Boolean(lockedClientId);
+  const clientId = lockedClientId || params.get("clientId") || "";
   const period = parseSalesReportPeriod(params.get("periodo"));
   const from = params.get("desde") ?? "";
   const to = params.get("hasta") ?? "";
@@ -89,7 +98,7 @@ export function SalesReportScreen() {
           search.set("desde", from);
           search.set("hasta", to);
         }
-        const response = await apiGet(`/api/markets/guatemala/reports?${search.toString()}`);
+        const response = await guatemalaRequest(`/api/markets/guatemala/reports?${search.toString()}`);
         const body = (await response.json()) as ReportPayload & { ok?: boolean; error?: string };
         if (signal.aborted) return;
         if (!response.ok || !body.ok) {
@@ -111,15 +120,15 @@ export function SalesReportScreen() {
 
   function update(next: { periodo?: SalesReportPeriod; desde?: string; hasta?: string; incluirPruebas?: boolean }) {
     const search = new URLSearchParams({
-      clientId,
       periodo: next.periodo ?? period,
       incluirPruebas: (next.incluirPruebas ?? includeTests) ? "1" : "0",
     });
+    if (!staffMode) search.set("clientId", clientId);
     const nextFrom = next.desde ?? from;
     const nextTo = next.hasta ?? to;
     if (nextFrom) search.set("desde", nextFrom);
     if (nextTo) search.set("hasta", nextTo);
-    router.replace(`/guatemala/reportes?${search.toString()}`);
+    router.replace(`${basePath}?${search.toString()}`);
   }
 
   const chargedTotal = report ? chargedTotalForDisplay(true, report.totalChargedGtq) : null;
@@ -184,7 +193,11 @@ export function SalesReportScreen() {
                 <a
                   key={`${sale.itemId}-${sale.soldAt}`}
                   className="gt-inventory-card"
-                  href={`/guatemala/inventario?clientId=${encodeURIComponent(clientId)}&item=${encodeURIComponent(sale.itemId)}&estado=vendidas`}
+                  href={
+                    staffMode
+                      ? `${inventoryPath}?item=${encodeURIComponent(sale.itemId)}&estado=vendidas`
+                      : `${inventoryPath}?clientId=${encodeURIComponent(clientId)}&item=${encodeURIComponent(sale.itemId)}&estado=vendidas`
+                  }
                 >
                   {sale.cover ? (
                     <img src={photoSource(sale.cover)} alt="" />
@@ -207,7 +220,10 @@ export function SalesReportScreen() {
           </>
         ) : null}
         <div className="gt-inventory-actions">
-          <a className="btn btn-ghost" href={`/guatemala/inventario?clientId=${encodeURIComponent(clientId)}`}>
+          <a
+            className="btn btn-ghost"
+            href={staffMode ? inventoryPath : `${inventoryPath}?clientId=${encodeURIComponent(clientId)}`}
+          >
             Volver al inventario
           </a>
         </div>

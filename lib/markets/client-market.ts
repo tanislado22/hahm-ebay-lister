@@ -123,6 +123,21 @@ export async function clientIsGuatemala(clientId: string | null | undefined): Pr
   return isGuatemalaMarket(await clientMarketCode(clientId));
 }
 
+// The market row is the identifier. A display name is never accepted here.
+export async function boundGuatemalaClientId(): Promise<string | null> {
+  await ensureMarketTables();
+  await bindGuatemalaClient();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT client_id
+    FROM client_markets
+    WHERE market_code = ${GUATEMALA_MARKET.code}
+    LIMIT 1
+  `;
+  const clientId = rows[0]?.client_id ? String(rows[0].client_id) : "";
+  return clientId || null;
+}
+
 export async function ebayPublishBlockedForGuatemala(body: {
   market?: unknown;
   clientId?: unknown;

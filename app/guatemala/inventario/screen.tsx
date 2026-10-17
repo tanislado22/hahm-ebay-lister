@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { apiGet, apiPost } from "@/lib/api-client";
+import { guatemalaRequest } from "../request";
 import { formatGuatemalaMoment } from "@/lib/markets/guatemala";
 import {
   availableGarmentLabel,
@@ -22,6 +22,8 @@ interface SaleInfo {
   chargedPriceGtq: string;
   soldAt: string;
   isTest?: boolean;
+  soldByRole?: "propietario" | "encargado" | null;
+  soldByUsername?: string | null;
 }
 
 interface ListItem {
@@ -49,10 +51,19 @@ function photoSource(photo: InventoryPhoto): string {
   return `data:${photo.mediaType};base64,${photo.data}`;
 }
 
-export function InventoryScreen() {
+export function InventoryScreen({
+  lockedClientId,
+  basePath = "/guatemala/inventario",
+  reportsPath = "/guatemala/reportes",
+}: {
+  lockedClientId?: string;
+  basePath?: string;
+  reportsPath?: string;
+} = {}) {
   const params = useSearchParams();
   const router = useRouter();
-  const clientId = params.get("clientId") ?? "";
+  const staffMode = Boolean(lockedClientId);
+  const clientId = lockedClientId || params.get("clientId") || "";
   const itemId = params.get("item") ?? "";
   const filter = inventoryListFilter(params.get("estado"));
   const [query, setQuery] = useState("");
@@ -80,7 +91,7 @@ export function InventoryScreen() {
       setError("");
       try {
         if (itemId) {
-          const response = await apiGet(
+          const response = await guatemalaRequest(
             `/api/markets/guatemala/inventory/${encodeURIComponent(itemId)}?clientId=${encodeURIComponent(clientId)}`
           );
           const body = (await response.json()) as { ok?: boolean; error?: string; item?: DetailItem };
@@ -92,7 +103,7 @@ export function InventoryScreen() {
             setDetail(body.item);
           }
         } else {
-          const response = await apiGet(
+          const response = await guatemalaRequest(
             `/api/markets/guatemala/inventory?clientId=${encodeURIComponent(clientId)}&q=${encodeURIComponent(query)}&estado=${encodeURIComponent(filter)}`
           );
           const body = (await response.json()) as {
@@ -133,9 +144,10 @@ export function InventoryScreen() {
   }, [itemId]);
 
   function inventoryHref(next: { item?: string; estado?: InventoryListFilter }) {
-    const search = new URLSearchParams({ clientId, estado: next.estado ?? filter });
+    const search = new URLSearchParams({ estado: next.estado ?? filter });
+    if (!staffMode) search.set("clientId", clientId);
     if (next.item) search.set("item", next.item);
-    return `/guatemala/inventario?${search.toString()}`;
+    return `${basePath}?${search.toString()}`;
   }
 
   function openItem(id: string) {
@@ -158,7 +170,7 @@ export function InventoryScreen() {
     setSavingSale(true);
     setSaleError("");
     try {
-      const response = await apiPost(
+      const response = await guatemalaRequest(
         `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}/sale`,
         { clientId, chargedPrice }
       );
@@ -172,7 +184,7 @@ export function InventoryScreen() {
         setSaleError(body.error || "No se pudo registrar la venta.");
         if (response.status === 409) {
           setSaleStep(null);
-          const again = await apiGet(
+          const again = await guatemalaRequest(
             `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}?clientId=${encodeURIComponent(clientId)}`
           );
           const fresh = (await again.json()) as { ok?: boolean; item?: DetailItem };
@@ -241,6 +253,17 @@ export function InventoryScreen() {
                       <dt>Vendida</dt>
                       <dd>{formatGuatemalaMoment(detail.sale.soldAt)}</dd>
                     </div>
+                    {detail.sale.soldByRole === "encargado" && detail.sale.soldByUsername ? (
+                      <div>
+                        <dt>Registrada por</dt>
+                        <dd>{detail.sale.soldByUsername}</dd>
+                      </div>
+                    ) : detail.sale.soldByRole === "propietario" ? (
+                      <div>
+                        <dt>Registrada por</dt>
+                        <dd>Propietario</dd>
+                      </div>
+                    ) : null}
                   </>
                 ) : null}
                 <div>
@@ -333,9 +356,11 @@ export function InventoryScreen() {
             <button type="button" className="btn btn-primary" onClick={backToList}>
               Volver al inventario
             </button>
-            <a className="btn btn-ghost" href="/">
-              Volver a las prendas
-            </a>
+            {staffMode ? null : (
+              <a className="btn btn-ghost" href="/">
+                Volver a las prendas
+              </a>
+            )}
           </div>
         </section>
       ) : (
@@ -421,15 +446,14 @@ export function InventoryScreen() {
             ))}
           </div>
           <div className="gt-inventory-actions">
-            <a
-              className="btn btn-primary"
-              href={`/guatemala/reportes?clientId=${encodeURIComponent(clientId)}`}
-            >
+            <a className="btn btn-primary" href={staffMode ? reportsPath : `${reportsPath}?clientId=${encodeURIComponent(clientId)}`}>
               Reportes de ventas
             </a>
-            <a className="btn btn-ghost" href="/">
-              Volver a las prendas
-            </a>
+            {staffMode ? null : (
+              <a className="btn btn-ghost" href="/">
+                Volver a las prendas
+              </a>
+            )}
           </div>
         </section>
       )}

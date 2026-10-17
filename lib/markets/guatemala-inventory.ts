@@ -61,6 +61,8 @@ export interface GuatemalaSaleSnapshot {
   chargedPriceGtq: string;
   soldAt: string;
   isTest?: boolean;
+  soldByRole?: "propietario" | "encargado" | null;
+  soldByUsername?: string | null;
 }
 
 export interface StoredInventoryItem extends PreparedInventoryItem {
@@ -242,6 +244,12 @@ export interface SaleGarment {
   photos: InventoryPhoto[];
 }
 
+export interface SaleActor {
+  role: "propietario" | "encargado";
+  accountId: string | null;
+  username: string | null;
+}
+
 export interface RecordedSale {
   id: string;
   itemId: string;
@@ -250,6 +258,9 @@ export interface RecordedSale {
   publishedPriceGtq: string;
   chargedPriceGtq: string;
   soldAt: string;
+  soldByRole?: SaleActor["role"] | null;
+  soldByAccountId?: string | null;
+  soldByUsername?: string | null;
 }
 
 export interface SaleBook {
@@ -271,6 +282,7 @@ export function applyGuatemalaSale(
     chargedPrice: unknown;
     clientAllowed: boolean;
     now?: Date;
+    soldBy?: SaleActor | null;
   }
 ): { book: SaleBook; result: SaleApplyResult } {
   if (!input.clientAllowed) {
@@ -310,6 +322,9 @@ export function applyGuatemalaSale(
     publishedPriceGtq: item.priceGtq,
     chargedPriceGtq,
     soldAt,
+    soldByRole: input.soldBy?.role ?? null,
+    soldByAccountId: input.soldBy?.accountId ?? null,
+    soldByUsername: input.soldBy?.username ?? null,
   };
   const next: SaleBook = {
     items: book.items.map((entry) =>

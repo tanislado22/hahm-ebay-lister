@@ -21,6 +21,7 @@ import {
   type InventoryListFilter,
   type InventoryPhoto,
   type PreparedInventoryItem,
+  type SaleActor,
   type StoredInventoryItem,
 } from "@/lib/markets/guatemala-inventory";
 
@@ -119,12 +120,27 @@ async function createGuatemalaInventoryTables(): Promise<void> {
       published_price_gtq NUMERIC(12, 2) NOT NULL CHECK (published_price_gtq > 0),
       charged_price_gtq NUMERIC(12, 2) NOT NULL CHECK (charged_price_gtq > 0),
       sold_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      is_test BOOLEAN NOT NULL DEFAULT FALSE
+      is_test BOOLEAN NOT NULL DEFAULT FALSE,
+      sold_by_role TEXT,
+      sold_by_account_id TEXT,
+      sold_by_username TEXT
     )
   `;
   await sql`
     ALTER TABLE guatemala_inventory_sales
     ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT FALSE
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS sold_by_role TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS sold_by_account_id TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS sold_by_username TEXT
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS guatemala_schema_flags (
@@ -434,7 +450,8 @@ async function saleFor(clientId: string, itemId: string): Promise<GuatemalaSaleS
   const sql = getSql();
   const rows = await sql`
     SELECT sku, published_price_gtq::text AS published_price_gtq,
-      charged_price_gtq::text AS charged_price_gtq, sold_at, is_test
+      charged_price_gtq::text AS charged_price_gtq, sold_at, is_test,
+      sold_by_role, sold_by_username
     FROM guatemala_inventory_sales
     WHERE item_id = ${itemId} AND client_id = ${clientId}
     LIMIT 1
@@ -447,6 +464,8 @@ async function saleFor(clientId: string, itemId: string): Promise<GuatemalaSaleS
     chargedPriceGtq: normalizePriceText(row.charged_price_gtq),
     soldAt: isoTimestamp(row.sold_at),
     isTest: row.is_test === true || row.is_test === "t" || row.is_test === "true",
+    soldByRole: row.sold_by_role === "encargado" || row.sold_by_role === "propietario" ? row.sold_by_role : null,
+    soldByUsername: row.sold_by_username ? String(row.sold_by_username) : null,
   };
 }
 
@@ -464,6 +483,7 @@ export async function confirmGuatemalaSale(input: {
   clientId?: unknown;
   itemId?: unknown;
   chargedPrice?: unknown;
+  soldBy?: SaleActor | null;
 }): Promise<
   | {
       ok: true;
@@ -487,6 +507,9 @@ export async function confirmGuatemalaSale(input: {
   }
   const sql = getSql();
   const saleId = crypto.randomUUID();
+  const soldByRole = input.soldBy?.role ?? null;
+  const soldByAccountId = input.soldBy?.accountId ?? null;
+  const soldByUsername = input.soldBy?.username ?? null;
   let rows: Record<string, unknown>[];
   try {
     rows = await sql`
@@ -500,15 +523,17 @@ export async function confirmGuatemalaSale(input: {
       ),
       inserted_sale AS (
         INSERT INTO guatemala_inventory_sales (
-          id, item_id, client_id, sku, published_price_gtq, charged_price_gtq, sold_at
+          id, item_id, client_id, sku, published_price_gtq, charged_price_gtq, sold_at,
+          sold_by_role, sold_by_account_id, sold_by_username
         )
         SELECT ${saleId}, sold_item.id, sold_item.client_id, sold_item.sku,
-          sold_item.price_gtq, ${chargedPriceGtq}::numeric, NOW()
+          sold_item.price_gtq, ${chargedPriceGtq}::numeric, NOW(),
+          ${soldByRole}, ${soldByAccountId}, ${soldByUsername}
         FROM sold_item
         RETURNING item_id, sku, published_price_gtq::text AS published_price_gtq,
-          charged_price_gtq::text AS charged_price_gtq, sold_at
+          charged_price_gtq::text AS charged_price_gtq, sold_at, sold_by_role, sold_by_username
       )
-      SELECT item_id, sku, published_price_gtq, charged_price_gtq, sold_at
+      SELECT item_id, sku, published_price_gtq, charged_price_gtq, sold_at, sold_by_role, sold_by_username
       FROM inserted_sale
     `;
   } catch (error) {
@@ -538,6 +563,11 @@ export async function confirmGuatemalaSale(input: {
     publishedPriceGtq: normalizePriceText(saved.published_price_gtq),
     chargedPriceGtq: normalizePriceText(saved.charged_price_gtq),
     soldAt: isoTimestamp(saved.sold_at),
+    soldByRole:
+      saved.sold_by_role === "encargado" || saved.sold_by_role === "propietario"
+        ? saved.sold_by_role
+        : null,
+    soldByUsername: saved.sold_by_username ? String(saved.sold_by_username) : null,
   };
   return {
     ok: true,

@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { guardApiRequest } from "@/lib/api-guard";
+import { authorizeGuatemalaRequest } from "@/lib/markets/guatemala-guard";
 import { listGuatemalaSalesReport } from "@/lib/markets/guatemala-inventory-store";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const denied = guardApiRequest(request);
-  if (denied) return denied;
   const clientId = request.nextUrl.searchParams.get("clientId") ?? "";
+  const access = await authorizeGuatemalaRequest(request, clientId, "read");
+  if (!access.ok) return access.response;
   const period = request.nextUrl.searchParams.get("periodo");
   const from = request.nextUrl.searchParams.get("desde");
   const to = request.nextUrl.searchParams.get("hasta");
   const includeTests = request.nextUrl.searchParams.get("incluirPruebas") === "1";
   try {
     const result = await listGuatemalaSalesReport({
-      clientId,
+      clientId: access.clientId,
       period,
       from,
       to,
