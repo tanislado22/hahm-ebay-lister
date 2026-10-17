@@ -181,6 +181,7 @@ export function sessionStillValid(account: AccessAccount, session: AccessSession
 
 export function decideGuatemalaAccess(input: {
   owner: boolean;
+  staffPanel?: boolean;
   account: AccessAccount | null;
   session: AccessSession | null;
   requestedClientId: string;
@@ -188,13 +189,14 @@ export function decideGuatemalaAccess(input: {
   now?: Date;
 }): AccessDecision {
   const ownerActor: SaleActor = { role: "propietario", accountId: null, username: null };
+  const owner = input.staffPanel ? false : input.owner;
   const staffValid =
     input.account && input.session
       ? sessionStillValid(input.account, input.session, input.now)
       : false;
 
   if (input.action === "write" || input.action === "manage") {
-    if (input.owner) {
+    if (owner) {
       return { ok: true, actor: ownerActor, clientId: input.requestedClientId };
     }
     if (staffValid) {
@@ -218,7 +220,7 @@ export function decideGuatemalaAccess(input: {
     };
   }
 
-  if (input.owner) {
+  if (owner) {
     return { ok: true, actor: ownerActor, clientId: input.requestedClientId };
   }
   if (!staffValid || !input.account) {

@@ -15,15 +15,18 @@ export async function authorizeGuatemalaRequest(
   if (limited) return { ok: false, response: limited };
   const token = request.cookies.get(STAFF_COOKIE)?.value;
   const loaded = await loadStaffAuth(token);
+  const staffPanel = request.headers.get("x-guatemala-actor") === "encargado";
   const decision = decideGuatemalaAccess({
     owner: ownerAccessGranted(request),
+    staffPanel,
     account: loaded?.account ?? null,
     session: loaded?.session ?? null,
     requestedClientId,
     action,
   });
   if (!decision.ok) {
-    const code = decision.code === "ACCESS_CODE_REQUIRED" && token ? "STAFF_SESSION_ENDED" : decision.code;
+    const ended = decision.status === 401 && (staffPanel || (decision.code === "ACCESS_CODE_REQUIRED" && Boolean(token)));
+    const code = ended ? "STAFF_SESSION_ENDED" : decision.code;
     const error = code === "STAFF_SESSION_ENDED" ? "Tu sesión ya no es válida. Entra de nuevo." : decision.error;
     return {
       ok: false,

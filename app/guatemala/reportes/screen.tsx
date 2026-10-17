@@ -59,6 +59,9 @@ export function SalesReportScreen({
   const router = useRouter();
   const staffMode = Boolean(lockedClientId);
   const clientId = lockedClientId || params.get("clientId") || "";
+  function storeRequest(path: string, body?: unknown) {
+    return guatemalaRequest(path, body, staffMode ? { actor: "encargado" } : undefined);
+  }
   const period = parseSalesReportPeriod(params.get("periodo"));
   const from = params.get("desde") ?? "";
   const to = params.get("hasta") ?? "";
@@ -98,7 +101,7 @@ export function SalesReportScreen({
           search.set("desde", from);
           search.set("hasta", to);
         }
-        const response = await guatemalaRequest(`/api/markets/guatemala/reports?${search.toString()}`);
+        const response = await storeRequest(`/api/markets/guatemala/reports?${search.toString()}`);
         const body = (await response.json()) as ReportPayload & { ok?: boolean; error?: string };
         if (signal.aborted) return;
         if (!response.ok || !body.ok) {

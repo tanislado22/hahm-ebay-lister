@@ -1,6 +1,7 @@
 import { getSql } from "@/lib/db";
 import { clientIsGuatemala } from "@/lib/markets/client-market";
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
+import { EXISTING_PRUEBA1_TEST_SALE } from "@/lib/markets/guatemala-recorded-test";
 import {
   guatemalaSalesRange,
   parseSalesReportPeriod,
@@ -165,6 +166,35 @@ async function markRecordedSku3002SaleAsTest(): Promise<void> {
     SET is_test = TRUE
     FROM flag
     WHERE sale.sku = '3002'
+      AND sale.sold_at <= flag.applied_at
+      AND EXISTS (
+        SELECT 1
+        FROM client_markets AS market
+        WHERE market.client_id = sale.client_id
+          AND market.market_code = ${GUATEMALA_MARKET.code}
+      )
+  `;
+}
+
+// Marks the one preview sale of prueba1, Q40 published and Q20 charged at 03:22 Guatemala.
+// The flag runs once and does not change price, date, or author. Later prueba1 sales stay real.
+async function markRecordedPrueba1SaleAsTest(): Promise<void> {
+  const sql = getSql();
+  await sql`
+    WITH flag AS (
+      INSERT INTO guatemala_schema_flags (flag)
+      VALUES ('mark-existing-guatemala-prueba1-q40-q20-20261017T0922-sale-as-test')
+      ON CONFLICT DO NOTHING
+      RETURNING applied_at
+    )
+    UPDATE guatemala_inventory_sales AS sale
+    SET is_test = TRUE
+    FROM flag
+    WHERE sale.sku = ${EXISTING_PRUEBA1_TEST_SALE.sku}
+      AND sale.published_price_gtq = ${EXISTING_PRUEBA1_TEST_SALE.publishedPriceGtq}::numeric
+      AND sale.charged_price_gtq = ${EXISTING_PRUEBA1_TEST_SALE.chargedPriceGtq}::numeric
+      AND sale.sold_at >= ${EXISTING_PRUEBA1_TEST_SALE.soldFromInclusive}::timestamptz
+      AND sale.sold_at < ${EXISTING_PRUEBA1_TEST_SALE.soldToExclusive}::timestamptz
       AND sale.sold_at <= flag.applied_at
       AND EXISTS (
         SELECT 1
@@ -348,6 +378,7 @@ export async function listGuatemalaInventory(
     return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
   }
   await markRecordedSku3002SaleAsTest();
+  await markRecordedPrueba1SaleAsTest();
   const sql = getSql();
   const pattern = inventoryLikePattern(query);
   const filter = inventoryListFilter(filterInput);
@@ -629,6 +660,7 @@ export async function listGuatemalaSalesReport(input: {
     return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
   }
   await markRecordedSku3002SaleAsTest();
+  await markRecordedPrueba1SaleAsTest();
   const sql = getSql();
   const rows = await sql`
     SELECT sale.item_id, sale.sku, item.title,

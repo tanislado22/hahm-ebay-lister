@@ -66,6 +66,9 @@ export function InventoryScreen({
   const clientId = lockedClientId || params.get("clientId") || "";
   const itemId = params.get("item") ?? "";
   const filter = inventoryListFilter(params.get("estado"));
+  function storeRequest(path: string, body?: unknown) {
+    return guatemalaRequest(path, body, staffMode ? { actor: "encargado" } : undefined);
+  }
   const [query, setQuery] = useState("");
   const [available, setAvailable] = useState(0);
   const [items, setItems] = useState<ListItem[]>([]);
@@ -91,7 +94,7 @@ export function InventoryScreen({
       setError("");
       try {
         if (itemId) {
-          const response = await guatemalaRequest(
+          const response = await storeRequest(
             `/api/markets/guatemala/inventory/${encodeURIComponent(itemId)}?clientId=${encodeURIComponent(clientId)}`
           );
           const body = (await response.json()) as { ok?: boolean; error?: string; item?: DetailItem };
@@ -103,7 +106,7 @@ export function InventoryScreen({
             setDetail(body.item);
           }
         } else {
-          const response = await guatemalaRequest(
+          const response = await storeRequest(
             `/api/markets/guatemala/inventory?clientId=${encodeURIComponent(clientId)}&q=${encodeURIComponent(query)}&estado=${encodeURIComponent(filter)}`
           );
           const body = (await response.json()) as {
@@ -170,7 +173,7 @@ export function InventoryScreen({
     setSavingSale(true);
     setSaleError("");
     try {
-      const response = await guatemalaRequest(
+      const response = await storeRequest(
         `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}/sale`,
         { clientId, chargedPrice }
       );
@@ -184,7 +187,7 @@ export function InventoryScreen({
         setSaleError(body.error || "No se pudo registrar la venta.");
         if (response.status === 409) {
           setSaleStep(null);
-          const again = await guatemalaRequest(
+          const again = await storeRequest(
             `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}?clientId=${encodeURIComponent(clientId)}`
           );
           const fresh = (await again.json()) as { ok?: boolean; item?: DetailItem };

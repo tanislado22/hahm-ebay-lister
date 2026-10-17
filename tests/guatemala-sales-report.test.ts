@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  markExistingPrueba1SaleAsTest,
+  matchesExistingPrueba1TestSale,
+  type ExistingSaleMark,
+} from "@/lib/markets/guatemala-recorded-test";
+import {
   chargedTotalForDisplay,
   guatemalaSalesRange,
   saleFallsInRange,
@@ -108,5 +113,40 @@ describe("reportes de ventas de Guatemala", () => {
     expect(range.range.end.toISOString()).toBe("2026-10-17T06:00:00.000Z");
     expect(guatemalaSalesRange({ period: "rango", from: "2026-10-16", to: "2026-10-15" }).ok).toBe(false);
     expect(guatemalaSalesRange({ period: "rango", from: "2026-02-31", to: "2026-03-01" }).ok).toBe(false);
+  });
+
+  it("marca solo la venta ya registrada de prueba1 y la excluye del total normal", () => {
+    const recorded: ExistingSaleMark = {
+      sku: "prueba1",
+      publishedPriceGtq: "40.00",
+      chargedPriceGtq: "20.00",
+      soldAt: "2026-10-17T09:22:40.000Z",
+      clientIsGuatemala: true,
+      isTest: false,
+      soldByRole: "propietario",
+      soldByUsername: null,
+    };
+    const marked = markExistingPrueba1SaleAsTest(recorded, false);
+    expect(marked).not.toBe(recorded);
+    expect(marked.isTest).toBe(true);
+    expect(marked.chargedPriceGtq).toBe("20.00");
+    expect(marked.publishedPriceGtq).toBe("40.00");
+    expect(marked.soldAt).toBe(recorded.soldAt);
+    expect(marked.soldByRole).toBe("propietario");
+    expect(markExistingPrueba1SaleAsTest(recorded, true)).toBe(recorded);
+    expect(matchesExistingPrueba1TestSale({ ...recorded, sku: "3001" })).toBe(false);
+    expect(matchesExistingPrueba1TestSale({ ...recorded, sku: "3002", chargedPriceGtq: "15.00" })).toBe(false);
+    expect(matchesExistingPrueba1TestSale({ ...recorded, soldAt: "2026-10-17T09:23:00.000Z" })).toBe(false);
+    expect(matchesExistingPrueba1TestSale({ ...recorded, clientIsGuatemala: false })).toBe(false);
+    const summary = summarizeChargedSales(
+      [
+        { ...marked, title: "Prueba" },
+        sale({ sku: "4100", chargedPriceGtq: "12.00", publishedPriceGtq: "12.00", soldAt: recorded.soldAt }),
+      ],
+      false
+    );
+    expect(summary.totalChargedGtq).toBe("12.00");
+    expect(summary.count).toBe(1);
+    expect(summarizeChargedSales([{ ...marked, title: "Prueba" }], true).totalChargedGtq).toBe("20.00");
   });
 });

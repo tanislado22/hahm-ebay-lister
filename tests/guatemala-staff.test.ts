@@ -67,6 +67,38 @@ describe("acceso del encargado", () => {
     expect(assignedStaffClientId(null)).toBeNull();
   });
 
+  it("atribuye la venta del panel al encargado aunque también exista el acceso del propietario", () => {
+    const both = {
+      owner: true,
+      account: account(),
+      session: session(),
+      requestedClientId: GUATEMALA_ID,
+      now: NOW,
+    };
+    const fromPanel = decideGuatemalaAccess({ ...both, staffPanel: true, action: "sell" });
+    expect(fromPanel.ok && fromPanel.actor).toMatchObject({
+      role: "encargado",
+      accountId: "cuenta-1",
+      username: "ana",
+    });
+    const fromOwner = decideGuatemalaAccess({ ...both, staffPanel: false, action: "sell" });
+    expect(fromOwner.ok && fromOwner.actor.role).toBe("propietario");
+    expect(
+      decideGuatemalaAccess({ ...both, staffPanel: true, action: "write" })
+    ).toMatchObject({ ok: false, status: 403 });
+    expect(
+      decideGuatemalaAccess({
+        owner: true,
+        staffPanel: true,
+        account: null,
+        session: null,
+        requestedClientId: GUATEMALA_ID,
+        action: "sell",
+        now: NOW,
+      })
+    ).toMatchObject({ ok: false, status: 401 });
+  });
+
   it("deja ver y vender solo el cliente de la sesión", () => {
     const allowed = decideGuatemalaAccess({
       owner: false,
