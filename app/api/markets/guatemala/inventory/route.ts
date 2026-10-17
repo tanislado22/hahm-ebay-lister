@@ -12,8 +12,9 @@ export async function GET(request: NextRequest) {
   if (denied) return denied;
   const clientId = request.nextUrl.searchParams.get("clientId") ?? "";
   const query = request.nextUrl.searchParams.get("q") ?? "";
+  const filter = request.nextUrl.searchParams.get("estado");
   try {
-    const result = await listGuatemalaInventory(clientId, query);
+    const result = await listGuatemalaInventory(clientId, query, filter);
     if ("ok" in result && result.ok === false) {
       return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
     }

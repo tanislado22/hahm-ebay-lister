@@ -1,15 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { apiGet } from "@/lib/api-client";
+import { apiGet, apiPost } from "@/lib/api-client";
+import { formatGuatemalaMoment } from "@/lib/markets/guatemala";
 import {
   availableGarmentLabel,
   formatStoredQuetzales,
   guatemalaConditionLabel,
+  guatemalaInventoryStatusLabel,
+  inventoryListFilter,
+  quetzalPriceText,
+  type InventoryListFilter,
+  type InventoryPhoto,
 } from "@/lib/markets/guatemala-inventory";
-import type { InventoryPhoto } from "@/lib/markets/guatemala-inventory";
 import "./inventory.css";
+
+interface SaleInfo {
+  sku: string;
+  publishedPriceGtq: string;
+  chargedPriceGtq: string;
+  soldAt: string;
+}
 
 interface ListItem {
   id: string;
@@ -26,6 +38,7 @@ interface DetailItem extends ListItem {
   brand: string;
   condition: string;
   photos: InventoryPhoto[];
+  sale?: SaleInfo | null;
 }
 
 function photoSource(photo: InventoryPhoto): string {
@@ -37,12 +50,18 @@ export function InventoryScreen() {
   const router = useRouter();
   const clientId = params.get("clientId") ?? "";
   const itemId = params.get("item") ?? "";
+  const filter = inventoryListFilter(params.get("estado"));
   const [query, setQuery] = useState("");
   const [available, setAvailable] = useState(0);
   const [items, setItems] = useState<ListItem[]>([]);
   const [detail, setDetail] = useState<DetailItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [saleStep, setSaleStep] = useState<"form" | "confirm" | null>(null);
+  const [chargedDraft, setChargedDraft] = useState("");
+  const [saleError, setSaleError] = useState("");
+  const [savingSale, setSavingSale] = useState(false);
+  const savingSaleRef = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -70,7 +89,7 @@ export function InventoryScreen() {
           }
         } else {
           const response = await apiGet(
-            `/api/markets/guatemala/inventory?clientId=${encodeURIComponent(clientId)}&q=${encodeURIComponent(query)}`
+            `/api/markets/guatemala/inventory?clientId=${encodeURIComponent(clientId)}&q=${encodeURIComponent(query)}&estado=${encodeURIComponent(filter)}`
           );
           const body = (await response.json()) as {
             ok?: boolean;
@@ -101,16 +120,77 @@ export function InventoryScreen() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [clientId, itemId, query]);
+  }, [clientId, itemId, query, filter]);
+
+  useEffect(() => {
+    setSaleStep(null);
+    setChargedDraft("");
+    setSaleError("");
+  }, [itemId]);
+
+  function inventoryHref(next: { item?: string; estado?: InventoryListFilter }) {
+    const search = new URLSearchParams({ clientId, estado: next.estado ?? filter });
+    if (next.item) search.set("item", next.item);
+    return `/guatemala/inventario?${search.toString()}`;
+  }
 
   function openItem(id: string) {
-    const next = new URLSearchParams({ clientId, item: id });
-    router.push(`/guatemala/inventario?${next.toString()}`);
+    router.push(inventoryHref({ item: id }));
   }
 
   function backToList() {
-    const next = new URLSearchParams({ clientId });
-    router.push(`/guatemala/inventario?${next.toString()}`);
+    router.push(inventoryHref({}));
+  }
+
+  function chooseFilter(next: InventoryListFilter) {
+    router.replace(inventoryHref({ estado: next }));
+  }
+
+  const chargedPrice = quetzalPriceText(chargedDraft);
+
+  async function confirmSale() {
+    if (!detail || !chargedPrice || savingSaleRef.current) return;
+    savingSaleRef.current = true;
+    setSavingSale(true);
+    setSaleError("");
+    try {
+      const response = await apiPost(
+        `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}/sale`,
+        { clientId, chargedPrice }
+      );
+      const body = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        available?: number;
+        item?: { sku: string; status: string; priceGtq: string; sale: SaleInfo };
+      };
+      if (!response.ok || !body.ok || !body.item) {
+        setSaleError(body.error || "No se pudo registrar la venta.");
+        if (response.status === 409) {
+          setSaleStep(null);
+          const again = await apiGet(
+            `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}?clientId=${encodeURIComponent(clientId)}`
+          );
+          const fresh = (await again.json()) as { ok?: boolean; item?: DetailItem };
+          if (again.ok && fresh.ok && fresh.item) setDetail(fresh.item);
+        }
+        return;
+      }
+      setAvailable(body.available ?? available);
+      setDetail({
+        ...detail,
+        sku: body.item.sku,
+        status: body.item.status,
+        priceGtq: body.item.priceGtq,
+        sale: body.item.sale,
+      });
+      setSaleStep(null);
+    } catch {
+      setSaleError("No se pudo registrar la venta.");
+    } finally {
+      savingSaleRef.current = false;
+      setSavingSale(false);
+    }
   }
 
   return (
@@ -138,12 +218,26 @@ export function InventoryScreen() {
               </div>
               <h2 id="inventory-detail-heading">{detail.title || "Prenda sin título"}</h2>
               <p className="gt-inventory-sku">SKU {detail.sku}</p>
-              <span className="gt-inventory-status">Disponible</span>
+              <span className={`gt-inventory-status${detail.status === "vendida" ? " is-sold" : ""}`}>
+                {guatemalaInventoryStatusLabel(detail.status)}
+              </span>
               <dl className="gt-inventory-facts">
                 <div>
-                  <dt>Precio</dt>
-                  <dd>{formatStoredQuetzales(detail.priceGtq)}</dd>
+                  <dt>Precio publicado</dt>
+                  <dd>{formatStoredQuetzales(detail.sale?.publishedPriceGtq || detail.priceGtq)}</dd>
                 </div>
+                {detail.sale ? (
+                  <>
+                    <div>
+                      <dt>Precio cobrado</dt>
+                      <dd>{formatStoredQuetzales(detail.sale.chargedPriceGtq)}</dd>
+                    </div>
+                    <div>
+                      <dt>Vendida</dt>
+                      <dd>{formatGuatemalaMoment(detail.sale.soldAt)}</dd>
+                    </div>
+                  </>
+                ) : null}
                 <div>
                   <dt>Talla</dt>
                   <dd>{detail.size || "—"}</dd>
@@ -158,6 +252,76 @@ export function InventoryScreen() {
                 </div>
               </dl>
               {detail.description ? <p>{detail.description}</p> : null}
+              {detail.status === "disponible" && saleStep === null ? (
+                <button type="button" className="btn btn-primary gt-sale-start" onClick={() => setSaleStep("form")}>
+                  Registrar venta
+                </button>
+              ) : null}
+              {detail.status === "disponible" && saleStep === "form" ? (
+                <form
+                  className="gt-sale-box"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (!chargedPrice) {
+                      setSaleError("Escribe un precio cobrado mayor que cero.");
+                      return;
+                    }
+                    setSaleError("");
+                    setSaleStep("confirm");
+                  }}
+                >
+                  <h3>Registrar venta</h3>
+                  <p>SKU {detail.sku}</p>
+                  <p>Precio publicado {formatStoredQuetzales(detail.priceGtq)}</p>
+                  <label htmlFor="charged-price">Precio cobrado</label>
+                  <div className="gt-sale-price">
+                    <span aria-hidden="true">Q</span>
+                    <input
+                      id="charged-price"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      placeholder="0.00"
+                      value={chargedDraft}
+                      onChange={(event) => setChargedDraft(event.target.value)}
+                    />
+                  </div>
+                  {saleError ? <p className="note note-error" role="alert">{saleError}</p> : null}
+                  <div className="gt-inventory-actions">
+                    <button type="submit" className="btn btn-primary">Continuar</button>
+                    <button type="button" className="btn btn-ghost" onClick={() => { setSaleStep(null); setSaleError(""); }}>
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+              {detail.status === "disponible" && saleStep === "confirm" && chargedPrice ? (
+                <div className="gt-sale-box">
+                  <h3>Resumen de la venta</h3>
+                  <p>SKU {detail.sku}</p>
+                  <p>Precio publicado {formatStoredQuetzales(detail.priceGtq)}</p>
+                  <p>Precio cobrado {formatStoredQuetzales(chargedPrice)}</p>
+                  {saleError ? <p className="note note-error" role="alert">{saleError}</p> : null}
+                  <div className="gt-inventory-actions">
+                    <button type="button" className="btn btn-primary" disabled={savingSale} onClick={() => void confirmSale()}>
+                      {savingSale ? "Guardando…" : "Confirmar venta"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={savingSale}
+                      onClick={() => {
+                        setSaleStep(null);
+                        setSaleError("");
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </>
           ) : null}
           <div className="gt-inventory-actions">
@@ -175,6 +339,19 @@ export function InventoryScreen() {
             <h2 id="inventory-list-heading" className="gt-inventory-count">
               {availableGarmentLabel(available)}
             </h2>
+            <div className="gt-inventory-filters" role="group" aria-label="Filtrar prendas">
+              {(["disponibles", "vendidas", "todas"] as InventoryListFilter[]).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className="gt-filter"
+                  aria-pressed={filter === option}
+                  onClick={() => chooseFilter(option)}
+                >
+                  {option === "disponibles" ? "Disponibles" : option === "vendidas" ? "Vendidas" : "Todas"}
+                </button>
+              ))}
+            </div>
             <label className="gt-inventory-search">
               Buscar
               <input
@@ -194,7 +371,11 @@ export function InventoryScreen() {
             <p>
               {query.trim()
                 ? "Ninguna prenda coincide con la búsqueda."
-                : "Todavía no hay prendas en el inventario."}
+                : filter === "vendidas"
+                  ? "No hay prendas vendidas."
+                  : filter === "disponibles"
+                    ? "No hay prendas disponibles."
+                    : "Todavía no hay prendas en el inventario."}
             </p>
           ) : null}
           <div className="gt-inventory-list">
@@ -217,7 +398,9 @@ export function InventoryScreen() {
                     {item.size ? `Talla ${item.size} · ` : ""}
                     {formatStoredQuetzales(item.priceGtq)}
                   </p>
-                  <span className="gt-inventory-status">Disponible</span>
+                  <span className={`gt-inventory-status${item.status === "vendida" ? " is-sold" : ""}`}>
+                    {guatemalaInventoryStatusLabel(item.status)}
+                  </span>
                 </span>
               </button>
             ))}

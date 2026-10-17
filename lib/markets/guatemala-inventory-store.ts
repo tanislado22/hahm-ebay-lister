@@ -3,9 +3,16 @@ import { clientIsGuatemala } from "@/lib/markets/client-market";
 import {
   GUATEMALA_INVENTORY_MESSAGES,
   GUATEMALA_INVENTORY_STATUS,
+  GUATEMALA_SALE_MESSAGES,
+  GUATEMALA_SOLD_STATUS,
   inventoryLikePattern,
+  inventoryListFilter,
   prepareInventorySave,
+  quetzalPriceText,
   resolveInventoryInsert,
+  type GuatemalaSaleSnapshot,
+  type InventoryItemStatus,
+  type InventoryListFilter,
   type InventoryPhoto,
   type PreparedInventoryItem,
   type StoredInventoryItem,
@@ -97,6 +104,17 @@ async function createGuatemalaInventoryTables(): Promise<void> {
     CREATE INDEX IF NOT EXISTS guatemala_inventory_items_client_idx
     ON guatemala_inventory_items (client_id)
   `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_inventory_sales (
+      id TEXT PRIMARY KEY,
+      item_id TEXT NOT NULL UNIQUE,
+      client_id TEXT NOT NULL,
+      sku TEXT NOT NULL,
+      published_price_gtq NUMERIC(12, 2) NOT NULL CHECK (published_price_gtq > 0),
+      charged_price_gtq NUMERIC(12, 2) NOT NULL CHECK (charged_price_gtq > 0),
+      sold_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 }
 
 interface ItemRow {
@@ -113,7 +131,15 @@ interface ItemRow {
   status: string;
 }
 
-function storedFromRow(row: ItemRow, photos: InventoryPhoto[]): StoredInventoryItem {
+function itemStatus(value: unknown): InventoryItemStatus {
+  return value === GUATEMALA_SOLD_STATUS ? GUATEMALA_SOLD_STATUS : GUATEMALA_INVENTORY_STATUS;
+}
+
+function storedFromRow(
+  row: ItemRow,
+  photos: InventoryPhoto[],
+  sale: GuatemalaSaleSnapshot | null = null
+): StoredInventoryItem {
   return {
     id: String(row.id),
     clientId: String(row.client_id),
@@ -126,7 +152,8 @@ function storedFromRow(row: ItemRow, photos: InventoryPhoto[]): StoredInventoryI
     condition: String(row.condition ?? ""),
     priceGtq: normalizePriceText(row.price_gtq),
     photos,
-    status: GUATEMALA_INVENTORY_STATUS,
+    status: itemStatus(row.status),
+    sale,
   };
 }
 
@@ -246,13 +273,14 @@ export interface InventoryListItem {
   title: string;
   size: string;
   priceGtq: string;
-  status: typeof GUATEMALA_INVENTORY_STATUS;
+  status: InventoryItemStatus;
   cover: InventoryPhoto | null;
 }
 
 export async function listGuatemalaInventory(
   clientId: string,
-  query: string
+  query: string,
+  filterInput: unknown = "disponibles"
 ): Promise<{ available: number; items: InventoryListItem[] } | { ok: false; status: 403; error: string }> {
   await ensureGuatemalaInventoryTables();
   if (!(await clientIsGuatemala(clientId))) {
@@ -260,6 +288,8 @@ export async function listGuatemalaInventory(
   }
   const sql = getSql();
   const pattern = inventoryLikePattern(query);
+  const filter = inventoryListFilter(filterInput);
+  const status = statusForFilter(filter);
   const counts = await sql`
     SELECT COUNT(*)::int AS available
     FROM guatemala_inventory_items
@@ -278,6 +308,7 @@ export async function listGuatemalaInventory(
           LIMIT 1
         ) AS photo ON TRUE
         WHERE item.client_id = ${clientId}
+          AND (${status}::text IS NULL OR item.status = ${status})
           AND (item.sku ILIKE ${pattern} ESCAPE '\\' OR item.title ILIKE ${pattern} ESCAPE '\\')
         ORDER BY item.created_at DESC
       `
@@ -293,6 +324,7 @@ export async function listGuatemalaInventory(
           LIMIT 1
         ) AS photo ON TRUE
         WHERE item.client_id = ${clientId}
+          AND (${status}::text IS NULL OR item.status = ${status})
         ORDER BY item.created_at DESC
       `;
   return {
@@ -303,13 +335,19 @@ export async function listGuatemalaInventory(
       title: String(row.title ?? ""),
       size: String(row.size ?? ""),
       priceGtq: normalizePriceText(row.price_gtq),
-      status: GUATEMALA_INVENTORY_STATUS,
+      status: itemStatus(row.status),
       cover:
         row.photo_id && row.data
           ? { id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }
           : null,
     })),
   };
+}
+
+function statusForFilter(filter: InventoryListFilter): string | null {
+  if (filter === "disponibles") return GUATEMALA_INVENTORY_STATUS;
+  if (filter === "vendidas") return GUATEMALA_SOLD_STATUS;
+  return null;
 }
 
 export async function readGuatemalaInventoryItem(
@@ -329,6 +367,127 @@ export async function readGuatemalaInventoryItem(
     LIMIT 1
   `;
   const row = rows[0] as ItemRow | undefined;
-  if (!row) return { ok: false, status: 404, error: "No se encontró la prenda." };
-  return storedFromRow(row, await photosFor(itemId));
+  if (!row) return { ok: false, status: 404, error: GUATEMALA_SALE_MESSAGES.notFound };
+  return storedFromRow(row, await photosFor(itemId), await saleFor(clientId, itemId));
+}
+
+async function saleFor(clientId: string, itemId: string): Promise<GuatemalaSaleSnapshot | null> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT sku, published_price_gtq::text AS published_price_gtq,
+      charged_price_gtq::text AS charged_price_gtq, sold_at
+    FROM guatemala_inventory_sales
+    WHERE item_id = ${itemId} AND client_id = ${clientId}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    sku: String(row.sku),
+    publishedPriceGtq: normalizePriceText(row.published_price_gtq),
+    chargedPriceGtq: normalizePriceText(row.charged_price_gtq),
+    soldAt: isoTimestamp(row.sold_at),
+  };
+}
+
+function isoTimestamp(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  const parsed = new Date(String(value ?? ""));
+  return Number.isNaN(parsed.getTime()) ? String(value ?? "") : parsed.toISOString();
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "23505");
+}
+
+export async function confirmGuatemalaSale(input: {
+  clientId?: unknown;
+  itemId?: unknown;
+  chargedPrice?: unknown;
+}): Promise<
+  | {
+      ok: true;
+      available: number;
+      item: { id: string; sku: string; status: InventoryItemStatus; priceGtq: string; sale: GuatemalaSaleSnapshot };
+    }
+  | { ok: false; status: 400 | 403 | 404 | 409; error: string }
+> {
+  const clientId = typeof input.clientId === "string" ? input.clientId.trim() : "";
+  const itemId = typeof input.itemId === "string" ? input.itemId.trim() : "";
+  if (!clientId || !itemId) {
+    return { ok: false, status: 404, error: GUATEMALA_SALE_MESSAGES.notFound };
+  }
+  const chargedPriceGtq = quetzalPriceText(input.chargedPrice);
+  if (!chargedPriceGtq) {
+    return { ok: false, status: 400, error: GUATEMALA_SALE_MESSAGES.priceInvalid };
+  }
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const sql = getSql();
+  const saleId = crypto.randomUUID();
+  let rows: Record<string, unknown>[];
+  try {
+    rows = await sql`
+      WITH sold_item AS (
+        UPDATE guatemala_inventory_items
+        SET status = ${GUATEMALA_SOLD_STATUS}
+        WHERE id = ${itemId}
+          AND client_id = ${clientId}
+          AND status = ${GUATEMALA_INVENTORY_STATUS}
+        RETURNING id, client_id, sku, price_gtq
+      ),
+      inserted_sale AS (
+        INSERT INTO guatemala_inventory_sales (
+          id, item_id, client_id, sku, published_price_gtq, charged_price_gtq, sold_at
+        )
+        SELECT ${saleId}, sold_item.id, sold_item.client_id, sold_item.sku,
+          sold_item.price_gtq, ${chargedPriceGtq}::numeric, NOW()
+        FROM sold_item
+        RETURNING item_id, sku, published_price_gtq::text AS published_price_gtq,
+          charged_price_gtq::text AS charged_price_gtq, sold_at
+      )
+      SELECT item_id, sku, published_price_gtq, charged_price_gtq, sold_at
+      FROM inserted_sale
+    `;
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return { ok: false, status: 409, error: GUATEMALA_SALE_MESSAGES.alreadySold };
+    }
+    throw error;
+  }
+  const saved = rows[0];
+  if (!saved) {
+    const existing = await sql`
+      SELECT status
+      FROM guatemala_inventory_items
+      WHERE id = ${itemId} AND client_id = ${clientId}
+      LIMIT 1
+    `;
+    if (!existing[0]) return { ok: false, status: 404, error: GUATEMALA_SALE_MESSAGES.notFound };
+    return { ok: false, status: 409, error: GUATEMALA_SALE_MESSAGES.alreadySold };
+  }
+  const counts = await sql`
+    SELECT COUNT(*)::int AS available
+    FROM guatemala_inventory_items
+    WHERE client_id = ${clientId} AND status = ${GUATEMALA_INVENTORY_STATUS}
+  `;
+  const sale: GuatemalaSaleSnapshot = {
+    sku: String(saved.sku),
+    publishedPriceGtq: normalizePriceText(saved.published_price_gtq),
+    chargedPriceGtq: normalizePriceText(saved.charged_price_gtq),
+    soldAt: isoTimestamp(saved.sold_at),
+  };
+  return {
+    ok: true,
+    available: Number(counts[0]?.available ?? 0),
+    item: {
+      id: itemId,
+      sku: sale.sku,
+      status: GUATEMALA_SOLD_STATUS,
+      priceGtq: sale.publishedPriceGtq,
+      sale,
+    },
+  };
 }

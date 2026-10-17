@@ -1,6 +1,20 @@
 import { exactGuatemalaSku } from "@/lib/markets/guatemala";
 
 export const GUATEMALA_INVENTORY_STATUS = "disponible" as const;
+export const GUATEMALA_SOLD_STATUS = "vendida" as const;
+
+export type InventoryItemStatus =
+  | typeof GUATEMALA_INVENTORY_STATUS
+  | typeof GUATEMALA_SOLD_STATUS;
+
+export type InventoryListFilter = "disponibles" | "vendidas" | "todas";
+
+export const GUATEMALA_SALE_MESSAGES = {
+  priceInvalid: "Escribe un precio cobrado mayor que cero.",
+  alreadySold: "Esta prenda ya fue vendida.",
+  notFound: "No se encontró la prenda.",
+  registered: "Venta registrada.",
+} as const;
 
 export const GUATEMALA_INVENTORY_MESSAGES = {
   skuRequired: "Escribe el SKU antes de guardar.",
@@ -41,9 +55,17 @@ export interface PreparedInventoryItem {
   photos: InventoryPhoto[];
 }
 
+export interface GuatemalaSaleSnapshot {
+  sku: string;
+  publishedPriceGtq: string;
+  chargedPriceGtq: string;
+  soldAt: string;
+}
+
 export interface StoredInventoryItem extends PreparedInventoryItem {
   id: string;
-  status: typeof GUATEMALA_INVENTORY_STATUS;
+  status: InventoryItemStatus;
+  sale?: GuatemalaSaleSnapshot | null;
 }
 
 type PrepareResult =
@@ -199,4 +221,109 @@ export function inventoryLikePattern(query: string): string {
 
 export function availableGarmentLabel(count: number): string {
   return count === 1 ? "1 prenda disponible" : `${count} prendas disponibles`;
+}
+
+export function inventoryListFilter(value: unknown): InventoryListFilter {
+  if (value === "vendidas" || value === "todas" || value === "disponibles") return value;
+  return "disponibles";
+}
+
+export function guatemalaInventoryStatusLabel(status: string): string {
+  return status === GUATEMALA_SOLD_STATUS ? "Vendida" : "Disponible";
+}
+
+export interface SaleGarment {
+  id: string;
+  clientId: string;
+  sku: string;
+  priceGtq: string;
+  status: InventoryItemStatus;
+  photos: InventoryPhoto[];
+}
+
+export interface RecordedSale {
+  id: string;
+  itemId: string;
+  clientId: string;
+  sku: string;
+  publishedPriceGtq: string;
+  chargedPriceGtq: string;
+  soldAt: string;
+}
+
+export interface SaleBook {
+  items: SaleGarment[];
+  sales: RecordedSale[];
+}
+
+export type SaleApplyResult =
+  | { ok: true; sale: RecordedSale; available: number }
+  | { ok: false; status: 400 | 403 | 404 | 409; error: string };
+
+// Confirms a sale only when the garment is still available. A rejection
+// returns the same book, so a failed attempt cannot leave a partial sale.
+export function applyGuatemalaSale(
+  book: SaleBook,
+  input: {
+    clientId: string;
+    itemId: string;
+    chargedPrice: unknown;
+    clientAllowed: boolean;
+    now?: Date;
+  }
+): { book: SaleBook; result: SaleApplyResult } {
+  if (!input.clientAllowed) {
+    return {
+      book,
+      result: { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala },
+    };
+  }
+  const chargedPriceGtq = quetzalPriceText(input.chargedPrice);
+  if (!chargedPriceGtq) {
+    return {
+      book,
+      result: { ok: false, status: 400, error: GUATEMALA_SALE_MESSAGES.priceInvalid },
+    };
+  }
+  const item = book.items.find(
+    (entry) => entry.id === input.itemId && entry.clientId === input.clientId
+  );
+  if (!item) {
+    return { book, result: { ok: false, status: 404, error: GUATEMALA_SALE_MESSAGES.notFound } };
+  }
+  const alreadySold =
+    item.status !== GUATEMALA_INVENTORY_STATUS ||
+    book.sales.some((sale) => sale.itemId === item.id);
+  if (alreadySold) {
+    return {
+      book,
+      result: { ok: false, status: 409, error: GUATEMALA_SALE_MESSAGES.alreadySold },
+    };
+  }
+  const soldAt = (input.now ?? new Date()).toISOString();
+  const sale: RecordedSale = {
+    id: `sale-${item.id}`,
+    itemId: item.id,
+    clientId: item.clientId,
+    sku: item.sku,
+    publishedPriceGtq: item.priceGtq,
+    chargedPriceGtq,
+    soldAt,
+  };
+  const next: SaleBook = {
+    items: book.items.map((entry) =>
+      entry.id === item.id ? { ...entry, status: GUATEMALA_SOLD_STATUS } : entry
+    ),
+    sales: [...book.sales, sale],
+  };
+  return {
+    book: next,
+    result: {
+      ok: true,
+      sale,
+      available: next.items.filter(
+        (entry) => entry.clientId === item.clientId && entry.status === GUATEMALA_INVENTORY_STATUS
+      ).length,
+    },
+  };
 }

@@ -122,9 +122,78 @@
   margin: 0;
 }
 
+.gt-inventory-status.is-sold {
+  background: var(--color-gold-soft);
+  color: oklch(40% 0.08 70);
+}
+
+.gt-inventory-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.gt-filter {
+  min-height: 48px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  padding: 0.55rem 1rem;
+  font: inherit;
+  font-weight: 700;
+}
+
+.gt-filter[aria-pressed="true"] {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: white;
+}
+
+.gt-inventory-actions .btn-primary,
+.gt-sale-box .btn-primary {
+  margin-left: 0;
+}
+
+.gt-sale-box {
+  display: grid;
+  gap: 0.7rem;
+  padding: 1rem;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-sunk);
+}
+
+.gt-sale-box h3,
+.gt-sale-box p {
+  margin: 0;
+}
+
+.gt-sale-box label {
+  font-weight: 700;
+}
+
+.gt-sale-price {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.gt-sale-price input {
+  width: 100%;
+  min-height: 48px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  padding: 0.7rem 0.9rem;
+  font-size: 1.15rem;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
 .gt-inventory-facts div {
   display: grid;
-  grid-template-columns: 7.5rem 1fr;
+  grid-template-columns: 9.5rem 1fr;
   gap: 0.5rem;
 }
 
