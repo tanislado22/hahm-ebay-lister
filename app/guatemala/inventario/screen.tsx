@@ -15,6 +15,7 @@ import {
   type InventoryPhoto,
 } from "@/lib/markets/guatemala-inventory";
 import "./inventory.css";
+import { PurgePanel } from "./purge";
 
 interface SaleCorrectionInfo {
   id: string;
@@ -731,6 +732,7 @@ export function InventoryScreen({
               </a>
             )}
           </div>
+          {staffMode ? null : <PurgePanel clientId={clientId} request={storeRequest} />}
         </section>
       )}
     </main>

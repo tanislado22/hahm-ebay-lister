@@ -30,6 +30,7 @@ export const GUATEMALA_STAFF_MESSAGES = {
   cannotWrite: "No puedes crear, borrar ni modificar prendas.",
   cannotManage: "No puedes administrar usuarios ni clientes.",
   cannotCorrect: "No puedes corregir ni anular ventas.",
+  cannotPurge: "No puedes eliminar prendas del inventario.",
   signInRequired: "Se requiere iniciar sesión.",
   usernameInvalid:
     "El usuario debe tener entre 3 y 32 caracteres: letras, números, punto, guion o guion bajo.",
@@ -42,7 +43,7 @@ export const GUATEMALA_STAFF_MESSAGES = {
   passwordMissing: "Esa cuenta no tiene una contraseña guardada.",
 } as const;
 
-export type GuatemalaAction = "read" | "sell" | "write" | "manage" | "correct";
+export type GuatemalaAction = "read" | "sell" | "write" | "manage" | "correct" | "purge";
 
 export interface AccessAccount {
   id: string;
@@ -196,7 +197,7 @@ export function decideGuatemalaAccess(input: {
       ? sessionStillValid(input.account, input.session, input.now)
       : false;
 
-  if (input.action === "write" || input.action === "manage" || input.action === "correct") {
+  if (input.action === "write" || input.action === "manage" || input.action === "correct" || input.action === "purge") {
     if (owner) {
       return { ok: true, actor: ownerActor, clientId: input.requestedClientId };
     }
@@ -208,6 +209,8 @@ export function decideGuatemalaAccess(input: {
         error:
           input.action === "write"
             ? GUATEMALA_STAFF_MESSAGES.cannotWrite
+            : input.action === "purge"
+              ? GUATEMALA_STAFF_MESSAGES.cannotPurge
             : input.action === "correct"
               ? GUATEMALA_STAFF_MESSAGES.cannotCorrect
               : GUATEMALA_STAFF_MESSAGES.cannotManage,
