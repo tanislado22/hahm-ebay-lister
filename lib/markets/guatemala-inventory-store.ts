@@ -1,5 +1,13 @@
 import { getSql } from "@/lib/db";
-import { clientIsGuatemala } from "@/lib/markets/client-market";
+import { boundGuatemalaClientId, clientIsGuatemala } from "@/lib/markets/client-market";
+import {
+  GUATEMALA_CATALOG_MESSAGES,
+  publicCatalogCard,
+  publicCatalogDetailView,
+  type CatalogSourceItem,
+  type PublicCatalogCard,
+  type PublicCatalogDetail,
+} from "@/lib/markets/guatemala-catalog";
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import { EXISTING_PRUEBA1_TEST_SALE } from "@/lib/markets/guatemala-recorded-test";
 import {
@@ -941,4 +949,125 @@ export async function listGuatemalaSalesReport(input: {
     totalChargedGtq: `${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, "0")}`,
     sales,
   };
+}
+
+export async function listPublicGuatemalaCatalog(
+  query: string
+): Promise<{ ok: true; items: PublicCatalogCard[] } | { ok: false; status: 404; error: string }> {
+  const clientId = await readyPublicCatalogClient();
+  if (!clientId) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.unavailable };
+  const sql = getSql();
+  const pattern = inventoryLikePattern(query);
+  const rows = pattern
+    ? await sql`
+        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq,
+          photo.id AS photo_id, photo.media_type, photo.data
+        FROM guatemala_inventory_items AS item
+        LEFT JOIN LATERAL (
+          SELECT id, media_type, data
+          FROM guatemala_inventory_photos
+          WHERE item_id = item.id
+          ORDER BY position ASC
+          LIMIT 1
+        ) AS photo ON TRUE
+        WHERE item.client_id = ${clientId}
+          AND item.status = ${GUATEMALA_INVENTORY_STATUS}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM guatemala_inventory_sales AS sale
+            WHERE sale.item_id = item.id
+              AND sale.client_id = item.client_id
+              AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+          )
+          AND (item.sku ILIKE ${pattern} ESCAPE '\\' OR item.title ILIKE ${pattern} ESCAPE '\\')
+        ORDER BY item.created_at DESC
+      `
+    : await sql`
+        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq,
+          photo.id AS photo_id, photo.media_type, photo.data
+        FROM guatemala_inventory_items AS item
+        LEFT JOIN LATERAL (
+          SELECT id, media_type, data
+          FROM guatemala_inventory_photos
+          WHERE item_id = item.id
+          ORDER BY position ASC
+          LIMIT 1
+        ) AS photo ON TRUE
+        WHERE item.client_id = ${clientId}
+          AND item.status = ${GUATEMALA_INVENTORY_STATUS}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM guatemala_inventory_sales AS sale
+            WHERE sale.item_id = item.id
+              AND sale.client_id = item.client_id
+              AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+          )
+        ORDER BY item.created_at DESC
+      `;
+  return {
+    ok: true,
+    items: rows.map((row) =>
+      publicCatalogCard({
+        id: String(row.id),
+        clientId,
+        sku: String(row.sku),
+        title: String(row.title ?? ""),
+        description: String(row.description ?? ""),
+        size: String(row.size ?? ""),
+        priceGtq: normalizePriceText(row.price_gtq),
+        status: "disponible",
+        photos:
+          row.photo_id && row.data
+            ? [{ id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }]
+            : [],
+        sales: [],
+      })
+    ),
+  };
+}
+
+export async function readPublicGuatemalaCatalogItem(
+  itemId: string
+): Promise<{ ok: true; item: PublicCatalogDetail } | { ok: false; status: 404; error: string }> {
+  const clientId = await readyPublicCatalogClient();
+  if (!clientId) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.unavailable };
+  const sql = getSql();
+  const rows = await sql`
+    SELECT item.id, item.sku, item.title, item.description, item.size, item.price_gtq::text AS price_gtq
+    FROM guatemala_inventory_items AS item
+    WHERE item.id = ${itemId}
+      AND item.client_id = ${clientId}
+      AND item.status = ${GUATEMALA_INVENTORY_STATUS}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM guatemala_inventory_sales AS sale
+        WHERE sale.item_id = item.id
+          AND sale.client_id = item.client_id
+          AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+      )
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.notFound };
+  const photos = await photosFor(String(row.id));
+  const source: CatalogSourceItem = {
+    id: String(row.id),
+    clientId,
+    sku: String(row.sku),
+    title: String(row.title ?? ""),
+    description: String(row.description ?? ""),
+    size: String(row.size ?? ""),
+    priceGtq: normalizePriceText(row.price_gtq),
+    status: "disponible",
+    photos,
+    sales: [],
+  };
+  return { ok: true, item: publicCatalogDetailView(source) };
+}
+
+async function readyPublicCatalogClient(): Promise<string | null> {
+  await ensureGuatemalaInventoryTables();
+  const clientId = await boundGuatemalaClientId();
+  if (!clientId || !(await clientIsGuatemala(clientId))) return null;
+  return clientId;
 }
