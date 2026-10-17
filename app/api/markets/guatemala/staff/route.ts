@@ -5,6 +5,7 @@ import {
   deactivateGuatemalaStaff,
   inviteGuatemalaStaff,
   listGuatemalaStaff,
+  reactivateGuatemalaStaff,
 } from "@/lib/markets/guatemala-staff-store";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,12 @@ export async function POST(request: NextRequest) {
       if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
       return NextResponse.json({ ok: true });
     }
-    return NextResponse.json({ ok: false, error: "Elige crear, invitar o desactivar." }, { status: 400 });
+    if (body.action === "reactivar") {
+      const result = await reactivateGuatemalaStaff(body.accountId);
+      if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+      return NextResponse.json({ ok: true, username: result.username });
+    }
+    return NextResponse.json({ ok: false, error: "Elige crear, invitar, desactivar o reactivar." }, { status: 400 });
   } catch (error) {
     console.error("[guatemala/staff] change failed", error instanceof Error ? error.name : "Error");
     return NextResponse.json({ ok: false, error: "No se pudo actualizar el acceso." }, { status: 500 });

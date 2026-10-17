@@ -269,6 +269,39 @@ export async function deactivateGuatemalaStaff(
   return { ok: true };
 }
 
+export async function reactivateGuatemalaStaff(
+  accountId: unknown
+): Promise<{ ok: true; username: string } | { ok: false; status: 404 | 409; error: string }> {
+  const id = typeof accountId === "string" ? accountId.trim() : "";
+  if (!id) return { ok: false, status: 404, error: GUATEMALA_STAFF_MESSAGES.notFound };
+  const bound = await requireBoundClient();
+  if (!bound.ok) return { ok: false, status: 409, error: bound.error };
+  await ensureGuatemalaStaffTables();
+  const sql = getSql();
+  const rows = await sql`
+    UPDATE guatemala_staff_accounts
+    SET active = TRUE,
+      deactivated_at = NULL
+    WHERE id = ${id}
+      AND client_id = ${bound.clientId}
+      AND deactivated_at IS NOT NULL
+      AND password_hash IS NOT NULL
+    RETURNING username
+  `;
+  const reactivated = rows[0];
+  if (reactivated) return { ok: true, username: String(reactivated.username) };
+  const existing = await sql`
+    SELECT deactivated_at, password_hash
+    FROM guatemala_staff_accounts
+    WHERE id = ${id} AND client_id = ${bound.clientId}
+    LIMIT 1
+  `;
+  const row = existing[0];
+  if (!row) return { ok: false, status: 404, error: GUATEMALA_STAFF_MESSAGES.notFound };
+  if (!row.deactivated_at) return { ok: false, status: 409, error: GUATEMALA_STAFF_MESSAGES.alreadyActive };
+  return { ok: false, status: 409, error: GUATEMALA_STAFF_MESSAGES.passwordMissing };
+}
+
 export async function loginGuatemalaStaff(input: {
   username?: unknown;
   password?: unknown;

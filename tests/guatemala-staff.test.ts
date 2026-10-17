@@ -3,14 +3,17 @@ import { applyGuatemalaSale, type SaleBook } from "@/lib/markets/guatemala-inven
 import {
   acceptStaffPassword,
   assignedStaffClientId,
+  deactivateStaffRecord,
   decideGuatemalaAccess,
   hashInviteCode,
   hashPassword,
   normalizeStaffUsername,
+  reactivateStaffRecord,
   sessionStillValid,
   verifyPassword,
   type AccessAccount,
   type AccessSession,
+  type StaffAccountRecord,
 } from "@/lib/markets/guatemala-staff";
 
 const NOW = new Date("2026-10-17T18:00:00.000Z");
@@ -116,6 +119,107 @@ describe("acceso del encargado", () => {
       now: NOW,
     });
     expect(owner.ok && owner.actor.role).toBe("propietario");
+  });
+
+  it("reactiva la misma cuenta y mantiene rechazada la sesión anterior", () => {
+    const original: StaffAccountRecord = {
+      id: "cuenta-oseas",
+      clientId: GUATEMALA_ID,
+      username: "oseaspacheco",
+      passwordHash: "scrypt$guardado",
+      active: true,
+      sessionGeneration: 2,
+      deactivatedAt: null,
+    };
+    const oldSession = {
+      accountId: original.id,
+      sessionGeneration: original.sessionGeneration,
+      expiresAt: "2026-10-31T18:00:00.000Z",
+    };
+    const deactivated = deactivateStaffRecord(original, NOW);
+    expect(deactivated.id).toBe(original.id);
+    expect(deactivated.username).toBe(original.username);
+    expect(deactivated.passwordHash).toBe(original.passwordHash);
+    expect(deactivated.sessionGeneration).toBe(3);
+    expect(sessionStillValid(deactivated, oldSession, NOW)).toBe(false);
+
+    const restored = reactivateStaffRecord(deactivated, GUATEMALA_ID);
+    expect(restored.ok).toBe(true);
+    if (!restored.ok) return;
+    expect(restored.account.id).toBe(original.id);
+    expect(restored.account.username).toBe("oseaspacheco");
+    expect(restored.account.passwordHash).toBe(original.passwordHash);
+    expect(restored.account.active).toBe(true);
+    expect(restored.account.deactivatedAt).toBeNull();
+    expect(restored.account.sessionGeneration).toBe(3);
+    expect(sessionStillValid(restored.account, oldSession, NOW)).toBe(false);
+    expect(
+      sessionStillValid(
+        restored.account,
+        { ...oldSession, sessionGeneration: restored.account.sessionGeneration },
+        NOW
+      )
+    ).toBe(true);
+    expect(reactivateStaffRecord(restored.account, GUATEMALA_ID)).toMatchObject({
+      ok: false,
+      status: 409,
+    });
+    expect(reactivateStaffRecord(deactivated, OTHER_ID)).toMatchObject({ ok: false, status: 404 });
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: restored.account,
+        session: oldSession,
+        requestedClientId: GUATEMALA_ID,
+        action: "read",
+        now: NOW,
+      })
+    ).toMatchObject({ ok: false, status: 401 });
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: restored.account,
+        session: oldSession,
+        requestedClientId: GUATEMALA_ID,
+        action: "manage",
+        now: NOW,
+      })
+    ).toMatchObject({ ok: false, status: 401 });
+    const renewed = {
+      accountId: restored.account.id,
+      sessionGeneration: restored.account.sessionGeneration,
+      expiresAt: oldSession.expiresAt,
+    };
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: restored.account,
+        session: renewed,
+        requestedClientId: GUATEMALA_ID,
+        action: "read",
+        now: NOW,
+      }).ok
+    ).toBe(true);
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: restored.account,
+        session: renewed,
+        requestedClientId: OTHER_ID,
+        action: "read",
+        now: NOW,
+      })
+    ).toMatchObject({ ok: false, status: 403 });
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: restored.account,
+        session: renewed,
+        requestedClientId: GUATEMALA_ID,
+        action: "manage",
+        now: NOW,
+      })
+    ).toMatchObject({ ok: false, status: 403 });
   });
 
   it("invalida la sesión al desactivar o cambiar la generación", () => {

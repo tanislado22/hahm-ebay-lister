@@ -37,6 +37,8 @@ export const GUATEMALA_STAFF_MESSAGES = {
   accountExists: "Ese usuario ya existe.",
   notIdentified: "Tienda Guatemala todavía no está identificada en el servidor.",
   notFound: "No se encontró esa cuenta.",
+  alreadyActive: "Esa cuenta ya está activa.",
+  passwordMissing: "Esa cuenta no tiene una contraseña guardada.",
 } as const;
 
 export type GuatemalaAction = "read" | "sell" | "write" | "manage";
@@ -123,6 +125,50 @@ export function inviteCodeMatches(code: string, storedHex: string): boolean {
   const expected = Buffer.from(storedHex, "hex");
   if (actual.length === 0 || actual.length !== expected.length) return false;
   return timingSafeEqual(actual, expected);
+}
+
+export interface StaffAccountRecord {
+  id: string;
+  clientId: string;
+  username: string;
+  passwordHash: string | null;
+  active: boolean;
+  sessionGeneration: number;
+  deactivatedAt: string | null;
+}
+
+export function deactivateStaffRecord(account: StaffAccountRecord, now: Date): StaffAccountRecord {
+  return {
+    ...account,
+    active: false,
+    deactivatedAt: now.toISOString(),
+    sessionGeneration: account.sessionGeneration + 1,
+  };
+}
+
+// Enables the same account. The session generation stays where deactivation left it,
+// so cookies issued before that moment remain rejected.
+export function reactivateStaffRecord(
+  account: StaffAccountRecord,
+  boundClientId: string
+): { ok: true; account: StaffAccountRecord } | { ok: false; status: 404 | 409; error: string } {
+  if (account.clientId !== boundClientId) {
+    return { ok: false, status: 404, error: GUATEMALA_STAFF_MESSAGES.notFound };
+  }
+  if (!account.deactivatedAt) {
+    return { ok: false, status: 409, error: GUATEMALA_STAFF_MESSAGES.alreadyActive };
+  }
+  if (!account.passwordHash) {
+    return { ok: false, status: 409, error: GUATEMALA_STAFF_MESSAGES.passwordMissing };
+  }
+  return {
+    ok: true,
+    account: {
+      ...account,
+      active: true,
+      deactivatedAt: null,
+    },
+  };
 }
 
 export function sessionStillValid(account: AccessAccount, session: AccessSession, now = new Date()): boolean {

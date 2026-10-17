@@ -23,6 +23,7 @@ export default function OwnerStaffPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [invite, setInvite] = useState<{ username: string; code: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -91,6 +92,7 @@ export default function OwnerStaffPage() {
     if (!window.confirm(`¿Desactivar el acceso de ${account.username}? Sus sesiones abiertas dejarán de funcionar.`)) {
       return;
     }
+    setNotice("");
     const response = await guatemalaRequest("/api/markets/guatemala/staff", {
       action: "desactivar",
       accountId: account.id,
@@ -100,6 +102,32 @@ export default function OwnerStaffPage() {
       setError(body.error || "No se pudo desactivar la cuenta.");
       return;
     }
+    setError("");
+    await load();
+  }
+
+  async function reactivate(account: StaffAccount) {
+    if (
+      !window.confirm(
+        `¿Reactivar la cuenta de ${account.username}? Conservará su usuario y contraseña, pero deberá iniciar sesión otra vez.`
+      )
+    ) {
+      return;
+    }
+    setNotice("");
+    setError("");
+    const response = await guatemalaRequest("/api/markets/guatemala/staff", {
+      action: "reactivar",
+      accountId: account.id,
+    });
+    const body = (await response.json()) as { ok?: boolean; error?: string; username?: string };
+    if (!response.ok || !body.ok) {
+      setError(body.error || "No se pudo reactivar la cuenta.");
+      return;
+    }
+    setNotice(
+      `La cuenta ${body.username || account.username} volvió a estar activa. El encargado debe iniciar sesión de nuevo.`
+    );
     await load();
   }
 
@@ -155,6 +183,11 @@ export default function OwnerStaffPage() {
             {error}
           </p>
         ) : null}
+        {notice ? (
+          <p className="note" role="status">
+            {notice}
+          </p>
+        ) : null}
         {loading ? <p>Cargando cuentas…</p> : null}
         <div>
           {accounts.map((account) => (
@@ -164,11 +197,15 @@ export default function OwnerStaffPage() {
                 <br />
                 {STATUS_LABEL[account.status]}
               </span>
-              {account.status !== "desactivado" ? (
+              {account.status === "desactivado" ? (
+                <button type="button" className="btn btn-primary" onClick={() => void reactivate(account)}>
+                  Reactivar
+                </button>
+              ) : (
                 <button type="button" className="btn btn-ghost" onClick={() => void deactivate(account)}>
                   Desactivar
                 </button>
-              ) : null}
+              )}
             </div>
           ))}
         </div>
