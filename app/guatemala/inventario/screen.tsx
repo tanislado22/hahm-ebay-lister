@@ -14,6 +14,7 @@ import {
   type InventoryListFilter,
   type InventoryPhoto,
 } from "@/lib/markets/guatemala-inventory";
+import { publishReviewBlockers } from "@/lib/markets/guatemala-publish";
 import "./inventory.css";
 import { PurgePanel } from "./purge";
 
@@ -64,6 +65,12 @@ interface DetailItem extends ListItem {
   costGtq?: string | null;
   costIncludesPhotography?: boolean;
   createdBy?: { role: "propietario" | "encargado"; username: string | null } | null;
+  publicationEvents?: {
+    action: "retirar" | "corregir" | "republicar";
+    actorRole: "propietario" | "encargado";
+    actorUsername: string | null;
+    createdAt: string;
+  }[];
 }
 
 function photoSource(photo: InventoryPhoto): string {
@@ -114,6 +121,11 @@ export function InventoryScreen({
   const [costNotice, setCostNotice] = useState("");
   const [savingCost, setSavingCost] = useState(false);
   const savingCostRef = useRef(false);
+  const savingPublicationRef = useRef(false);
+  const [publicationStep, setPublicationStep] = useState<"retirar" | "republicar" | null>(null);
+  const [publicationError, setPublicationError] = useState("");
+  const [publicationNotice, setPublicationNotice] = useState("");
+  const [savingPublication, setSavingPublication] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -363,6 +375,46 @@ export function InventoryScreen({
     }
   }
 
+  async function changePublication(action: "retirar" | "republicar") {
+    if (!detail || savingPublicationRef.current) return;
+    savingPublicationRef.current = true;
+    setSavingPublication(true);
+    setPublicationError("");
+    setPublicationNotice("");
+    try {
+      const response = await storeRequest(`/api/markets/guatemala/publicar/${action}`, { itemId: detail.id });
+      const body = (await response.json()) as { ok?: boolean; error?: string; message?: string };
+      if (!response.ok || !body.ok) {
+        setPublicationError(body.error || "No se pudo guardar el cambio. Los datos anteriores siguen en el inventario.");
+        return;
+      }
+      const refreshed = await storeRequest(
+        `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}?clientId=${encodeURIComponent(clientId)}`
+      );
+      const next = (await refreshed.json()) as { ok?: boolean; item?: DetailItem };
+      if (next.ok && next.item) setDetail(next.item);
+      setPublicationNotice(body.message || "");
+      setPublicationStep(null);
+    } catch {
+      setPublicationError("No se pudo guardar el cambio. Los datos anteriores siguen en el inventario.");
+    } finally {
+      savingPublicationRef.current = false;
+      setSavingPublication(false);
+    }
+  }
+
+  const publicationLocked = Boolean(
+    detail && (detail.status === "vendida" || (detail.sale && !detail.sale.voidedAt))
+  );
+  const republishBlockers = detail
+    ? publishReviewBlockers({
+        sku: detail.sku,
+        title: detail.title,
+        price: detail.priceGtq,
+        photoCount: detail.photos.length,
+      })
+    : [];
+
   return (
     <main className="wrap gt-inventory">
       <header>
@@ -388,7 +440,7 @@ export function InventoryScreen({
               </div>
               <h2 id="inventory-detail-heading">{detail.title || "Prenda sin título"}</h2>
               <p className="gt-inventory-sku">SKU {detail.sku}</p>
-              <span className={`gt-inventory-status${detail.status === "vendida" ? " is-sold" : ""}`}>
+              <span className={`gt-inventory-status${statusClass(detail.status)}`}>
                 {guatemalaInventoryStatusLabel(detail.status)}
               </span>
               {detail.sale?.isTest ? <span className="gt-test-badge">Prueba</span> : null}
@@ -486,6 +538,76 @@ export function InventoryScreen({
                 </div>
               ) : null}
               {detail.description ? <p>{detail.description}</p> : null}
+              {staffMode && !publicationLocked && publicationStep === null ? (
+                <div className="gt-inventory-actions">
+                  {detail.status === "disponible" ? (
+                    <button type="button" className="btn btn-ghost" onClick={() => { setPublicationError(""); setPublicationStep("retirar"); }}>
+                      Retirar publicación
+                    </button>
+                  ) : null}
+                  <a className="btn btn-primary" href={`/guatemala/panel/corregir?id=${encodeURIComponent(detail.id)}`}>
+                    Corregir artículo
+                  </a>
+                  {detail.status === "retirada" ? (
+                    <button type="button" className="btn btn-primary" onClick={() => { setPublicationError(""); setPublicationStep("republicar"); }}>
+                      Volver a publicar
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {staffMode && publicationLocked ? (
+                <p>Esta prenda está vendida. No se puede retirar ni volver a publicar por aquí.</p>
+              ) : null}
+              {staffMode && publicationStep === "retirar" ? (
+                <div className="gt-sale-box">
+                  <h3>Retirar publicación</h3>
+                  <p>Dejará de verse en la tienda y en su enlace. Se conservan el registro, las fotos y el SKU {detail.sku}. No se registra como venta.</p>
+                  {publicationError ? <p className="note note-error" role="alert">{publicationError}</p> : null}
+                  <div className="gt-inventory-actions">
+                    <button type="button" className="btn btn-primary" disabled={savingPublication} onClick={() => void changePublication("retirar")}>
+                      {savingPublication ? "Guardando…" : "Confirmar retiro"}
+                    </button>
+                    <button type="button" className="btn btn-ghost" disabled={savingPublication} onClick={() => setPublicationStep(null)}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {staffMode && publicationStep === "republicar" ? (
+                <div className="gt-sale-box">
+                  <h3>Revisar antes de publicar</h3>
+                  <p>SKU {detail.sku}</p>
+                  <p>{detail.title || "Sin título"}</p>
+                  <p>{detail.brand ? `Marca: ${detail.brand}` : "Sin marca"}</p>
+                  <p>{detail.size ? `Talla ${detail.size}` : "Sin talla"}</p>
+                  <p>{guatemalaConditionLabel(detail.condition) || "Sin condición"}</p>
+                  <p>{formatStoredQuetzales(detail.priceGtq)}</p>
+                  <p>{detail.photos.length} foto{detail.photos.length === 1 ? "" : "s"}</p>
+                  {republishBlockers.map((blocker) => (
+                    <p key={blocker} className="note note-error" role="alert">{blocker}</p>
+                  ))}
+                  {publicationError ? <p className="note note-error" role="alert">{publicationError}</p> : null}
+                  <div className="gt-inventory-actions">
+                    <button type="button" className="btn btn-primary" disabled={savingPublication || republishBlockers.length > 0} onClick={() => void changePublication("republicar")}>
+                      {savingPublication ? "Publicando…" : "Volver a publicar"}
+                    </button>
+                    <button type="button" className="btn btn-ghost" disabled={savingPublication} onClick={() => setPublicationStep(null)}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {publicationNotice ? <p className="note" role="status">{publicationNotice}</p> : null}
+              {detail.publicationEvents && detail.publicationEvents.length > 0 ? (
+                <div className="gt-sale-box">
+                  <h3>Historial de la publicación</h3>
+                  {detail.publicationEvents.map((event, index) => (
+                    <p key={`${event.action}-${event.createdAt}-${index}`}>
+                      {publicationActionLabel(event.action)} · {event.actorUsername || (event.actorRole === "propietario" ? "Propietario" : "Encargado")} · {formatGuatemalaMoment(event.createdAt)}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
               {detail.status === "disponible" && saleStep === null ? (
                 <button type="button" className="btn btn-primary gt-sale-start" onClick={() => setSaleStep("form")}>
                   Registrar venta
@@ -778,7 +900,7 @@ export function InventoryScreen({
               {availableGarmentLabel(available)}
             </h2>
             <div className="gt-inventory-filters" role="group" aria-label="Filtrar prendas">
-              {(["disponibles", "vendidas", "todas"] as InventoryListFilter[]).map((option) => (
+              {(["disponibles", "retiradas", "vendidas", "todas"] as InventoryListFilter[]).map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -786,7 +908,13 @@ export function InventoryScreen({
                   aria-pressed={filter === option}
                   onClick={() => chooseFilter(option)}
                 >
-                  {option === "disponibles" ? "Disponibles" : option === "vendidas" ? "Vendidas" : "Todas"}
+                  {option === "disponibles"
+                    ? "Disponibles"
+                    : option === "retiradas"
+                      ? "Retiradas"
+                      : option === "vendidas"
+                        ? "Vendidas"
+                        : "Todas"}
                 </button>
               ))}
             </div>
@@ -811,9 +939,11 @@ export function InventoryScreen({
                 ? "Ninguna prenda coincide con la búsqueda."
                 : filter === "vendidas"
                   ? "No hay prendas vendidas."
-                  : filter === "disponibles"
-                    ? "No hay prendas disponibles."
-                    : "Todavía no hay prendas en el inventario."}
+                  : filter === "retiradas"
+                    ? "No hay prendas retiradas."
+                    : filter === "disponibles"
+                      ? "No hay prendas disponibles."
+                      : "Todavía no hay prendas en el inventario."}
             </p>
           ) : null}
           <div className="gt-inventory-list">
@@ -846,7 +976,7 @@ export function InventoryScreen({
                       {formatStoredQuetzales(item.priceGtq)}
                     </p>
                   )}
-                  <span className={`gt-inventory-status${item.status === "vendida" ? " is-sold" : ""}`}>
+                  <span className={`gt-inventory-status${statusClass(item.status)}`}>
                     {guatemalaInventoryStatusLabel(item.status)}
                   </span>
                 </span>
@@ -871,4 +1001,17 @@ export function InventoryScreen({
       )}
     </main>
   );
+}
+
+function statusClass(status: string): string {
+  if (status === "vendida") return " is-sold";
+  if (status === "retirada") return " is-withdrawn";
+  return "";
+}
+
+function publicationActionLabel(action: string): string {
+  if (action === "retirar") return "Retiró la publicación";
+  if (action === "corregir") return "Corrigió el artículo";
+  if (action === "republicar") return "Volvió a publicar";
+  return action;
 }

@@ -127,6 +127,11 @@
   color: oklch(40% 0.08 70);
 }
 
+.gt-inventory-status.is-withdrawn {
+  background: #efe6d8;
+  color: #5c5348;
+}
+
 .gt-inventory-filters {
   display: flex;
   flex-wrap: wrap;
@@ -224,6 +229,13 @@
 .gt-inventory-actions .btn {
   min-height: 48px;
   font-size: 1.05rem;
+}
+
+@media (max-width: 640px) {
+  .gt-inventory-actions .btn,
+  .gt-filter {
+    flex: 1 1 100%;
+  }
 }
 
 .gt-sold-for {
