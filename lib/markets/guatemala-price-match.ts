@@ -635,7 +635,7 @@ const CURRENT_COMP_STATUSES = new Set(["ready", "insufficient", "unavailable"]);
 
 export function guatemalaCompReportIsCurrent(report: GuatemalaCompReport): boolean {
   if (report.priceBasis) return true;
-  return /Precio orientativo|Estimación de la tienda|tabla de la tienda|Propuesta:/.test(report.message);
+  return /Precio orientativo|Estimación de la tienda|Propuesta:|No es un precio comprobado del mercado/.test(report.message);
 }
 
 // Saved jobs from before this report existed used another shape. Ignore those
