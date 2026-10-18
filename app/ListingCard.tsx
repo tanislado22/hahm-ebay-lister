@@ -8,6 +8,7 @@ import {
   formatQuetzales,
 } from "@/lib/markets/guatemala";
 import { coerceGuatemalaCompReport, guatemalaCompReportIsCurrent, guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
+import "./guatemala-card.css";
 import { GUATEMALA_INVENTORY_MESSAGES } from "@/lib/markets/guatemala-inventory";
 import type { GuatemalaCompReport, ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
@@ -860,7 +861,7 @@ const keyword = [
             </div>
           </div>
 
-          <div className="meta-row">
+          <div className={guatemala ? "meta-row gt-meta" : "meta-row"}>
             {/* SKU stays editable up until the item is posted, so a SKU fix
                 never requires going back and re-writing listings (issue #30). */}
             <div className="stat editable">
@@ -903,45 +904,6 @@ const keyword = [
                   }}
                 />
               </div>
-              {guatemala && (
-                <div className="comps-line gt-comps">
-                  <p>
-                    {localComps?.message ??
-                      "Consultando precios anunciados en Megapaca y Econopaca."}
-                  </p>
-                  {localComps && Array.isArray(localComps.listed) && localComps.listed.length > 0 && (
-                    <ul>
-                      {localComps.listed.map((item) => (
-                        <li key={`${item.source}-${item.url}`}>
-                          <a href={item.url} target="_blank" rel="noopener noreferrer">
-                            {item.title}
-                          </a>
-                          {" · "}
-                          {formatQuetzales(item.priceGtq)}
-                          {" · "}
-                          {item.sourceLabel}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {localComps?.storeSales?.label && <p>{localComps.storeSales.label}</p>}
-                  {localComps?.storeSales?.median != null && Array.isArray(localComps.sold) && localComps.sold.length > 0 && (
-                    <ul>
-                      {localComps.sold.map((sale) => (
-                        <li key={`${sale.sku}-${sale.soldAt}`}>
-                          {sale.title || sale.sku} · {formatQuetzales(sale.priceGtq)} ·{" "}
-                          {formatGuatemalaMoment(sale.soldAt)}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {localComps && (
-                    <p>
-                      Consultado: {formatGuatemalaMoment(localComps.queriedAt)} · America/Guatemala
-                    </p>
-                  )}
-                </div>
-              )}
               {!guatemala && group.comps?.ok && group.comps.median !== undefined && (
                 <span className="comps-line" title={group.comps.basis}>
                   Market: {group.comps.count} similar active listings, $
@@ -1072,7 +1034,7 @@ const keyword = [
 )}
    
             </div>
-            <div className="stat editable">
+            <div className={guatemala ? "stat editable gt-condition" : "stat editable"}>
               <label className="k" htmlFor={`cond-${group.id}`}>
                 {guatemala ? "Condición" : "Condition"}
               </label>
@@ -1105,7 +1067,7 @@ const keyword = [
               </select>
             </div>
             {listing.brand && (
-              <div className="stat">
+              <div className={guatemala ? "stat gt-brand" : "stat"}>
                 <div className="k">{guatemala ? "Marca" : "Brand"}</div>
                 <div className="v">{listing.brand}</div>
               </div>
@@ -1128,6 +1090,57 @@ const keyword = [
               </div>
             )}
           </div>
+
+          {guatemala && (
+            <div className="gt-price-note">
+              <p>
+                {localComps?.message ??
+                  "Consultando precios anunciados en Megapaca y Econopaca."}
+              </p>
+              {localComps && Array.isArray(localComps.listed) && localComps.listed.length > 0 && (
+                <ul>
+                  {localComps.listed.map((item) => (
+                    <li key={`${item.source}-${item.url}`}>
+                      <a href={item.url} target="_blank" rel="noopener noreferrer">
+                        {item.title}
+                      </a>
+                      {" · "}
+                      {formatQuetzales(item.priceGtq)}
+                      {" · "}
+                      {item.sourceLabel}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {localComps?.storeSales?.label && <p>{localComps.storeSales.label}</p>}
+              {localComps?.storeSales?.median != null && Array.isArray(localComps.sold) && localComps.sold.length > 0 && (
+                <ul>
+                  {localComps.sold.map((sale) => (
+                    <li key={`${sale.sku}-${sale.soldAt}`}>
+                      {sale.title || sale.sku} · {formatQuetzales(sale.priceGtq)} ·{" "}
+                      {formatGuatemalaMoment(sale.soldAt)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {localComps?.proposal && localComps.proposal.length > 0 && inventoryClientId && (
+                <p>
+                  <a
+                    href={`/guatemala/precios?clientId=${encodeURIComponent(inventoryClientId)}&${localComps.proposal
+                      .map((item) => `garment=${encodeURIComponent(item.garment)}&condition=${encodeURIComponent(item.condition)}`)
+                      .join("&")}`}
+                  >
+                    Definir {localComps.proposal.map((item) => item.label).join(", ")}
+                  </a>
+                </p>
+              )}
+              {localComps && (
+                <p>
+                  Consultado: {formatGuatemalaMoment(localComps.queriedAt)} · America/Guatemala
+                </p>
+              )}
+            </div>
+          )}
 
           {sizeMissing && (
             <p className="size-warning" role="alert">

@@ -340,10 +340,12 @@ describe("comparación de precios de Tienda Guatemala", () => {
       sales: [],
       guides: [
         {
+          scope: "brand",
           brand: "PJ Paul Jones",
           garment: "polo",
           condition: "nuevo",
-          priceGtq: 95,
+          priceGtq: null,
+          adjustmentGtq: null,
           comparableBrands: ["Van Heusen"],
         },
       ],
@@ -379,10 +381,12 @@ describe("comparación de precios de Tienda Guatemala", () => {
       sales: [],
       guides: [
         {
-          brand: "PJ Paul Jones",
+          scope: "general",
+          brand: "",
           garment: "polo",
           condition: "nuevo",
           priceGtq: 95,
+          adjustmentGtq: null,
           comparableBrands: [],
         },
       ],
@@ -391,8 +395,92 @@ describe("comparación de precios de Tienda Guatemala", () => {
     expect(guatemalaCompReportIsCurrent(report)).toBe(true);
     expect(report.suggestedPrice).toBe(95);
     expect(report.message).toContain("Estimación de la tienda");
+    expect(report.message).toContain("No es un precio comprobado del mercado");
     expect(report.message).not.toContain("https://");
+    expect(report.proposal).toEqual([]);
     expect(report.listed.map((item) => item.url)).toEqual(["https://megapaca.store/products/polo-2xl"]);
+  });
+
+  it("aplica el precio general a cualquier marca y suma el ajuste solo si existe", () => {
+    const polo = {
+      itemType: "Polo",
+      brand: "PJ PAUL JONES",
+      condition: "NEW_WITH_TAGS",
+      size: "2XL",
+    };
+    const general = {
+      scope: "general" as const,
+      brand: "",
+      garment: "polo",
+      condition: "nuevo" as const,
+      priceGtq: 90,
+      adjustmentGtq: null,
+      comparableBrands: [],
+    };
+    const plain = buildGuatemalaCompReport({
+      query: { ...polo, brand: "Otra Marca" },
+      advertised: [],
+      sourceErrors: [],
+      sales: [],
+      guides: [general],
+    });
+    expect(plain.suggestedPrice).toBe(90);
+    expect(plain.priceBasis).toBe("store-estimate");
+    expect(plain.message).toContain("Estimación de la tienda");
+
+    const adjusted = buildGuatemalaCompReport({
+      query: polo,
+      advertised: [],
+      sourceErrors: [],
+      sales: [],
+      guides: [
+        general,
+        {
+          scope: "brand",
+          brand: "PJ Paul Jones",
+          garment: "polo",
+          condition: "nuevo",
+          priceGtq: null,
+          adjustmentGtq: 15,
+          comparableBrands: [],
+        },
+      ],
+    });
+    expect(adjusted.suggestedPrice).toBe(105);
+    expect(adjusted.message).toContain("ajuste");
+    expect(adjusted.message).toContain("PJ Paul Jones");
+    expect(adjusted.message).toContain("No es un precio comprobado del mercado");
+  });
+
+  it("propone el precio general que falta sin inventar un importe", () => {
+    const report = buildGuatemalaCompReport({
+      query: {
+        itemType: "Playera tipo polo",
+        brand: "PJ PAUL JONES",
+        condition: "NEW_WITH_TAGS",
+        size: "2XL",
+      },
+      advertised: [],
+      sourceErrors: [],
+      sales: [],
+      guides: [
+        {
+          scope: "brand",
+          brand: "PJ Paul Jones",
+          garment: "polo",
+          condition: "nuevo",
+          priceGtq: null,
+          adjustmentGtq: 20,
+          comparableBrands: [],
+        },
+      ],
+    });
+    expect(report.suggestedPrice).toBeNull();
+    expect(report.priceBasis).toBeNull();
+    expect(report.message).toContain("Propuesta: define el precio general de polo nueva");
+    expect(report.message).toContain("No hay un importe inicial");
+    expect(report.message).not.toMatch(/Q\d/);
+    expect(report.proposal).toEqual([{ garment: "polo", condition: "nuevo", label: "polo nueva" }]);
   });
 
   it("ignores a saved comparison from before the advertised catalogs", () => {

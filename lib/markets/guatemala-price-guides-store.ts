@@ -27,18 +27,29 @@ async function createTables(): Promise<void> {
       brand TEXT NOT NULL,
       garment TEXT NOT NULL,
       condition TEXT NOT NULL,
-      price_gtq NUMERIC(12, 2) NOT NULL CHECK (price_gtq > 0),
+      price_gtq NUMERIC(12, 2) CHECK (price_gtq > 0),
       comparable_brands TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+  await sql`ALTER TABLE guatemala_price_guides ADD COLUMN IF NOT EXISTS adjustment_gtq NUMERIC(12, 2)`;
+  await sql`ALTER TABLE guatemala_price_guides ADD COLUMN IF NOT EXISTS scope TEXT`;
+  await sql`ALTER TABLE guatemala_price_guides ALTER COLUMN price_gtq DROP NOT NULL`;
+  await sql`
+    UPDATE guatemala_price_guides
+    SET scope = CASE WHEN btrim(brand) = '' THEN 'general' ELSE 'brand' END
+    WHERE scope IS NULL
+  `;
+  await sql`ALTER TABLE guatemala_price_guides ALTER COLUMN scope SET DEFAULT 'general'`;
+  await sql`ALTER TABLE guatemala_price_guides ALTER COLUMN scope SET NOT NULL`;
 }
 
 export async function listGuatemalaPriceGuides(clientId: string): Promise<StoredPriceGuide[]> {
   await ensureTables();
   const sql = getSql();
   const rows = await sql`
-    SELECT id, brand, garment, condition, price_gtq::text AS price_gtq, comparable_brands
+    SELECT id, scope, brand, garment, condition, price_gtq::text AS price_gtq,
+      adjustment_gtq::text AS adjustment_gtq, comparable_brands
     FROM guatemala_price_guides
     WHERE client_id = ${clientId}
     ORDER BY brand, garment, condition
@@ -49,11 +60,13 @@ export async function listGuatemalaPriceGuides(clientId: string): Promise<Stored
 export async function saveGuatemalaPriceGuide(
   clientId: string,
   input: {
-    brand: unknown;
+    scope?: unknown;
+    brand?: unknown;
     garment: unknown;
     condition: unknown;
-    priceGtq: unknown;
-    comparableBrands: unknown;
+    priceGtq?: unknown;
+    adjustmentGtq?: unknown;
+    comparableBrands?: unknown;
   }
 ): Promise<{ ok: true; guide: StoredPriceGuide } | { ok: false; error: string }> {
   const prepared = preparePriceGuide(input);
@@ -65,21 +78,24 @@ export async function saveGuatemalaPriceGuide(
   await sql`
     DELETE FROM guatemala_price_guides
     WHERE client_id = ${clientId}
+      AND scope = ${prepared.guide.scope}
       AND lower(brand) = lower(${prepared.guide.brand})
       AND garment = ${prepared.guide.garment}
       AND condition = ${prepared.guide.condition}
   `;
   await sql`
     INSERT INTO guatemala_price_guides (
-      id, client_id, brand, garment, condition, price_gtq, comparable_brands
+      id, client_id, scope, brand, garment, condition, price_gtq, adjustment_gtq, comparable_brands
     )
     VALUES (
       ${id},
       ${clientId},
+      ${prepared.guide.scope},
       ${prepared.guide.brand},
       ${prepared.guide.garment},
       ${prepared.guide.condition},
       ${prepared.guide.priceGtq},
+      ${prepared.guide.adjustmentGtq},
       ${comparable}
     )
   `;
@@ -104,10 +120,12 @@ export async function deleteGuatemalaPriceGuide(
 
 function rowToGuide(row: Record<string, unknown>): StoredPriceGuide {
   const prepared = preparePriceGuide({
+    scope: row.scope === "brand" ? "brand" : "general",
     brand: row.brand,
     garment: row.garment,
     condition: row.condition,
     priceGtq: row.price_gtq,
+    adjustmentGtq: row.adjustment_gtq,
     comparableBrands: row.comparable_brands,
   });
   return {
@@ -115,10 +133,12 @@ function rowToGuide(row: Record<string, unknown>): StoredPriceGuide {
     ...(prepared.ok
       ? prepared.guide
       : {
+          scope: row.scope === "brand" ? "brand" : "general",
           brand: String(row.brand ?? ""),
           garment: String(row.garment ?? ""),
           condition: row.condition === "usado" ? "usado" : "nuevo",
-          priceGtq: Number(row.price_gtq),
+          priceGtq: null,
+          adjustmentGtq: null,
           comparableBrands: [],
         }),
   };

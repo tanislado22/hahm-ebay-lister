@@ -38,10 +38,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(result);
     }
     const result = await saveGuatemalaPriceGuide(access.clientId, {
+      scope: body.scope,
       brand: body.brand,
       garment: body.garment,
       condition: body.condition,
       priceGtq: body.priceGtq,
+      adjustmentGtq: body.adjustmentGtq,
       comparableBrands: body.comparableBrands,
     });
     if (!result.ok) return NextResponse.json(result, { status: 400 });
