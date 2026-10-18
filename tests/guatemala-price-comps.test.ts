@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildGuatemalaCompReport,
+  coerceGuatemalaCompReport,
   guatemalaPriceIfEmpty,
   listingIsRelevant,
   type CatalogListing,
@@ -272,5 +273,17 @@ describe("comparación de precios de Tienda Guatemala", () => {
     ).toBe(true);
     expect(listingIsRelevant({ itemType: "Pantalón", brand: "Levi's", condition: "NEW_WITH_TAGS", size: "32x30" }, jeans[0])).toBe(false);
     expect(listingIsRelevant({ itemType: "Chumpa", brand: "Zara", condition: "GOOD", size: "M" }, ad({ title: "Chumpa M", itemType: "Chumpa", brand: "Zara", condition: "usado" }))).toBe(true);
+  });
+
+  it("ignores a saved comparison from before the advertised catalogs", () => {
+    expect(
+      coerceGuatemalaCompReport({
+        ok: true,
+        status: "source_not_configured",
+        listed: {},
+        sold: [],
+        message: "Falta configurar una fuente de comparaciones en Guatemala.",
+      })
+    ).toBeNull();
   });
 });

@@ -372,3 +372,43 @@ export function buildGuatemalaCompReport(input: {
     suggestedPrice: suggested,
   };
 }
+
+const CURRENT_COMP_STATUSES = new Set(["ready", "insufficient", "unavailable"]);
+
+// Saved jobs from before this report existed used another shape. Ignore those
+// so the card asks again instead of reading fields that are not there.
+export function coerceGuatemalaCompReport(value: unknown): GuatemalaCompReport | null {
+  if (!value || typeof value !== "object") return null;
+  const report = value as Partial<GuatemalaCompReport>;
+  if (!CURRENT_COMP_STATUSES.has(String(report.status))) return null;
+  const sales = report.storeSales;
+  const salesReady = Boolean(sales && typeof sales.label === "string" && typeof sales.count === "number");
+  return {
+    ok: true,
+    status: report.status as GuatemalaCompReport["status"],
+    currency: "GTQ",
+    symbol: "Q",
+    timezone: "America/Guatemala",
+    queriedAt: typeof report.queriedAt === "string" ? report.queriedAt : new Date(0).toISOString(),
+    listed: Array.isArray(report.listed) ? report.listed : [],
+    sold: Array.isArray(report.sold) ? report.sold : [],
+    message: typeof report.message === "string" ? report.message : "",
+    advertised: {
+      count: typeof report.advertised?.count === "number" ? report.advertised.count : 0,
+      low: report.advertised?.low ?? null,
+      high: report.advertised?.high ?? null,
+      median: report.advertised?.median ?? null,
+      label: typeof report.advertised?.label === "string" ? report.advertised.label : GUATEMALA_ADVERTISED_LABEL,
+    },
+    storeSales: salesReady
+      ? sales!
+      : {
+          count: 0,
+          low: null,
+          high: null,
+          median: null,
+          label: "No se pudieron consultar las ventas de esta tienda.",
+        },
+    suggestedPrice: typeof report.suggestedPrice === "number" ? report.suggestedPrice : null,
+  };
+}
