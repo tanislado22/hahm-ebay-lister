@@ -2,11 +2,14 @@ import { getSql } from "@/lib/db";
 import { boundGuatemalaClientId, clientIsGuatemala } from "@/lib/markets/client-market";
 import {
   GUATEMALA_CATALOG_MESSAGES,
-  publicCatalogCard,
+  publicCatalogCards,
   publicCatalogDetailView,
+  publicCatalogFacets,
+  type CatalogFilters,
   type CatalogSourceItem,
   type PublicCatalogCard,
   type PublicCatalogDetail,
+  type PublicCatalogFacets,
 } from "@/lib/markets/guatemala-catalog";
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import { EXISTING_PRUEBA1_TEST_SALE } from "@/lib/markets/guatemala-recorded-test";
@@ -1104,77 +1107,41 @@ export async function listGuatemalaSaleReferences(clientId: string): Promise<
 }
 
 export async function listPublicGuatemalaCatalog(
-  query: string
-): Promise<{ ok: true; items: PublicCatalogCard[] } | { ok: false; status: 404; error: string }> {
+  filters: CatalogFilters
+): Promise<
+  { ok: true; items: PublicCatalogCard[]; facets: PublicCatalogFacets } | { ok: false; status: 404; error: string }
+> {
   const clientId = await readyPublicCatalogClient();
   if (!clientId) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.unavailable };
   const sql = getSql();
-  const pattern = inventoryLikePattern(query);
-  const rows = pattern
-    ? await sql`
-        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq,
-          photo.id AS photo_id, photo.media_type, photo.data
-        FROM guatemala_inventory_items AS item
-        LEFT JOIN LATERAL (
-          SELECT id, media_type, data
-          FROM guatemala_inventory_photos
-          WHERE item_id = item.id
-          ORDER BY position ASC
-          LIMIT 1
-        ) AS photo ON TRUE
-        WHERE item.client_id = ${clientId}
-          AND item.status = ${GUATEMALA_INVENTORY_STATUS}
-          AND NOT EXISTS (
-            SELECT 1
-            FROM guatemala_inventory_sales AS sale
-            WHERE sale.item_id = item.id
-              AND sale.client_id = item.client_id
-              AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
-          )
-          AND (item.sku ILIKE ${pattern} ESCAPE '\\' OR item.title ILIKE ${pattern} ESCAPE '\\')
-        ORDER BY item.created_at DESC
-      `
-    : await sql`
-        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq,
-          photo.id AS photo_id, photo.media_type, photo.data
-        FROM guatemala_inventory_items AS item
-        LEFT JOIN LATERAL (
-          SELECT id, media_type, data
-          FROM guatemala_inventory_photos
-          WHERE item_id = item.id
-          ORDER BY position ASC
-          LIMIT 1
-        ) AS photo ON TRUE
-        WHERE item.client_id = ${clientId}
-          AND item.status = ${GUATEMALA_INVENTORY_STATUS}
-          AND NOT EXISTS (
-            SELECT 1
-            FROM guatemala_inventory_sales AS sale
-            WHERE sale.item_id = item.id
-              AND sale.client_id = item.client_id
-              AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
-          )
-        ORDER BY item.created_at DESC
-      `;
+  const rows = await sql`
+    SELECT item.id, item.sku, item.title, item.brand, item.size, item.condition, item.price_gtq::text AS price_gtq,
+      photo.id AS photo_id, photo.media_type
+    FROM guatemala_inventory_items AS item
+    LEFT JOIN LATERAL (
+      SELECT id, media_type
+      FROM guatemala_inventory_photos
+      WHERE item_id = item.id
+        AND media_type ~ '^image/(jpeg|png|webp)$'
+      ORDER BY position ASC
+      LIMIT 1
+    ) AS photo ON TRUE
+    WHERE item.client_id = ${clientId}
+      AND item.status = ${GUATEMALA_INVENTORY_STATUS}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM guatemala_inventory_sales AS sale
+        WHERE sale.item_id = item.id
+          AND sale.client_id = item.client_id
+          AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+      )
+    ORDER BY item.created_at DESC
+  `;
+  const sources = rows.map((row) => publicSource(clientId, row));
   return {
     ok: true,
-    items: rows.map((row) =>
-      publicCatalogCard({
-        id: String(row.id),
-        clientId,
-        sku: String(row.sku),
-        title: String(row.title ?? ""),
-        description: String(row.description ?? ""),
-        size: String(row.size ?? ""),
-        priceGtq: normalizePriceText(row.price_gtq),
-        status: "disponible",
-        photos:
-          row.photo_id && row.data
-            ? [{ id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }]
-            : [],
-        sales: [],
-      })
-    ),
+    items: publicCatalogCards(sources, clientId, filters),
+    facets: publicCatalogFacets(sources, clientId),
   };
 }
 
@@ -1185,7 +1152,8 @@ export async function readPublicGuatemalaCatalogItem(
   if (!clientId) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.unavailable };
   const sql = getSql();
   const rows = await sql`
-    SELECT item.id, item.sku, item.title, item.description, item.size, item.price_gtq::text AS price_gtq
+    SELECT item.id, item.sku, item.title, item.description, item.brand, item.size, item.condition,
+      item.price_gtq::text AS price_gtq
     FROM guatemala_inventory_items AS item
     WHERE item.id = ${itemId}
       AND item.client_id = ${clientId}
@@ -1201,20 +1169,76 @@ export async function readPublicGuatemalaCatalogItem(
   `;
   const row = rows[0];
   if (!row) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.notFound };
-  const photos = await photosFor(String(row.id));
-  const source: CatalogSourceItem = {
+  const photos = await photoIdsFor(String(row.id));
+  return { ok: true, item: publicCatalogDetailView(publicSource(clientId, row, photos)) };
+}
+
+export async function readPublicCatalogPhoto(
+  photoId: string
+): Promise<{ ok: true; mediaType: string; data: string } | { ok: false; status: 404; error: string }> {
+  const clientId = await readyPublicCatalogClient();
+  if (!clientId) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.unavailable };
+  const sql = getSql();
+  const rows = await sql`
+    SELECT photo.media_type, photo.data
+    FROM guatemala_inventory_photos AS photo
+    INNER JOIN guatemala_inventory_items AS item ON item.id = photo.item_id
+    WHERE photo.id = ${photoId}
+      AND item.client_id = ${clientId}
+      AND item.status = ${GUATEMALA_INVENTORY_STATUS}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM guatemala_inventory_sales AS sale
+        WHERE sale.item_id = item.id
+          AND sale.client_id = item.client_id
+          AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+      )
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row?.data) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.notFound };
+  const mediaType = String(row.media_type || "");
+  if (!/^image\/(jpeg|png|webp)$/.test(mediaType)) {
+    return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.notFound };
+  }
+  return { ok: true, mediaType, data: String(row.data) };
+}
+
+function publicSource(
+  clientId: string,
+  row: Record<string, unknown>,
+  photos: { id: string; mediaType: string }[] = []
+): CatalogSourceItem {
+  const cover =
+    !photos.length && row.photo_id
+      ? [{ id: String(row.photo_id), mediaType: String(row.media_type ?? "image/jpeg") }]
+      : photos;
+  return {
     id: String(row.id),
     clientId,
     sku: String(row.sku),
     title: String(row.title ?? ""),
     description: String(row.description ?? ""),
+    brand: String(row.brand ?? ""),
     size: String(row.size ?? ""),
+    condition: String(row.condition ?? ""),
     priceGtq: normalizePriceText(row.price_gtq),
     status: "disponible",
-    photos,
+    photos: cover.map((photo) => ({ ...photo, data: "" })),
     sales: [],
   };
-  return { ok: true, item: publicCatalogDetailView(source) };
+}
+
+async function photoIdsFor(itemId: string): Promise<{ id: string; mediaType: string }[]> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, media_type
+    FROM guatemala_inventory_photos
+    WHERE item_id = ${itemId}
+      AND media_type ~ '^image/(jpeg|png|webp)$'
+    ORDER BY position ASC
+  `;
+  return rows.map((row) => ({ id: String(row.id), mediaType: String(row.media_type) }));
 }
 
 async function readyPublicCatalogClient(): Promise<string | null> {

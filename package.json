@@ -13,10 +13,11 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.69.0",
+    "@neondatabase/serverless": "^1.0.1",
     "next": "^15.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@neondatabase/serverless": "^1.0.1"
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
