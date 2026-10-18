@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { headers } from "next/headers";
+import { PUBLIC_SOLD_NOTICE } from "@/lib/markets/guatemala-catalog";
 import { formatStoredQuetzales } from "@/lib/markets/guatemala-inventory";
 import { readPublicGuatemalaCatalogItem } from "@/lib/markets/guatemala-inventory-store";
 import { isStoreHostname } from "@/lib/markets/store-host";
@@ -19,7 +20,10 @@ export async function generateMetadata({
   const name = result.item.title || result.item.sku;
   return {
     title: `${name} · Variedades San Andrés`,
-    description: result.item.description.slice(0, 160) || `${name} disponible en Variedades San Andrés.`,
+    description:
+      result.item.availability === "vendido"
+        ? `${name}. ${PUBLIC_SOLD_NOTICE}`
+        : result.item.description.slice(0, 160) || `${name} disponible en Variedades San Andrés.`,
   };
 }
 
@@ -36,7 +40,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         <p className="vsa-mark" aria-hidden="true">VSA</p>
         <div>
           <h1>Variedades San Andrés</h1>
-          <p>Prendas disponibles · precios en quetzales</p>
+          <p>Precios en quetzales</p>
         </div>
       </header>
       <p>
@@ -47,6 +51,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         <article className="vsa-detail">
           <PhotoGallery ids={item.photoIds} alt={item.title || item.sku} />
           <div>
+            {item.availability === "vendido" ? <p className="vsa-sold-notice" role="status">{item.soldNotice || PUBLIC_SOLD_NOTICE}</p> : null}
             <h2>{item.title || "Prenda sin título"}</h2>
             <p className="vsa-price">{formatStoredQuetzales(item.priceGtq)}</p>
             {item.brand ? <p>Marca: {item.brand}</p> : null}

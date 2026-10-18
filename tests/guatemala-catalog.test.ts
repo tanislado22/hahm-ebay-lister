@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   catalogEmptyMessage,
   catalogItemVisible,
+  catalogOrderAllowed,
+  catalogPageSearch,
   publicCatalogCards,
   publicCatalogDetail,
+  publicSoldArticleCount,
+  PUBLIC_SOLD_NOTICE,
   type CatalogSourceItem,
 } from "@/lib/markets/guatemala-catalog";
 
@@ -72,14 +76,30 @@ describe("catálogo público de Tienda Guatemala", () => {
     sku: "3001",
     title: "Camisa de otra tienda",
   });
-  const book = [shirt3001, shirt3002, prueba1, returned, returnedTest, otherStore];
+  const sold = item({
+    id: "prenda-vendida",
+    sku: "4300",
+    title: "Chaqueta vendida",
+    priceGtq: "70.00",
+    status: "vendida",
+    sales: [{ isTest: false, voidedAt: null }],
+  });
+  const withdrawn = item({
+    id: "prenda-retirada",
+    sku: "4400",
+    title: "Prenda retirada",
+    status: "retirada",
+  });
+  const book = [sold, shirt3001, shirt3002, prueba1, returned, returnedTest, otherStore, withdrawn];
 
   it("muestra solo prendas disponibles de Tienda Guatemala y omite ventas, pruebas y otras tiendas", () => {
     const cards = publicCatalogCards(book, TIENDA, "");
-    expect(cards.map((card) => card.sku)).toEqual(["3001", "4200"]);
-    expect(shirt3001).toBe(book[0]);
-    expect(shirt3002).toBe(book[1]);
-    expect(prueba1).toBe(book[2]);
+    expect(cards.map((card) => card.sku)).toEqual(["3001", "4200", "prueba-devuelta", "4300"]);
+    expect(cards.map((card) => card.availability)).toEqual(["disponible", "disponible", "disponible", "vendido"]);
+    expect(publicSoldArticleCount(book, TIENDA)).toBe(1);
+    expect(shirt3001).toBe(book[1]);
+    expect(shirt3002).toBe(book[2]);
+    expect(prueba1).toBe(book[3]);
     expect(cards[0]).toEqual({
       id: "prenda-3001",
       sku: "3001",
@@ -90,9 +110,12 @@ describe("catálogo público de Tienda Guatemala", () => {
       category: "camisa",
       categoryLabel: "camisa",
       coverPhotoId: "foto-1",
+      availability: "disponible",
+      soldBadge: "",
     });
     expect(JSON.stringify(cards)).not.toMatch(/charged|clientId|soldBy|corrections|voided|username|password|isTest|costGtq|"data"/i);
-    expect(catalogItemVisible(returnedTest, TIENDA)).toBe(false);
+    expect(catalogItemVisible(returnedTest, TIENDA)).toBe(true);
+    expect(catalogOrderAllowed(returnedTest, TIENDA)).toBe(true);
     expect(catalogItemVisible(otherStore, TIENDA)).toBe(false);
   });
 
@@ -115,12 +138,16 @@ describe("catálogo público de Tienda Guatemala", () => {
       category: "pantalon",
       categoryLabel: "pantalón",
       photoIds: ["foto-1"],
+      availability: "disponible",
+      soldNotice: "",
     });
     expect(publicCatalogDetail(book, TIENDA, "prenda-3002")).toBeNull();
     expect(publicCatalogDetail(book, TIENDA, "prenda-prueba1")).toBeNull();
     expect(publicCatalogDetail(book, TIENDA, "prenda-ajena")).toBeNull();
     expect(publicCatalogDetail(book, OTHER, "prenda-3001")).toBeNull();
-    expect(catalogEmptyMessage("")).toBe("Todavía no hay prendas disponibles.");
+    expect(catalogEmptyMessage("")).toBe("Todavía no hay prendas.");
+    expect(catalogEmptyMessage({ q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "disponibles" })).toBe("Todavía no hay prendas disponibles.");
+    expect(catalogEmptyMessage({ q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "vendidos" })).toBe("Todavía no hay artículos vendidos.");
     expect(catalogEmptyMessage("xyz")).toBe("Ninguna prenda coincide con la búsqueda.");
     expect(JSON.stringify(detail)).not.toMatch(/clientId|costGtq|charged|soldBy|"data"/i);
   });
@@ -136,11 +163,12 @@ describe("catálogo público de Tienda Guatemala", () => {
     });
     const shirt = item({ id: "camisa", sku: "4100", title: "Camisa azul", brand: "Arrow", size: "M", priceGtq: "40.00" });
     const stock = [polo, shirt];
-    expect(publicCatalogCards(stock, TIENDA, { q: "", category: "polo", size: "", brand: "", minPrice: null, maxPrice: null }).map((card) => card.sku)).toEqual(["3001"]);
-    expect(publicCatalogCards(stock, TIENDA, { q: "", category: "", size: "2XL", brand: "", minPrice: null, maxPrice: null }).map((card) => card.sku)).toEqual(["3001"]);
-    expect(publicCatalogCards(stock, TIENDA, { q: "", category: "", size: "", brand: "Arrow", minPrice: null, maxPrice: null }).map((card) => card.sku)).toEqual(["4100"]);
-    expect(publicCatalogCards(stock, TIENDA, { q: "", category: "", size: "", brand: "", minPrice: 90, maxPrice: 100 }).map((card) => card.sku)).toEqual(["3001"]);
-    expect(publicCatalogCards(stock, TIENDA, { q: "paul", category: "", size: "", brand: "", minPrice: null, maxPrice: null }).map((card) => card.sku)).toEqual(["3001"]);
+    const filters = { q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "todos" as const };
+    expect(publicCatalogCards(stock, TIENDA, { ...filters, category: "polo" }).map((card) => card.sku)).toEqual(["3001"]);
+    expect(publicCatalogCards(stock, TIENDA, { ...filters, size: "2XL" }).map((card) => card.sku)).toEqual(["3001"]);
+    expect(publicCatalogCards(stock, TIENDA, { ...filters, brand: "Arrow" }).map((card) => card.sku)).toEqual(["4100"]);
+    expect(publicCatalogCards(stock, TIENDA, { ...filters, minPrice: 90, maxPrice: 100 }).map((card) => card.sku)).toEqual(["3001"]);
+    expect(publicCatalogCards(stock, TIENDA, { ...filters, q: "paul" }).map((card) => card.sku)).toEqual(["3001"]);
   });
 
   it("refleja publicar, cambiar el precio y retirar una prenda de prueba", () => {
@@ -150,5 +178,45 @@ describe("catálogo público de Tienda Guatemala", () => {
     expect(publicCatalogCards([{ ...published, status: "vendida" }], TIENDA, "")).toEqual([]);
     expect(publicCatalogCards([{ ...published, sales: [{ isTest: false, voidedAt: null }] }], TIENDA, "")).toEqual([]);
     expect(publicCatalogDetail([{ ...published, status: "vendida" }], TIENDA, "aislada")).toBeNull();
+    expect(publicCatalogCards([{ ...published, status: "retirada" }], TIENDA, "")).toEqual([]);
+    expect(publicCatalogDetail([{ ...published, status: "retirada" }], TIENDA, "aislada")).toBeNull();
+  });
+
+  it("muestra una venta real como vendida, sin compra, y la vuelve a ofrecer si se anula", () => {
+    const available = item({ id: "lista", sku: "4500", title: "Polo listo" });
+    const confirmed = item({
+      id: "lista",
+      sku: "4500",
+      title: "Polo listo",
+      status: "vendida",
+      sales: [{ isTest: false, voidedAt: null }],
+    });
+    const cards = publicCatalogCards([confirmed, available], TIENDA, "");
+    expect(cards.map((card) => card.sku)).toEqual(["4500", "4500"]);
+    expect(cards.map((card) => card.availability)).toEqual(["disponible", "vendido"]);
+    expect(cards[1]?.soldBadge).toBe("Vendido");
+    expect(cards[1]?.coverPhotoId).toBe("foto-1");
+    const detail = publicCatalogDetail([confirmed], TIENDA, "lista");
+    expect(detail?.soldNotice).toBe(PUBLIC_SOLD_NOTICE);
+    expect(detail?.photoIds).toEqual(["foto-1"]);
+    expect(catalogOrderAllowed(confirmed, TIENDA)).toBe(false);
+    expect(catalogOrderAllowed(available, TIENDA)).toBe(true);
+    expect(JSON.stringify(detail)).not.toMatch(/charged|soldBy|username|costGtq|clientId|comprador/i);
+    expect(publicSoldArticleCount([confirmed, available], TIENDA)).toBe(1);
+
+    const voided = item({
+      id: "lista",
+      sku: "4500",
+      status: "disponible",
+      sales: [{ isTest: false, voidedAt: "2026-10-18T20:00:00.000Z" }],
+    });
+    expect(publicCatalogCards([voided], TIENDA, "")[0]?.availability).toBe("disponible");
+    expect(catalogOrderAllowed(voided, TIENDA)).toBe(true);
+    expect(publicSoldArticleCount([voided], TIENDA)).toBe(0);
+    expect(publicCatalogCards([confirmed], TIENDA, { q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "vendidos" })).toHaveLength(1);
+    expect(publicCatalogCards([confirmed, available], TIENDA, { q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "disponibles" }).every((card) => card.availability === "disponible")).toBe(true);
+    expect(catalogPageSearch({ q: "polo", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "todos" })).toBe("q=polo");
+    expect(catalogPageSearch({ q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "vendidos" })).toBe("estado=vendidos");
+    expect(publicCatalogCards([item({ clientId: OTHER, status: "vendida", sales: [{ isTest: false, voidedAt: null }] })], TIENDA, "")).toEqual([]);
   });
 });
