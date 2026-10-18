@@ -191,8 +191,22 @@
   flex: 1 1 10rem;
 }
 
+.gt-publish-discard {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.85rem;
+  border-radius: 12px;
+  background: #efe6d8;
+}
+
+.gt-publish-discard p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 640px) {
-  .gt-staff-nav .btn {
+  .gt-staff-nav .btn,
+  .gt-publish-actions .btn {
     flex: 1 1 100%;
   }
 }

@@ -4,9 +4,14 @@ import { runInventorySave, type InventoryRepository } from "@/lib/markets/guatem
 import type { StoredInventoryItem } from "@/lib/markets/guatemala-inventory";
 import {
   changePublication,
+  DISCARD_PUBLICATION_PROMPT,
+  emptyPublicationDraft,
   isolatedPublicationSku,
+  publicationDraftAfterDiscard,
+  publicationResultIsCurrent,
   publishReviewBlockers,
   staffCanConfirmPublish,
+  type PublicationDraft,
   type StaffPublicationItem,
 } from "@/lib/markets/guatemala-publish";
 
@@ -65,6 +70,28 @@ describe("publicación del encargado", () => {
     expect(staffCanConfirmPublish("revision")).toBe(true);
     expect(publishReviewBlockers(draft)).toContain("Escribe un precio válido en quetzales.");
     expect(draft).toEqual({ sku: "410", title: "Camisa", price: "", photoCount: 1 });
+  });
+
+  it("descarta solo la preparación actual y deja fuera una consulta pendiente", () => {
+    const draft: PublicationDraft = {
+      sku: "prueba-publicar-abc12345",
+      title: "Polo de prueba",
+      description: "Texto",
+      brand: "Arrow",
+      size: "M",
+      condition: "GOOD",
+      price: "80.00",
+      priceNote: "Precio orientativo",
+      skuNote: "Ese SKU está libre.",
+      itemType: "polo",
+      category: "ropa",
+      photoCount: 2,
+    };
+    expect(DISCARD_PUBLICATION_PROMPT).toBe("¿Descartar este artículo y empezar de nuevo?");
+    expect(publicationDraftAfterDiscard(draft, false)).toEqual(draft);
+    expect(publicationDraftAfterDiscard(draft, true)).toEqual(emptyPublicationDraft());
+    expect(publicationResultIsCurrent(3, 4)).toBe(false);
+    expect(publicationResultIsCurrent(4, 4)).toBe(true);
   });
 
   it("guarda una sola vez, atribuye al encargado y la muestra en el catálogo", async () => {
