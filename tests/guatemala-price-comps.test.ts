@@ -477,6 +477,7 @@ describe("comparación de precios de Tienda Guatemala", () => {
     });
     expect(report.suggestedPrice).toBeNull();
     expect(report.priceBasis).toBeNull();
+    expect(guatemalaCompReportIsCurrent(report)).toBe(true);
     expect(report.message).toContain("Propuesta: define el precio general de polo nueva");
     expect(report.message).toContain("No hay un importe inicial");
     expect(report.message).not.toMatch(/Q\d/);
@@ -509,5 +510,17 @@ describe("comparación de precios de Tienda Guatemala", () => {
     });
     expect(saved).not.toBeNull();
     expect(guatemalaCompReportIsCurrent(saved!)).toBe(false);
+    const previousTableMessage = coerceGuatemalaCompReport({
+      ok: true,
+      status: "insufficient",
+      message:
+        "No hay suficientes precios anunciados parecidos para sugerir un monto. Encontré 0 con el mismo tipo, marca, condición y talla. Estos son precios anunciados, no ventas comprobadas. Se necesitan al menos 3. No hay una regla en la tabla de la tienda para esta marca, tipo y condición. Escribe el precio manualmente.",
+      listed: [],
+      sold: [],
+      suggestedPrice: null,
+      advertised: { count: 0, low: null, high: null, median: null, label: "anuncios" },
+      storeSales: { count: 0, low: null, high: null, median: null, label: "Ventas comprobadas de esta tienda: todavía no hay ventas parecidas." },
+    });
+    expect(guatemalaCompReportIsCurrent(previousTableMessage!)).toBe(false);
   });
 });
