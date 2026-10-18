@@ -35,16 +35,53 @@ export interface AnalyzeRequestBody {
   market?: string;
 }
 
+export interface GuatemalaAdvertisedComp {
+  source: "megapaca" | "econopaca";
+  sourceLabel: string;
+  title: string;
+  priceGtq: number;
+  url: string;
+  brand: string;
+  itemType: string;
+  condition: string;
+  size: string;
+}
+
+export interface GuatemalaSoldComp {
+  sku: string;
+  title: string;
+  priceGtq: number;
+  soldAt: string;
+  brand: string;
+  size: string;
+  condition: string;
+}
+
 export interface GuatemalaCompReport {
   ok: true;
-  status: "source_not_configured";
+  status: "ready" | "insufficient" | "unavailable";
   currency: "GTQ";
   symbol: "Q";
   timezone: "America/Guatemala";
   queriedAt: string;
-  listed: [];
-  sold: [];
+  listed: GuatemalaAdvertisedComp[];
+  sold: GuatemalaSoldComp[];
   message: string;
+  advertised: {
+    count: number;
+    low: number | null;
+    high: number | null;
+    median: number | null;
+    label: string;
+  };
+  storeSales: {
+    count: number;
+    low: number | null;
+    high: number | null;
+    median: number | null;
+    label: string;
+  };
+  suggestedPrice: number | null;
 }
 
 export interface AnalyzeResponse {
@@ -103,7 +140,7 @@ export interface ItemGroup {
   error?: string;
   // Market price check (fetched right after the listing is written)
   comps?: CompsSummary;
-  // Guatemala local comparisons. Empty until a real source is connected.
+  // Guatemala advertised prices and this store's own sales. Separate on purpose.
   guatemalaComps?: GuatemalaCompReport;
   // eBay posting state (Phase 2)
   postStatus?: PostStatus;

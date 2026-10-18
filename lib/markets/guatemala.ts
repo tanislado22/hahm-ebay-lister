@@ -1,4 +1,4 @@
-import type { GuatemalaCompReport, ListingResult } from "@/lib/types";
+import type { ListingResult } from "@/lib/types";
 
 export const GUATEMALA_MARKET = {
   code: "guatemala",
@@ -10,9 +10,6 @@ export const GUATEMALA_MARKET = {
 } as const;
 
 export const GUATEMALA_CLIENT_NAME = "tienda guatemala";
-
-export const GUATEMALA_COMP_MESSAGE =
-  "Falta configurar una fuente de comparaciones en Guatemala. No hay precios anunciados ni ventas comprobadas. Escribe el precio manualmente.";
 
 export const GUATEMALA_EBAY_BLOCKED =
   "Tienda Guatemala no se publica en eBay.";
@@ -65,20 +62,6 @@ export function prepareGuatemalaListing(listing: ListingResult): ListingResult {
   };
   delete next.suggested_price;
   return next;
-}
-
-export function guatemalaCompReport(now = new Date()): GuatemalaCompReport {
-  return {
-    ok: true,
-    status: "source_not_configured",
-    currency: GUATEMALA_MARKET.currency,
-    symbol: GUATEMALA_MARKET.symbol,
-    timezone: GUATEMALA_MARKET.timezone,
-    queriedAt: now.toISOString(),
-    listed: [],
-    sold: [],
-    message: GUATEMALA_COMP_MESSAGE,
-  };
 }
 
 export function formatQuetzales(value: number): string {

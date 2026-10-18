@@ -6,8 +6,8 @@ import { apiPost } from "@/lib/api-client";
 import {
   formatGuatemalaMoment,
   formatQuetzales,
-  GUATEMALA_COMP_MESSAGE,
 } from "@/lib/markets/guatemala";
+import { guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
 import { GUATEMALA_INVENTORY_MESSAGES } from "@/lib/markets/guatemala-inventory";
 import type { GuatemalaCompReport, ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
@@ -116,6 +116,7 @@ export function ListingCard({
   const [inventoryNote, setInventoryNote] = useState("");
   const [inventoryError, setInventoryError] = useState(false);
   const savingInventoryRef = useRef(false);
+  const priceTouched = useRef(false);
   const cover = photoById(group.photoIds[0]);
 useEffect(() => {
 
@@ -261,26 +262,76 @@ const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
   const [localComps, setLocalComps] = useState<GuatemalaCompReport | null>(
     group.guatemalaComps ?? null
   );
+  const garmentKey = [
+    listing?.title ?? "",
+    listing?.item_type ?? "",
+    listing?.brand ?? "",
+    listing?.condition ?? "",
+    listing?.size ?? "",
+    listing?.category ?? "",
+  ].join("\n");
+  const loadedGarmentKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (group.status === "writing") {
+      priceTouched.current = false;
+      loadedGarmentKey.current = null;
+    }
+  }, [group.status]);
   useEffect(() => {
     if (!guatemala || group.status !== "done") return;
-    if (group.guatemalaComps?.status === "source_not_configured") {
+    if (group.guatemalaComps && loadedGarmentKey.current === null) {
+      loadedGarmentKey.current = garmentKey;
       setLocalComps(group.guatemalaComps);
       return;
     }
+    if (loadedGarmentKey.current === garmentKey) return;
+    loadedGarmentKey.current = garmentKey;
     let cancelled = false;
     void (async () => {
       try {
-        const response = await apiPost("/api/markets/guatemala/comps", {});
+        const response = await apiPost("/api/markets/guatemala/comps", {
+          clientId: inventoryClientId,
+          listing: listing
+            ? {
+                title: listing.title,
+                item_type: listing.item_type,
+                brand: listing.brand,
+                condition: listing.condition,
+                size: listing.size,
+                category: listing.category,
+              }
+            : {},
+        });
         const data = (await response.json()) as GuatemalaCompReport;
-        if (!cancelled && data?.status === "source_not_configured") setLocalComps(data);
+        if (cancelled) return;
+        if (
+          data?.ok &&
+          (data.status === "ready" || data.status === "insufficient" || data.status === "unavailable")
+        ) {
+          setLocalComps(data);
+        } else {
+          setLocalComps(unavailableGuatemalaCompReport());
+        }
       } catch {
-        if (!cancelled) setLocalComps(null);
+        if (!cancelled) setLocalComps(unavailableGuatemalaCompReport());
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [guatemala, group.status, group.guatemalaComps]);
+  }, [guatemala, group.status, group.guatemalaComps, inventoryClientId, garmentKey, listing]);
+  useEffect(() => {
+    if (!guatemala || priceTouched.current || !localComps) return;
+    const suggested = localComps.suggestedPrice;
+    if (suggested == null) return;
+    const next = guatemalaPriceIfEmpty(listing?.suggested_price, suggested);
+    if (next === listing?.suggested_price) return;
+    onEdit(group.id, {
+      suggested_price: next ?? undefined,
+      currency: "GTQ",
+      market: "guatemala",
+    });
+  }, [guatemala, localComps, listing?.suggested_price, group.id, onEdit]);
   useEffect(() => {
   if (guatemala) return;
 
@@ -840,27 +891,53 @@ const keyword = [
                   step="0.01"
                   inputMode="decimal"
                   value={priceToInput(listing.suggested_price)}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    priceTouched.current = true;
                     onEdit(group.id, {
                       suggested_price:
                         e.target.value === "" ? "" : Number(e.target.value),
                       ...(guatemala ? { currency: "GTQ", market: "guatemala" } : {}),
-                    })
-                  }
+                    });
+                  }}
                 />
               </div>
               {guatemala && (
-                <div className="comps-line">
-                  <p>{localComps?.message ?? GUATEMALA_COMP_MESSAGE}</p>
-                  <p>Precios anunciados: sin datos.</p>
-                  <p>Ventas comprobadas: sin datos.</p>
+                <div className="comps-line gt-comps">
                   <p>
-                    Consultado:{" "}
-                    {formatGuatemalaMoment(
-                      localComps?.queriedAt ?? new Date().toISOString()
-                    )}{" "}
-                    · America/Guatemala
+                    {localComps?.message ??
+                      "Consultando precios anunciados en Megapaca y Econopaca."}
                   </p>
+                  {localComps && localComps.listed.length > 0 && (
+                    <ul>
+                      {localComps.listed.map((item) => (
+                        <li key={`${item.source}-${item.url}`}>
+                          <a href={item.url} target="_blank" rel="noopener noreferrer">
+                            {item.title}
+                          </a>
+                          {" · "}
+                          {formatQuetzales(item.priceGtq)}
+                          {" · "}
+                          {item.sourceLabel}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {localComps && <p>{localComps.storeSales.label}</p>}
+                  {localComps && localComps.storeSales.median != null && localComps.sold.length > 0 && (
+                    <ul>
+                      {localComps.sold.map((sale) => (
+                        <li key={`${sale.sku}-${sale.soldAt}`}>
+                          {sale.title || sale.sku} · {formatQuetzales(sale.priceGtq)} ·{" "}
+                          {formatGuatemalaMoment(sale.soldAt)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {localComps && (
+                    <p>
+                      Consultado: {formatGuatemalaMoment(localComps.queriedAt)} · America/Guatemala
+                    </p>
+                  )}
                 </div>
               )}
               {!guatemala && group.comps?.ok && group.comps.median !== undefined && (

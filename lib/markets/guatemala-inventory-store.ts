@@ -1058,6 +1058,51 @@ export async function listGuatemalaSalesReport(input: {
   };
 }
 
+export async function listGuatemalaSaleReferences(clientId: string): Promise<
+  {
+    sku: string;
+    title: string;
+    brand: string;
+    size: string;
+    condition: string;
+    priceGtq: number;
+    soldAt: string;
+  }[]
+> {
+  await ensureGuatemalaInventoryTables();
+  await markRecordedSku3002SaleAsTest();
+  await markRecordedPrueba1SaleAsTest();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT sale.sku, item.title, item.brand, item.size, item.condition,
+      COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq)::text AS charged_price_gtq,
+      sale.sold_at
+    FROM guatemala_inventory_sales AS sale
+    INNER JOIN guatemala_inventory_items AS item
+      ON item.id = sale.item_id AND item.client_id = sale.client_id
+    WHERE sale.client_id = ${clientId}
+      AND sale.voided_at IS NULL
+      AND sale.is_test = FALSE
+    ORDER BY sale.sold_at DESC
+    LIMIT 400
+  `;
+  return rows.flatMap((row) => {
+    const priceGtq = Number(normalizePriceText(row.charged_price_gtq));
+    if (!Number.isFinite(priceGtq) || priceGtq <= 0) return [];
+    return [
+      {
+        sku: String(row.sku ?? ""),
+        title: String(row.title ?? ""),
+        brand: String(row.brand ?? ""),
+        size: String(row.size ?? ""),
+        condition: String(row.condition ?? ""),
+        priceGtq,
+        soldAt: isoTimestamp(row.sold_at),
+      },
+    ];
+  });
+}
+
 export async function listPublicGuatemalaCatalog(
   query: string
 ): Promise<{ ok: true; items: PublicCatalogCard[] } | { ok: false; status: 404; error: string }> {
