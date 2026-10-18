@@ -7,7 +7,7 @@ import {
   formatGuatemalaMoment,
   formatQuetzales,
 } from "@/lib/markets/guatemala";
-import { guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
+import { coerceGuatemalaCompReport, guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
 import { GUATEMALA_INVENTORY_MESSAGES } from "@/lib/markets/guatemala-inventory";
 import type { GuatemalaCompReport, ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
@@ -259,8 +259,8 @@ const [soldCompsLoading, setSoldCompsLoading] = useState(false);
 const [soldCompsRequest, setSoldCompsRequest] = useState(0);
 const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
   const [showSoldItems, setShowSoldItems] = useState(false);
-  const [localComps, setLocalComps] = useState<GuatemalaCompReport | null>(
-    group.guatemalaComps ?? null
+  const [localComps, setLocalComps] = useState<GuatemalaCompReport | null>(() =>
+    coerceGuatemalaCompReport(group.guatemalaComps)
   );
   const garmentKey = [
     listing?.title ?? "",
@@ -279,9 +279,10 @@ const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
   }, [group.status]);
   useEffect(() => {
     if (!guatemala || group.status !== "done") return;
-    if (group.guatemalaComps && loadedGarmentKey.current === null) {
+    const savedComps = coerceGuatemalaCompReport(group.guatemalaComps);
+    if (savedComps && loadedGarmentKey.current === null) {
       loadedGarmentKey.current = garmentKey;
-      setLocalComps(group.guatemalaComps);
+      setLocalComps(savedComps);
       return;
     }
     if (loadedGarmentKey.current === garmentKey) return;
@@ -907,7 +908,7 @@ const keyword = [
                     {localComps?.message ??
                       "Consultando precios anunciados en Megapaca y Econopaca."}
                   </p>
-                  {localComps && localComps.listed.length > 0 && (
+                  {localComps && Array.isArray(localComps.listed) && localComps.listed.length > 0 && (
                     <ul>
                       {localComps.listed.map((item) => (
                         <li key={`${item.source}-${item.url}`}>
@@ -922,8 +923,8 @@ const keyword = [
                       ))}
                     </ul>
                   )}
-                  {localComps && <p>{localComps.storeSales.label}</p>}
-                  {localComps && localComps.storeSales.median != null && localComps.sold.length > 0 && (
+                  {localComps?.storeSales?.label && <p>{localComps.storeSales.label}</p>}
+                  {localComps?.storeSales?.median != null && Array.isArray(localComps.sold) && localComps.sold.length > 0 && (
                     <ul>
                       {localComps.sold.map((sale) => (
                         <li key={`${sale.sku}-${sale.soldAt}`}>
