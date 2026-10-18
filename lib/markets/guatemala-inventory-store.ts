@@ -12,7 +12,14 @@ import {
   type PublicCatalogFacets,
 } from "@/lib/markets/guatemala-catalog";
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
-import { isolatedPublicationSku } from "@/lib/markets/guatemala-publish";
+import {
+  changePublication,
+  isolatedPublicationSku,
+  PUBLICATION_MESSAGES,
+  type PublicationAction,
+  type PublicationEvent,
+  type StaffPublicationItem,
+} from "@/lib/markets/guatemala-publish";
 import { EXISTING_PRUEBA1_TEST_SALE } from "@/lib/markets/guatemala-recorded-test";
 import {
   GUATEMALA_PURGE_MESSAGES,
@@ -42,6 +49,7 @@ import {
   GUATEMALA_INVENTORY_STATUS,
   GUATEMALA_SALE_MESSAGES,
   GUATEMALA_SOLD_STATUS,
+  GUATEMALA_WITHDRAWN_STATUS,
   inventoryLikePattern,
   inventoryListFilter,
   prepareGarmentCost,
@@ -53,6 +61,7 @@ import {
   type InventoryListFilter,
   type InventoryPhoto,
   type PreparedInventoryItem,
+  type PublicationEventView,
   type SaleActor,
   type StoredInventoryItem,
 } from "@/lib/markets/guatemala-inventory";
@@ -235,6 +244,18 @@ async function createGuatemalaInventoryTables(): Promise<void> {
     ALTER TABLE guatemala_inventory_items
     ADD COLUMN IF NOT EXISTS created_by_username TEXT
   `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_publication_events (
+      id TEXT PRIMARY KEY,
+      item_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      actor_account_id TEXT,
+      actor_username TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 }
 
 // Marks the sale already stored for SKU 3002 on Tienda Guatemala as a test.
@@ -311,7 +332,9 @@ interface ItemRow {
 }
 
 function itemStatus(value: unknown): InventoryItemStatus {
-  return value === GUATEMALA_SOLD_STATUS ? GUATEMALA_SOLD_STATUS : GUATEMALA_INVENTORY_STATUS;
+  if (value === GUATEMALA_SOLD_STATUS) return GUATEMALA_SOLD_STATUS;
+  if (value === GUATEMALA_WITHDRAWN_STATUS) return GUATEMALA_WITHDRAWN_STATUS;
+  return GUATEMALA_INVENTORY_STATUS;
 }
 
 function storedFromRow(
@@ -620,6 +643,7 @@ export async function listGuatemalaInventory(
 function statusForFilter(filter: InventoryListFilter): string | null {
   if (filter === "disponibles") return GUATEMALA_INVENTORY_STATUS;
   if (filter === "vendidas") return GUATEMALA_SOLD_STATUS;
+  if (filter === "retiradas") return GUATEMALA_WITHDRAWN_STATUS;
   return null;
 }
 
@@ -643,7 +667,298 @@ export async function readGuatemalaInventoryItem(
   `;
   const row = rows[0] as ItemRow | undefined;
   if (!row) return { ok: false, status: 404, error: GUATEMALA_SALE_MESSAGES.notFound };
-  return storedFromRow(row, await photosFor(itemId), await saleFor(clientId, itemId));
+  const stored = storedFromRow(row, await photosFor(itemId), await saleFor(clientId, itemId));
+  return { ...stored, publicationEvents: await publicationEventsFor(clientId, itemId) };
+}
+
+export async function withdrawGuatemalaPublication(
+  clientId: string,
+  itemId: string,
+  actor: SaleActor
+): Promise<PublicationWriteResult> {
+  return writePublication(clientId, itemId, "retirar", null, actor);
+}
+
+export async function republishGuatemalaPublication(
+  clientId: string,
+  itemId: string,
+  actor: SaleActor
+): Promise<PublicationWriteResult> {
+  return writePublication(clientId, itemId, "republicar", null, actor);
+}
+
+export async function correctGuatemalaPublication(
+  clientId: string,
+  itemId: string,
+  input: SaveBody,
+  actor: SaleActor
+): Promise<PublicationWriteResult> {
+  await ensureGuatemalaInventoryTables();
+  const loaded = await loadPublicationItem(clientId, itemId);
+  if (!loaded.ok) return loaded;
+  const prepared = prepareInventorySave({
+    ...input,
+    clientId,
+    sourceGroupId: loaded.sourceGroupId,
+    sku: loaded.item.sku,
+  });
+  if (!prepared.ok) return prepared;
+  return writePublication(clientId, itemId, "corregir", prepared.item, actor);
+}
+
+type PublicationWriteResult =
+  | {
+      ok: true;
+      already: boolean;
+      message: string;
+      item: { id: string; sku: string; status: InventoryItemStatus; priceGtq: string };
+    }
+  | { ok: false; status: 400 | 403 | 404 | 409; error: string };
+
+async function writePublication(
+  clientId: string,
+  itemId: string,
+  action: PublicationAction,
+  prepared: PreparedInventoryItem | null,
+  actor: SaleActor
+): Promise<PublicationWriteResult> {
+  await ensureGuatemalaInventoryTables();
+  const loaded = await loadPublicationItem(clientId, itemId);
+  if (!loaded.ok) return loaded;
+  const planned = changePublication(
+    loaded.item,
+    clientId,
+    action,
+    prepared
+      ? {
+          title: prepared.title,
+          description: prepared.description,
+          brand: prepared.brand,
+          size: prepared.size,
+          condition: prepared.condition,
+          priceGtq: prepared.priceGtq,
+          photoCount: prepared.photos.length,
+        }
+      : null,
+    actor,
+    new Date()
+  );
+  if (!planned.ok) return planned;
+  if (planned.already || !planned.event) {
+    return { ok: true, already: true, message: planned.message, item: publicationSummary(loaded.item) };
+  }
+  if (action === "corregir" && !prepared) {
+    return { ok: false, status: 400, error: PUBLICATION_MESSAGES.retry };
+  }
+  const saved =
+    action === "corregir" && prepared
+      ? await updatePublicationContents(clientId, itemId, prepared)
+      : await updatePublicationStatus(clientId, itemId, action === "republicar" ? "republicar" : "retirar");
+  if (!saved) {
+    const again = await loadPublicationItem(clientId, itemId);
+    if (again.ok && again.item.status === planned.item.status && action !== "corregir") {
+      return { ok: true, already: true, message: planned.message, item: publicationSummary(again.item) };
+    }
+    return { ok: false, status: 409, error: PUBLICATION_MESSAGES.retry };
+  }
+  await recordPublicationEvent(clientId, itemId, planned.event);
+  return { ok: true, already: false, message: planned.message, item: saved };
+}
+
+async function loadPublicationItem(
+  clientId: string,
+  itemId: string
+): Promise<
+  | { ok: true; item: StaffPublicationItem; sourceGroupId: string }
+  | { ok: false; status: 403 | 404; error: string }
+> {
+  await ensureGuatemalaInventoryTables();
+  if (!(await clientIsGuatemala(clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
+      price_gtq::text AS price_gtq, status
+    FROM guatemala_inventory_items
+    WHERE id = ${itemId} AND client_id = ${clientId}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return { ok: false, status: 404, error: PUBLICATION_MESSAGES.notFound };
+  const photos = await photosFor(itemId);
+  const sales = await sql`
+    SELECT 1
+    FROM guatemala_inventory_sales
+    WHERE item_id = ${itemId} AND client_id = ${clientId} AND voided_at IS NULL
+    LIMIT 1
+  `;
+  return {
+    ok: true,
+    sourceGroupId: String(row.source_group_id),
+    item: {
+      id: String(row.id),
+      clientId: String(row.client_id),
+      sku: String(row.sku),
+      title: String(row.title ?? ""),
+      description: String(row.description ?? ""),
+      brand: String(row.brand ?? ""),
+      size: String(row.size ?? ""),
+      condition: String(row.condition ?? ""),
+      priceGtq: normalizePriceText(row.price_gtq),
+      status: itemStatus(row.status),
+      photoCount: photos.length,
+      sold: sales.length > 0,
+    },
+  };
+}
+
+function publicationSummary(item: StaffPublicationItem): {
+  id: string;
+  sku: string;
+  status: InventoryItemStatus;
+  priceGtq: string;
+} {
+  return { id: item.id, sku: item.sku, status: item.status, priceGtq: item.priceGtq };
+}
+
+async function updatePublicationStatus(
+  clientId: string,
+  itemId: string,
+  action: "retirar" | "republicar"
+): Promise<{ id: string; sku: string; status: InventoryItemStatus; priceGtq: string } | null> {
+  const sql = getSql();
+  const next = action === "retirar" ? GUATEMALA_WITHDRAWN_STATUS : GUATEMALA_INVENTORY_STATUS;
+  const current = action === "retirar" ? GUATEMALA_INVENTORY_STATUS : GUATEMALA_WITHDRAWN_STATUS;
+  const rows = await sql`
+    UPDATE guatemala_inventory_items AS item
+    SET status = ${next}
+    WHERE item.id = ${itemId}
+      AND item.client_id = ${clientId}
+      AND item.status = ${current}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM guatemala_inventory_sales AS sale
+        WHERE sale.item_id = item.id
+          AND sale.client_id = item.client_id
+          AND sale.voided_at IS NULL
+      )
+    RETURNING id, sku, status, price_gtq::text AS price_gtq
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    sku: String(row.sku),
+    status: itemStatus(row.status),
+    priceGtq: normalizePriceText(row.price_gtq),
+  };
+}
+
+async function updatePublicationContents(
+  clientId: string,
+  itemId: string,
+  item: PreparedInventoryItem
+): Promise<{ id: string; sku: string; status: InventoryItemStatus; priceGtq: string } | null> {
+  const sql = getSql();
+  const photoJson = JSON.stringify(
+    item.photos.map((photo, position) => ({
+      id: photo.id,
+      photo_position: position,
+      media_type: photo.mediaType,
+      data: photo.data,
+    }))
+  );
+  const rows = await sql`
+    WITH updated AS (
+      UPDATE guatemala_inventory_items AS item
+      SET title = ${item.title},
+          description = ${item.description},
+          brand = ${item.brand},
+          size = ${item.size},
+          condition = ${item.condition},
+          price_gtq = ${item.priceGtq}::numeric
+      WHERE item.id = ${itemId}
+        AND item.client_id = ${clientId}
+        AND item.sku = ${item.sku}
+        AND item.status IN (${GUATEMALA_INVENTORY_STATUS}, ${GUATEMALA_WITHDRAWN_STATUS})
+        AND NOT EXISTS (
+          SELECT 1
+          FROM guatemala_inventory_sales AS sale
+          WHERE sale.item_id = item.id
+            AND sale.client_id = item.client_id
+            AND sale.voided_at IS NULL
+        )
+      RETURNING id, sku, status, price_gtq::text AS price_gtq
+    ),
+    removed AS (
+      DELETE FROM guatemala_inventory_photos
+      WHERE item_id IN (SELECT id FROM updated)
+      RETURNING item_id
+    ),
+    saved_photos AS (
+      INSERT INTO guatemala_inventory_photos (id, item_id, position, media_type, data)
+      SELECT photo.id, updated.id, photo.photo_position, photo.media_type, photo.data
+      FROM jsonb_to_recordset(${photoJson}::jsonb)
+        AS photo(id text, photo_position int, media_type text, data text)
+      CROSS JOIN updated
+      RETURNING item_id
+    )
+    SELECT updated.id, updated.sku, updated.status, updated.price_gtq
+    FROM updated
+    WHERE (SELECT COUNT(*) FROM removed) >= 0
+      AND (SELECT COUNT(*) FROM saved_photos) >= 0
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    sku: String(row.sku),
+    status: itemStatus(row.status),
+    priceGtq: normalizePriceText(row.price_gtq),
+  };
+}
+
+async function recordPublicationEvent(clientId: string, itemId: string, event: PublicationEvent): Promise<void> {
+  const sql = getSql();
+  await sql`
+    INSERT INTO guatemala_publication_events (
+      id, item_id, client_id, action, actor_role, actor_account_id, actor_username, created_at
+    )
+    VALUES (
+      ${crypto.randomUUID()},
+      ${itemId},
+      ${clientId},
+      ${event.action},
+      ${event.actor.role},
+      ${event.actor.accountId},
+      ${event.actor.username},
+      ${event.at}::timestamptz
+    )
+  `;
+}
+
+async function publicationEventsFor(clientId: string, itemId: string): Promise<PublicationEventView[]> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT action, actor_role, actor_username, created_at
+    FROM guatemala_publication_events
+    WHERE item_id = ${itemId} AND client_id = ${clientId}
+    ORDER BY created_at ASC
+  `;
+  return rows.flatMap((row) => {
+    const action = row.action === "retirar" || row.action === "corregir" || row.action === "republicar" ? row.action : null;
+    const actorRole = row.actor_role === "encargado" || row.actor_role === "propietario" ? row.actor_role : null;
+    if (!action || !actorRole) return [];
+    return [
+      {
+        action,
+        actorRole,
+        actorUsername: row.actor_username ? String(row.actor_username) : null,
+        createdAt: isoTimestamp(row.created_at),
+      },
+    ];
+  });
 }
 
 export async function updateGuatemalaGarmentCost(input: {
@@ -1527,7 +1842,7 @@ async function purgeGarmentsFor(clientId: string, itemIds: string[] | null): Pro
       clientId,
       sku: String(item.sku),
       title: String(item.title ?? ""),
-      status: item.status === "vendida" ? "vendida" : "disponible",
+      status: item.status === "vendida" ? "vendida" : item.status === "retirada" ? "retirada" : "disponible",
       priceGtq: normalizePriceText(item.price_gtq),
       suggested: itemSales.some((sale) => sale.isTest),
       photos: itemPhotos,

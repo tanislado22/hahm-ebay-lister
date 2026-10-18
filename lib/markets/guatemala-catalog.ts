@@ -31,7 +31,7 @@ export interface CatalogSourceItem {
   size: string;
   condition: string;
   priceGtq: string;
-  status: "disponible" | "vendida";
+  status: "disponible" | "vendida" | "retirada";
   photos: CatalogPhoto[];
   sales: CatalogSaleMark[];
 }

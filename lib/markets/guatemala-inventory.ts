@@ -2,12 +2,14 @@ import { exactGuatemalaSku } from "@/lib/markets/guatemala";
 
 export const GUATEMALA_INVENTORY_STATUS = "disponible" as const;
 export const GUATEMALA_SOLD_STATUS = "vendida" as const;
+export const GUATEMALA_WITHDRAWN_STATUS = "retirada" as const;
 
 export type InventoryItemStatus =
   | typeof GUATEMALA_INVENTORY_STATUS
-  | typeof GUATEMALA_SOLD_STATUS;
+  | typeof GUATEMALA_SOLD_STATUS
+  | typeof GUATEMALA_WITHDRAWN_STATUS;
 
-export type InventoryListFilter = "disponibles" | "vendidas" | "todas";
+export type InventoryListFilter = "disponibles" | "vendidas" | "retiradas" | "todas";
 
 export const GUATEMALA_SALE_MESSAGES = {
   priceInvalid: "Escribe un precio cobrado mayor que cero.",
@@ -86,12 +88,20 @@ export interface GuatemalaSaleSnapshot {
   corrections?: SaleCorrectionView[];
 }
 
+export interface PublicationEventView {
+  action: "retirar" | "corregir" | "republicar";
+  actorRole: "propietario" | "encargado";
+  actorUsername: string | null;
+  createdAt: string;
+}
+
 export interface StoredInventoryItem extends PreparedInventoryItem {
   id: string;
   status: InventoryItemStatus;
   sale?: GuatemalaSaleSnapshot | null;
   costGtq?: string | null;
   costIncludesPhotography?: boolean;
+  publicationEvents?: PublicationEventView[];
 }
 
 export const GUATEMALA_COST_MESSAGES = {
@@ -278,12 +288,14 @@ export function availableGarmentLabel(count: number): string {
 }
 
 export function inventoryListFilter(value: unknown): InventoryListFilter {
-  if (value === "vendidas" || value === "todas" || value === "disponibles") return value;
+  if (value === "vendidas" || value === "retiradas" || value === "todas" || value === "disponibles") return value;
   return "disponibles";
 }
 
 export function guatemalaInventoryStatusLabel(status: string): string {
-  return status === GUATEMALA_SOLD_STATUS ? "Vendida" : "Disponible";
+  if (status === GUATEMALA_SOLD_STATUS) return "Vendida";
+  if (status === GUATEMALA_WITHDRAWN_STATUS) return "Retirada";
+  return "Disponible";
 }
 
 export interface SaleGarment {

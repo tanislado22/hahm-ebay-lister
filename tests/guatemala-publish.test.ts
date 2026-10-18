@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { publicCatalogCards } from "@/lib/markets/guatemala-catalog";
+import { publicCatalogCards, publicCatalogDetail } from "@/lib/markets/guatemala-catalog";
 import { runInventorySave, type InventoryRepository } from "@/lib/markets/guatemala-inventory-store";
 import type { StoredInventoryItem } from "@/lib/markets/guatemala-inventory";
 import {
+  changePublication,
   isolatedPublicationSku,
   publishReviewBlockers,
   staffCanConfirmPublish,
+  type StaffPublicationItem,
 } from "@/lib/markets/guatemala-publish";
 
 const photo = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB";
@@ -96,5 +98,114 @@ describe("publicación del encargado", () => {
     expect(JSON.stringify(cards)).not.toMatch(/createdBy|username|oseaspacheco|costGtq/);
     expect(isolatedPublicationSku("prueba-publicar-abc12345")).toBe(true);
     expect(isolatedPublicationSku("3001")).toBe(false);
+  });
+
+  it("retira, corrige y vuelve a publicar el mismo SKU, y no ofrece una prenda vendida", () => {
+    const actor = { role: "encargado" as const, accountId: "cuenta-oseas", username: "oseaspacheco" };
+    const now = new Date("2026-10-18T20:00:00.000Z");
+    let item: StaffPublicationItem = {
+      id: "prenda-1",
+      clientId: CLIENT,
+      sku: "prueba-publicar-abc12345",
+      title: "Polo de prueba",
+      description: "Texto inicial",
+      brand: "Arrow",
+      size: "M",
+      condition: "GOOD",
+      priceGtq: "80.00",
+      status: "disponible",
+      photoCount: 1,
+      sold: false,
+    };
+    const source = (current: StaffPublicationItem) => ({
+      id: current.id,
+      clientId: current.clientId,
+      sku: current.sku,
+      title: current.title,
+      description: current.description,
+      brand: current.brand,
+      size: current.size,
+      condition: current.condition,
+      priceGtq: current.priceGtq,
+      status: current.status,
+      photos: [{ id: "foto", mediaType: "image/jpeg", data: photo }],
+      sales: [],
+    });
+    const visible = (current: StaffPublicationItem) => publicCatalogCards([source(current)], CLIENT);
+    const direct = (current: StaffPublicationItem) => publicCatalogDetail([source(current)], CLIENT, current.id);
+    expect(visible(item)).toHaveLength(1);
+    expect(direct(item)?.sku).toBe(item.sku);
+
+    const withdrawn = changePublication(item, CLIENT, "retirar", null, actor, now);
+    expect(withdrawn.ok).toBe(true);
+    if (!withdrawn.ok) return;
+    item = withdrawn.item;
+    expect(item.status).toBe("retirada");
+    expect(item.id).toBe("prenda-1");
+    expect(item.sku).toBe("prueba-publicar-abc12345");
+    expect(withdrawn.event?.actor.username).toBe("oseaspacheco");
+    expect(withdrawn.event?.at).toBe(now.toISOString());
+    expect(visible(item)).toHaveLength(0);
+    expect(direct(item)).toBeNull();
+    const withdrawnAgain = changePublication(item, CLIENT, "retirar", null, actor, now);
+    expect(withdrawnAgain.ok).toBe(true);
+    if (withdrawnAgain.ok) expect(withdrawnAgain.event).toBeNull();
+
+    const corrected = changePublication(
+      item,
+      CLIENT,
+      "corregir",
+      {
+        title: "Polo corregido",
+        description: "Texto corregido",
+        brand: "Arrow",
+        size: "L",
+        condition: "VERY_GOOD",
+        priceGtq: "90.00",
+        photoCount: 2,
+      },
+      actor,
+      now
+    );
+    expect(corrected.ok).toBe(true);
+    if (!corrected.ok) return;
+    item = corrected.item;
+    expect(item.id).toBe("prenda-1");
+    expect(item.sku).toBe("prueba-publicar-abc12345");
+    expect(item.title).toBe("Polo corregido");
+    expect(item.priceGtq).toBe("90.00");
+    expect(item.status).toBe("retirada");
+    expect(visible(item)).toHaveLength(0);
+    expect(direct(item)).toBeNull();
+
+    const republished = changePublication(item, CLIENT, "republicar", null, actor, now);
+    expect(republished.ok).toBe(true);
+    if (!republished.ok) return;
+    item = republished.item;
+    expect(item.status).toBe("disponible");
+    expect(item.sku).toBe("prueba-publicar-abc12345");
+    expect(visible(item)[0]?.title).toBe("Polo corregido");
+    expect(visible(item)[0]?.priceGtq).toBe("90.00");
+    expect(direct(item)?.title).toBe("Polo corregido");
+    expect(JSON.stringify(direct(item))).not.toMatch(/oseaspacheco|username|actor/);
+    const republishedAgain = changePublication(item, CLIENT, "republicar", null, actor, now);
+    expect(republishedAgain.ok).toBe(true);
+    if (republishedAgain.ok) expect(republishedAgain.event).toBeNull();
+
+    const soldItem = { ...item, status: "vendida" as const, sold: true };
+    expect(changePublication(soldItem, CLIENT, "republicar", null, actor, now)).toMatchObject({ ok: false, status: 409 });
+    expect(changePublication(soldItem, CLIENT, "retirar", null, actor, now)).toMatchObject({ ok: false, status: 409 });
+    expect(changePublication(soldItem, CLIENT, "corregir", {
+      title: "Otra",
+      description: "",
+      brand: "",
+      size: "",
+      condition: "",
+      priceGtq: "10.00",
+      photoCount: 1,
+    }, actor, now)).toMatchObject({ ok: false, status: 409 });
+    expect(visible(soldItem)).toHaveLength(0);
+    expect(direct(soldItem)).toBeNull();
+    expect(changePublication(item, "otro-cliente", "retirar", null, actor, now)).toMatchObject({ ok: false, status: 404 });
   });
 });

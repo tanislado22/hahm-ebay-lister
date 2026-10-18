@@ -42,7 +42,7 @@ export interface PurgeGarment {
   clientId: string;
   sku: string;
   title: string;
-  status: "disponible" | "vendida";
+  status: "disponible" | "vendida" | "retirada";
   priceGtq: string;
   suggested: boolean;
   photos: PurgePhoto[];
