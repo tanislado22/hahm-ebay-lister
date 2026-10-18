@@ -10,7 +10,14 @@ import {
   guatemalaConditionLabel,
   quetzalPriceText,
 } from "@/lib/markets/guatemala-inventory";
-import { publishReviewBlockers, staffCanConfirmPublish, type PublishStep } from "@/lib/markets/guatemala-publish";
+import {
+  DISCARD_PUBLICATION_PROMPT,
+  emptyPublicationDraft,
+  publicationResultIsCurrent,
+  publishReviewBlockers,
+  staffCanConfirmPublish,
+  type PublishStep,
+} from "@/lib/markets/guatemala-publish";
 import type { GuatemalaCompReport } from "@/lib/types";
 
 interface DraftPhoto {
@@ -35,6 +42,7 @@ export function PublishScreen() {
   const draftId = useRef(crypto.randomUUID());
   const saving = useRef(false);
   const priceTouched = useRef(false);
+  const requestGeneration = useRef(0);
   const [photos, setPhotos] = useState<DraftPhoto[]>([]);
   const [sku, setSku] = useState("");
   const [title, setTitle] = useState("");
@@ -51,33 +59,63 @@ export function PublishScreen() {
   const [step, setStep] = useState<PublishStep>("datos");
   const [pending, setPending] = useState("");
   const [publishedId, setPublishedId] = useState("");
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   function keepDraft() {
     setStep("datos");
   }
 
+  function discardDraft() {
+    if (saving.current) return;
+    const blank = emptyPublicationDraft();
+    requestGeneration.current += 1;
+    draftId.current = crypto.randomUUID();
+    priceTouched.current = false;
+    setPhotos([]);
+    setSku(blank.sku);
+    setTitle(blank.title);
+    setDescription(blank.description);
+    setBrand(blank.brand);
+    setSize(blank.size);
+    setCondition(blank.condition);
+    setItemType(blank.itemType);
+    setCategory(blank.category);
+    setPrice(blank.price);
+    setPriceNote(blank.priceNote);
+    setSkuNote(blank.skuNote);
+    setError("");
+    setPending("");
+    setStep("datos");
+    setConfirmDiscard(false);
+  }
+
   async function addPhotos(files: FileList | null) {
     if (!files) return;
+    const ticket = requestGeneration.current;
     setError("");
     const next = [...photos];
     for (const file of Array.from(files)) {
+      if (!publicationResultIsCurrent(ticket, requestGeneration.current)) return;
       if (next.length >= MAX_PHOTOS) break;
       if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
         setError("Usa fotos JPG, PNG o WebP.");
         continue;
       }
       const photo = await shrinkPhoto(file);
+      if (!publicationResultIsCurrent(ticket, requestGeneration.current)) return;
       if (!photo) {
         setError("No se pudo leer una foto. Prueba con otra.");
         continue;
       }
       next.push(photo);
     }
+    if (!publicationResultIsCurrent(ticket, requestGeneration.current)) return;
     setPhotos(next);
     if (step === "revision") setStep("datos");
   }
 
   async function checkSku(): Promise<boolean> {
+    const ticket = requestGeneration.current;
     const trimmed = sku.trim();
     setSkuNote("");
     if (!trimmed) {
@@ -89,6 +127,7 @@ export function PublishScreen() {
       undefined,
       { actor: "encargado" }
     );
+    if (!publicationResultIsCurrent(ticket, requestGeneration.current)) return false;
     const body = (await response.json()) as { ok?: boolean; available?: boolean; error?: string };
     if (!response.ok || !body.ok) {
       setError(body.error || "No se pudo comprobar el SKU.");
@@ -104,6 +143,7 @@ export function PublishScreen() {
   }
 
   async function prepare() {
+    const ticket = requestGeneration.current;
     if (photos.length === 0) {
       setError(GUATEMALA_INVENTORY_MESSAGES.photosRequired);
       return;
@@ -116,6 +156,7 @@ export function PublishScreen() {
         { images: photos.map((photo) => ({ mediaType: photo.mediaType, data: photo.data })) },
         { actor: "encargado" }
       );
+      if (!publicationResultIsCurrent(ticket, requestGeneration.current)) return;
       const body = (await response.json()) as { ok?: boolean; error?: string; listing?: PreparedListing };
       if (!response.ok || !body.ok || !body.listing) {
         setError(body.error || "No se pudo preparar la prenda. Las fotos y el SKU siguen aquí.");
@@ -129,29 +170,37 @@ export function PublishScreen() {
       setItemType(body.listing.itemType || "");
       setCategory(body.listing.category || "");
       setStep("datos");
-      await suggestPrice({
-        title: body.listing.title,
-        brand: body.listing.brand,
-        condition: body.listing.condition,
-        size: body.listing.size,
-        itemType: body.listing.itemType,
-        category: body.listing.category,
-      });
+      await suggestPrice(
+        {
+          title: body.listing.title,
+          brand: body.listing.brand,
+          condition: body.listing.condition,
+          size: body.listing.size,
+          itemType: body.listing.itemType,
+          category: body.listing.category,
+        },
+        ticket
+      );
     } catch {
-      setError("No se pudo preparar la prenda. Las fotos y el SKU siguen aquí.");
+      if (publicationResultIsCurrent(ticket, requestGeneration.current)) {
+        setError("No se pudo preparar la prenda. Las fotos y el SKU siguen aquí.");
+      }
     } finally {
-      setPending("");
+      if (publicationResultIsCurrent(ticket, requestGeneration.current)) setPending("");
     }
   }
 
-  async function suggestPrice(listing: {
-    title: string;
-    brand: string;
-    condition: string;
-    size: string;
-    itemType: string;
-    category: string;
-  }) {
+  async function suggestPrice(
+    listing: {
+      title: string;
+      brand: string;
+      condition: string;
+      size: string;
+      itemType: string;
+      category: string;
+    },
+    ticket = requestGeneration.current
+  ) {
     try {
       const response = await guatemalaRequest(
         "/api/markets/guatemala/publicar/precio",
@@ -167,7 +216,9 @@ export function PublishScreen() {
         },
         { actor: "encargado" }
       );
+      if (!publicationResultIsCurrent(ticket, requestGeneration.current)) return;
       const report = (await response.json()) as GuatemalaCompReport;
+      if (!publicationResultIsCurrent(ticket, requestGeneration.current)) return;
       if (!report?.ok) {
         setPriceNote("No se pudo consultar el precio. Escríbelo en quetzales.");
         return;
@@ -177,11 +228,14 @@ export function PublishScreen() {
       const next = guatemalaPriceIfEmpty(price, report.suggestedPrice);
       if (typeof next === "number" && next > 0) setPrice(next.toFixed(2));
     } catch {
-      setPriceNote("No se pudo consultar el precio. Escríbelo en quetzales.");
+      if (publicationResultIsCurrent(ticket, requestGeneration.current)) {
+        setPriceNote("No se pudo consultar el precio. Escríbelo en quetzales.");
+      }
     }
   }
 
   async function review() {
+    const ticket = requestGeneration.current;
     setError("");
     const blockers = publishReviewBlockers({ sku, title, price, photoCount: photos.length });
     if (blockers.length) {
@@ -191,16 +245,19 @@ export function PublishScreen() {
     setPending("Comprobando el SKU…");
     try {
       const free = await checkSku();
-      if (!free) return;
+      if (!publicationResultIsCurrent(ticket, requestGeneration.current) || !free) return;
       setStep("revision");
     } catch {
-      setError("No se pudo comprobar el SKU. Los datos siguen aquí.");
+      if (publicationResultIsCurrent(ticket, requestGeneration.current)) {
+        setError("No se pudo comprobar el SKU. Los datos siguen aquí.");
+      }
     } finally {
-      setPending("");
+      if (publicationResultIsCurrent(ticket, requestGeneration.current)) setPending("");
     }
   }
 
   async function publish() {
+    const ticket = requestGeneration.current;
     if (!staffCanConfirmPublish(step) || saving.current) return;
     const blockers = publishReviewBlockers({ sku, title, price, photoCount: photos.length });
     if (blockers.length) {
@@ -227,7 +284,9 @@ export function PublishScreen() {
         },
         { actor: "encargado" }
       );
+      if (!publicationResultIsCurrent(ticket, requestGeneration.current)) return;
       const body = (await response.json()) as { ok?: boolean; error?: string; item?: { id?: string } };
+      if (!publicationResultIsCurrent(ticket, requestGeneration.current)) return;
       if (!response.ok || !body.ok || !body.item?.id) {
         setError(body.error || GUATEMALA_INVENTORY_MESSAGES.retry);
         return;
@@ -235,11 +294,35 @@ export function PublishScreen() {
       setPublishedId(body.item.id);
       setStep("publicado");
     } catch {
-      setError(GUATEMALA_INVENTORY_MESSAGES.retry);
+      if (publicationResultIsCurrent(ticket, requestGeneration.current)) setError(GUATEMALA_INVENTORY_MESSAGES.retry);
     } finally {
       saving.current = false;
-      setPending("");
+      if (publicationResultIsCurrent(ticket, requestGeneration.current)) setPending("");
     }
+  }
+
+  function discardControl() {
+    if (confirmDiscard) {
+      return (
+        <div className="gt-publish-discard" role="alertdialog" aria-labelledby="discard-publication-title">
+          <p id="discard-publication-title">{DISCARD_PUBLICATION_PROMPT}</p>
+          <p>Solo se borra esta preparación. No se retira ni se elimina una prenda ya guardada.</p>
+          <div className="gt-publish-actions">
+            <button type="button" className="btn btn-primary" onClick={discardDraft} disabled={pending === "Publicando…"}>
+              Descartar
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => setConfirmDiscard(false)} disabled={pending === "Publicando…"}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <button type="button" className="btn btn-ghost" onClick={() => setConfirmDiscard(true)} disabled={pending === "Publicando…"}>
+        Descartar artículo
+      </button>
+    );
   }
 
   if (step === "publicado" && publishedId) {
@@ -299,6 +382,7 @@ export function PublishScreen() {
               {pending ? "Publicando…" : "Publicar"}
             </button>
           </div>
+          {discardControl()}
         </section>
       ) : (
         <section className="panel">
@@ -394,6 +478,7 @@ export function PublishScreen() {
           <button type="button" className="btn btn-primary" onClick={() => void review()} disabled={Boolean(pending)}>
             Revisar
           </button>
+          {discardControl()}
         </section>
       )}
     </main>

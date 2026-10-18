@@ -150,3 +150,45 @@ export function publishReviewBlockers(input: {
 export function staffCanConfirmPublish(step: PublishStep): boolean {
   return step === "revision";
 }
+
+export const DISCARD_PUBLICATION_PROMPT = "¿Descartar este artículo y empezar de nuevo?";
+
+export interface PublicationDraft {
+  sku: string;
+  title: string;
+  description: string;
+  brand: string;
+  size: string;
+  condition: string;
+  price: string;
+  priceNote: string;
+  skuNote: string;
+  itemType: string;
+  category: string;
+  photoCount: number;
+}
+
+export function emptyPublicationDraft(): PublicationDraft {
+  return {
+    sku: "",
+    title: "",
+    description: "",
+    brand: "",
+    size: "",
+    condition: "",
+    price: "",
+    priceNote: "",
+    skuNote: "",
+    itemType: "",
+    category: "",
+    photoCount: 0,
+  };
+}
+
+export function publicationDraftAfterDiscard(draft: PublicationDraft, confirmed: boolean): PublicationDraft {
+  return confirmed ? emptyPublicationDraft() : draft;
+}
+
+export function publicationResultIsCurrent(startedGeneration: number, currentGeneration: number): boolean {
+  return startedGeneration === currentGeneration;
+}
