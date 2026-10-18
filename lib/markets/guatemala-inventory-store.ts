@@ -3,8 +3,9 @@ import { boundGuatemalaClientId, clientIsGuatemala } from "@/lib/markets/client-
 import {
   GUATEMALA_CATALOG_MESSAGES,
   publicCatalogCards,
-  publicCatalogDetailView,
+  publicCatalogDetail,
   publicCatalogFacets,
+  publicSoldArticleCount,
   type CatalogFilters,
   type CatalogSourceItem,
   type PublicCatalogCard,
@@ -1508,14 +1509,15 @@ export async function listGuatemalaSaleReferences(clientId: string): Promise<
 export async function listPublicGuatemalaCatalog(
   filters: CatalogFilters
 ): Promise<
-  { ok: true; items: PublicCatalogCard[]; facets: PublicCatalogFacets } | { ok: false; status: 404; error: string }
+  | { ok: true; items: PublicCatalogCard[]; facets: PublicCatalogFacets; soldCount: number }
+  | { ok: false; status: 404; error: string }
 > {
   const clientId = await readyPublicCatalogClient();
   if (!clientId) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.unavailable };
   const sql = getSql();
   const rows = await sql`
     SELECT item.id, item.sku, item.title, item.brand, item.size, item.condition, item.price_gtq::text AS price_gtq,
-      photo.id AS photo_id, photo.media_type
+      item.status, photo.id AS photo_id, photo.media_type
     FROM guatemala_inventory_items AS item
     LEFT JOIN LATERAL (
       SELECT id, media_type
@@ -1526,21 +1528,37 @@ export async function listPublicGuatemalaCatalog(
       LIMIT 1
     ) AS photo ON TRUE
     WHERE item.client_id = ${clientId}
-      AND item.status = ${GUATEMALA_INVENTORY_STATUS}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM guatemala_inventory_sales AS sale
-        WHERE sale.item_id = item.id
-          AND sale.client_id = item.client_id
-          AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+      AND (
+        (
+          item.status = ${GUATEMALA_INVENTORY_STATUS}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM guatemala_inventory_sales AS sale
+            WHERE sale.item_id = item.id
+              AND sale.client_id = item.client_id
+              AND sale.voided_at IS NULL
+          )
+        )
+        OR (
+          item.status = ${GUATEMALA_SOLD_STATUS}
+          AND EXISTS (
+            SELECT 1
+            FROM guatemala_inventory_sales AS sale
+            WHERE sale.item_id = item.id
+              AND sale.client_id = item.client_id
+              AND sale.voided_at IS NULL
+              AND sale.is_test = FALSE
+          )
+        )
       )
-    ORDER BY item.created_at DESC
+    ORDER BY CASE WHEN item.status = ${GUATEMALA_INVENTORY_STATUS} THEN 0 ELSE 1 END, item.created_at DESC
   `;
   const sources = rows.map((row) => publicSource(clientId, row));
   return {
     ok: true,
     items: publicCatalogCards(sources, clientId, filters),
     facets: publicCatalogFacets(sources, clientId),
+    soldCount: publicSoldArticleCount(sources, clientId),
   };
 }
 
@@ -1552,24 +1570,41 @@ export async function readPublicGuatemalaCatalogItem(
   const sql = getSql();
   const rows = await sql`
     SELECT item.id, item.sku, item.title, item.description, item.brand, item.size, item.condition,
-      item.price_gtq::text AS price_gtq
+      item.price_gtq::text AS price_gtq, item.status
     FROM guatemala_inventory_items AS item
     WHERE item.id = ${itemId}
       AND item.client_id = ${clientId}
-      AND item.status = ${GUATEMALA_INVENTORY_STATUS}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM guatemala_inventory_sales AS sale
-        WHERE sale.item_id = item.id
-          AND sale.client_id = item.client_id
-          AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+      AND (
+        (
+          item.status = ${GUATEMALA_INVENTORY_STATUS}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM guatemala_inventory_sales AS sale
+            WHERE sale.item_id = item.id
+              AND sale.client_id = item.client_id
+              AND sale.voided_at IS NULL
+          )
+        )
+        OR (
+          item.status = ${GUATEMALA_SOLD_STATUS}
+          AND EXISTS (
+            SELECT 1
+            FROM guatemala_inventory_sales AS sale
+            WHERE sale.item_id = item.id
+              AND sale.client_id = item.client_id
+              AND sale.voided_at IS NULL
+              AND sale.is_test = FALSE
+          )
+        )
       )
     LIMIT 1
   `;
   const row = rows[0];
   if (!row) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.notFound };
   const photos = await photoIdsFor(String(row.id));
-  return { ok: true, item: publicCatalogDetailView(publicSource(clientId, row, photos)) };
+  const item = publicCatalogDetail([publicSource(clientId, row, photos)], clientId, String(row.id));
+  if (!item) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.notFound };
+  return { ok: true, item };
 }
 
 export async function readPublicCatalogPhoto(
@@ -1584,13 +1619,28 @@ export async function readPublicCatalogPhoto(
     INNER JOIN guatemala_inventory_items AS item ON item.id = photo.item_id
     WHERE photo.id = ${photoId}
       AND item.client_id = ${clientId}
-      AND item.status = ${GUATEMALA_INVENTORY_STATUS}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM guatemala_inventory_sales AS sale
-        WHERE sale.item_id = item.id
-          AND sale.client_id = item.client_id
-          AND (sale.is_test = TRUE OR sale.voided_at IS NULL)
+      AND (
+        (
+          item.status = ${GUATEMALA_INVENTORY_STATUS}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM guatemala_inventory_sales AS sale
+            WHERE sale.item_id = item.id
+              AND sale.client_id = item.client_id
+              AND sale.voided_at IS NULL
+          )
+        )
+        OR (
+          item.status = ${GUATEMALA_SOLD_STATUS}
+          AND EXISTS (
+            SELECT 1
+            FROM guatemala_inventory_sales AS sale
+            WHERE sale.item_id = item.id
+              AND sale.client_id = item.client_id
+              AND sale.voided_at IS NULL
+              AND sale.is_test = FALSE
+          )
+        )
       )
     LIMIT 1
   `;
@@ -1622,9 +1672,9 @@ function publicSource(
     size: String(row.size ?? ""),
     condition: String(row.condition ?? ""),
     priceGtq: normalizePriceText(row.price_gtq),
-    status: "disponible",
+    status: row.status === GUATEMALA_SOLD_STATUS ? GUATEMALA_SOLD_STATUS : row.status === GUATEMALA_WITHDRAWN_STATUS ? GUATEMALA_WITHDRAWN_STATUS : GUATEMALA_INVENTORY_STATUS,
     photos: cover.map((photo) => ({ ...photo, data: "" })),
-    sales: [],
+    sales: row.status === GUATEMALA_SOLD_STATUS ? [{ isTest: false, voidedAt: null }] : [],
   };
 }
 

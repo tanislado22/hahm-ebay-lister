@@ -1,6 +1,14 @@
 import Link from "next/link";
 import { headers } from "next/headers";
-import { catalogEmptyMessage, catalogPhotoPath, parseCatalogFilters } from "@/lib/markets/guatemala-catalog";
+import {
+  catalogEmptyMessage,
+  catalogPageSearch,
+  catalogPhotoPath,
+  parseCatalogFilters,
+  PUBLIC_SOLD_BADGE,
+  PUBLIC_SOLD_COUNT_LABEL,
+  type CatalogAvailability,
+} from "@/lib/markets/guatemala-catalog";
 import { formatStoredQuetzales } from "@/lib/markets/guatemala-inventory";
 import { listPublicGuatemalaCatalog } from "@/lib/markets/guatemala-inventory-store";
 import { isStoreHostname } from "@/lib/markets/store-host";
@@ -26,7 +34,7 @@ export default async function StorePage({
         <p className="vsa-mark" aria-hidden="true">VSA</p>
         <div>
           <h1>Variedades San Andrés</h1>
-          <p>Prendas disponibles · precios en quetzales</p>
+          <p>Precios en quetzales</p>
         </div>
       </header>
       <form className="vsa-filters" method="get" action={home}>
@@ -69,27 +77,37 @@ export default async function StorePage({
           Precio máximo
           <input name="max" inputMode="decimal" defaultValue={filters.maxPrice ?? ""} placeholder="Q" />
         </label>
+        {filters.availability !== "todos" ? <input type="hidden" name="estado" value={filters.availability} /> : null}
         <button type="submit">Aplicar</button>
       </form>
+      <nav className="vsa-availability" aria-label="Disponibilidad">
+        {(["todos", "disponibles", "vendidos"] as const).map((option) => (
+          <Link
+            key={option}
+            href={availabilityHref(home, filters, option)}
+            aria-current={filters.availability === option ? "page" : undefined}
+          >
+            {option === "todos" ? "Todos" : option === "disponibles" ? "Disponibles" : "Vendidos"}
+          </Link>
+        ))}
+      </nav>
       {!result.ok ? <p className="vsa-note" role="alert">{result.error}</p> : null}
-      {result.ok ? (
-        <p className="vsa-count">
-          {items.length === 1 ? "1 prenda disponible" : `${items.length} prendas disponibles`}
-        </p>
-      ) : null}
+      {result.ok ? <p className="vsa-count">{PUBLIC_SOLD_COUNT_LABEL}: {result.soldCount}</p> : null}
       {result.ok && items.length === 0 ? <p className="vsa-note">{catalogEmptyMessage(filters)}</p> : null}
       <div className="vsa-grid">
         {items.map((item) => (
-          <Link key={item.id} className="vsa-card" href={storefront ? `/prenda/${encodeURIComponent(item.id)}` : `/tienda/prenda/${encodeURIComponent(item.id)}`}>
+          <Link key={item.id} className={item.availability === "vendido" ? "vsa-card is-sold" : "vsa-card"} href={storefront ? `/prenda/${encodeURIComponent(item.id)}` : `/tienda/prenda/${encodeURIComponent(item.id)}`}>
             <span className="vsa-photo">
               {item.coverPhotoId ? (
                 <img src={catalogPhotoPath(item.coverPhotoId, 480)} alt="" width={480} height={480} />
               ) : (
                 <span className="vsa-photo-empty">Sin foto</span>
               )}
+              {item.soldBadge ? <span className="vsa-sold-seal">{item.soldBadge || PUBLIC_SOLD_BADGE}</span> : null}
             </span>
             <span className="vsa-copy">
               <strong>{item.title || "Prenda sin título"}</strong>
+              {item.availability === "vendido" ? <span className="vsa-sold-label">{PUBLIC_SOLD_BADGE}</span> : null}
               {item.brand ? <span>{item.brand}</span> : null}
               <span>{item.size ? `Talla ${item.size}` : "Sin talla"}</span>
               <span className="vsa-price">{formatStoredQuetzales(item.priceGtq)}</span>
@@ -99,4 +117,9 @@ export default async function StorePage({
       </div>
     </main>
   );
+}
+
+function availabilityHref(home: string, filters: ReturnType<typeof parseCatalogFilters>, next: CatalogAvailability): string {
+  const query = catalogPageSearch({ ...filters, availability: next });
+  return query ? `${home}?${query}` : home;
 }

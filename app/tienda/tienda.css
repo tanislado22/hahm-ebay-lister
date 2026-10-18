@@ -157,11 +157,74 @@
   text-decoration: none;
 }
 
+.vsa-availability {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0 0 0.8rem;
+}
+
+.vsa-availability a {
+  flex: 1 1 6.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--vsa-line);
+  border-radius: 999px;
+  background: white;
+  color: var(--vsa-ink);
+  font-weight: 800;
+  text-align: center;
+  text-decoration: none;
+}
+
+.vsa-availability a[aria-current="page"] {
+  background: var(--vsa-green);
+  border-color: var(--vsa-green-deep);
+  color: white;
+}
+
 .vsa-photo {
+  position: relative;
   display: block;
   aspect-ratio: 1;
   background: #ebe3d6;
   overflow: hidden;
+}
+
+.vsa-sold-seal {
+  position: absolute;
+  left: 0.4rem;
+  right: 0.4rem;
+  bottom: 0.4rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 999px;
+  background: #1b1714;
+  color: white;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.vsa-card.is-sold {
+  background: #f6efe4;
+}
+
+.vsa-sold-label,
+.vsa-sold-notice {
+  color: #1b1714 !important;
+  font-weight: 800;
+}
+
+.vsa-sold-notice {
+  margin: 0 0 0.75rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  background: #1b1714;
+  color: white !important;
+  font-size: 1.05rem;
 }
 
 .vsa-photo img,
@@ -305,6 +368,12 @@
 .vsa-lightbox button {
   padding: 0.4rem 0.8rem;
   font-weight: 800;
+}
+
+@media (max-width: 640px) {
+  .vsa-availability a {
+    flex-basis: 100%;
+  }
 }
 
 @media (max-width: 340px) {
