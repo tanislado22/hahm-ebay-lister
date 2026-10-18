@@ -12,6 +12,7 @@ import {
   soldGarmentLabel,
   type SalesReportPeriod,
 } from "@/lib/markets/guatemala-sales-report";
+import { formatSignedQuetzales, profitLabel, soldCostLabel, type ProfitSummary } from "@/lib/markets/guatemala-expenses";
 import "../inventario/inventory.css";
 import "./report.css";
 
@@ -23,6 +24,8 @@ interface ReportSale {
   chargedPriceGtq: string;
   soldAt: string;
   isTest: boolean;
+  costGtq: string | null;
+  costIncludesPhotography: boolean;
   cover: InventoryPhoto | null;
 }
 
@@ -33,6 +36,7 @@ interface ReportPayload {
   count: number;
   totalChargedGtq: string;
   sales: ReportSale[];
+  profit: ProfitSummary;
 }
 
 const PERIODS: { id: SalesReportPeriod; label: string }[] = [
@@ -50,10 +54,12 @@ export function SalesReportScreen({
   lockedClientId,
   basePath = "/guatemala/reportes",
   inventoryPath = "/guatemala/inventario",
+  expensesPath = "/guatemala/gastos",
 }: {
   lockedClientId?: string;
   basePath?: string;
   inventoryPath?: string;
+  expensesPath?: string;
 } = {}) {
   const params = useSearchParams();
   const router = useRouter();
@@ -140,7 +146,7 @@ export function SalesReportScreen({
     <main className="wrap gt-inventory gt-report">
       <header>
         <h1>Reportes de ventas</h1>
-        <p>Ventas guardadas de Tienda Guatemala. El total usa el precio cobrado.</p>
+        <p>Ventas, costo de las prendas vendidas y gastos de Tienda Guatemala.</p>
       </header>
       <section className="panel">
         <div className="gt-inventory-filters" role="group" aria-label="Período">
@@ -188,8 +194,29 @@ export function SalesReportScreen({
               Consultado: {report.fromLabel} al {report.toLabel}. Zona horaria {report.timezone}.
             </p>
             <p className="gt-inventory-count">{soldGarmentLabel(report.count)}</p>
-            {chargedTotal ? <p className="gt-report-total">Total cobrado {formatStoredQuetzales(chargedTotal)}</p> : null}
-            <p className="gt-report-note">Este importe suma el precio cobrado, no el publicado. No es ganancia.</p>
+            {chargedTotal ? (
+              <p className="gt-report-total">Total de ventas {formatStoredQuetzales(chargedTotal)}</p>
+            ) : null}
+            {report.profit ? (
+              <>
+                <p className="gt-profit-line">Costo de las prendas vendidas {soldCostLabel(report.profit)}</p>
+                <p className="gt-profit-line">
+                  Gastos del negocio {formatStoredQuetzales(report.profit.businessExpensesGtq)}
+                </p>
+                <p className={`gt-profit-line${report.profit.partial ? " is-partial" : ""}`}>
+                  {profitLabel(report.profit.partial)} {formatSignedQuetzales(report.profit.profitGtq)}
+                </p>
+                {report.profit.warnings.map((warning) => (
+                  <p key={warning} className="gt-report-warning" role="status">
+                    {warning}
+                  </p>
+                ))}
+                {report.profit.photographyNote ? <p className="gt-report-note">{report.profit.photographyNote}</p> : null}
+              </>
+            ) : null}
+            <p className="gt-report-note">
+              La ganancia resta el costo de las prendas vendidas en este período y los gastos del negocio. No usa la compra de todo el inventario.
+            </p>
             {report.sales.length === 0 ? <p>No hay ventas en este período.</p> : null}
             <div className="gt-inventory-list">
               {report.sales.map((sale) => (
@@ -215,6 +242,11 @@ export function SalesReportScreen({
                     <p className="gt-inventory-meta">
                       Precio publicado {formatStoredQuetzales(sale.publishedPriceGtq)}
                     </p>
+                    <p className="gt-inventory-meta">
+                      {sale.costGtq
+                        ? `Costo ${formatStoredQuetzales(sale.costGtq)}${sale.costIncludesPhotography ? " · incluye fotografías" : ""}`
+                        : "Sin costo"}
+                    </p>
                     <p className="gt-inventory-meta">{formatGuatemalaMoment(sale.soldAt)}</p>
                   </span>
                 </a>
@@ -228,6 +260,12 @@ export function SalesReportScreen({
             href={staffMode ? inventoryPath : `${inventoryPath}?clientId=${encodeURIComponent(clientId)}`}
           >
             Volver al inventario
+          </a>
+          <a
+            className="btn btn-primary"
+            href={staffMode ? expensesPath : `${expensesPath}?clientId=${encodeURIComponent(clientId)}`}
+          >
+            Gastos
           </a>
         </div>
       </section>

@@ -207,6 +207,14 @@
   font-weight: 650;
 }
 
+.gt-cost-check {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 700;
+  min-height: 48px;
+}
+
 .gt-inventory-actions {
   display: flex;
   flex-wrap: wrap;

@@ -23,6 +23,7 @@ export default async function StaffReportsPage() {
         lockedClientId={session.clientId}
         basePath="/guatemala/panel/reportes"
         inventoryPath="/guatemala/panel/inventario"
+        expensesPath="/guatemala/panel/gastos"
       />
     </Suspense>
   );

@@ -1,0 +1,85 @@
+.gt-expense-form,
+.gt-expense-card {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.gt-expense-form label,
+.gt-expense-check {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 700;
+}
+
+.gt-expense-check {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  min-height: 48px;
+  font-weight: 700;
+}
+
+.gt-expense-form input,
+.gt-expense-form select,
+.gt-expense-form textarea {
+  width: 100%;
+  min-height: 48px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  padding: 0.7rem 0.9rem;
+  font: inherit;
+  font-size: 1.05rem;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.gt-expense-form textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.gt-expense-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.gt-expense-card {
+  padding: 0.9rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.gt-expense-card h2,
+.gt-expense-card p {
+  margin: 0;
+}
+
+.gt-expense-amount {
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.gt-expense-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.gt-expense-actions .btn {
+  min-height: 48px;
+  font-size: 1.05rem;
+}
+
+.gt-expense-note {
+  margin: 0;
+  color: var(--color-ink-soft);
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .gt-expense-actions .btn,
+  .gt-expense-form .gt-inventory-actions .btn {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+}

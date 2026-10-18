@@ -84,6 +84,36 @@ export interface StoredInventoryItem extends PreparedInventoryItem {
   id: string;
   status: InventoryItemStatus;
   sale?: GuatemalaSaleSnapshot | null;
+  costGtq?: string | null;
+  costIncludesPhotography?: boolean;
+}
+
+export const GUATEMALA_COST_MESSAGES = {
+  invalid: "Escribe un costo mayor que cero, o déjalo vacío si todavía no lo conoces.",
+  saved: "Costo guardado.",
+  notFound: "No se encontró la prenda.",
+} as const;
+
+// Blank clears the cost. Zero is not a stand-in for "aún no lo sé".
+export function prepareGarmentCost(input: {
+  cost?: unknown;
+  includesPhotography?: unknown;
+}):
+  | { ok: true; costGtq: string | null; includesPhotography: boolean }
+  | { ok: false; status: 400; error: string } {
+  const raw = typeof input.cost === "number" ? input.cost : typeof input.cost === "string" ? input.cost.trim() : input.cost;
+  if (raw == null || raw === "") {
+    return { ok: true, costGtq: null, includesPhotography: false };
+  }
+  const costGtq = quetzalPriceText(raw);
+  if (!costGtq) {
+    return { ok: false, status: 400, error: GUATEMALA_COST_MESSAGES.invalid };
+  }
+  return {
+    ok: true,
+    costGtq,
+    includesPhotography: input.includesPhotography === true,
+  };
 }
 
 type PrepareResult =

@@ -32,6 +32,9 @@ export default async function StaffLayout({ children }: { children: React.ReactN
         <a className="btn btn-primary" href="/guatemala/panel/reportes">
           Reportes de ventas
         </a>
+        <a className="btn btn-primary" href="/guatemala/panel/gastos">
+          Gastos
+        </a>
         <LogoutButton />
       </nav>
       {children}
