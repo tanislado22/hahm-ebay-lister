@@ -12,6 +12,7 @@ import {
 import { formatStoredQuetzales } from "@/lib/markets/guatemala-inventory";
 import { listPublicGuatemalaCatalog } from "@/lib/markets/guatemala-inventory-store";
 import { isStoreHostname } from "@/lib/markets/store-host";
+import { SoldTicket } from "./sold-ticket";
 
 export const dynamic = "force-dynamic";
 
@@ -103,7 +104,7 @@ export default async function StorePage({
               ) : (
                 <span className="vsa-photo-empty">Sin foto</span>
               )}
-              {item.soldBadge ? <span className="vsa-sold-seal">{item.soldBadge || PUBLIC_SOLD_BADGE}</span> : null}
+              {item.availability === "vendido" ? <SoldTicket /> : null}
             </span>
             <span className="vsa-copy">
               <strong>{item.title || "Prenda sin título"}</strong>

@@ -194,7 +194,7 @@ describe("catálogo público de Tienda Guatemala", () => {
     const cards = publicCatalogCards([confirmed, available], TIENDA, "");
     expect(cards.map((card) => card.sku)).toEqual(["4500", "4500"]);
     expect(cards.map((card) => card.availability)).toEqual(["disponible", "vendido"]);
-    expect(cards[1]?.soldBadge).toBe("Vendido");
+    expect(cards[1]?.soldBadge).toBe("VENDIDO");
     expect(cards[1]?.coverPhotoId).toBe("foto-1");
     const detail = publicCatalogDetail([confirmed], TIENDA, "lista");
     expect(detail?.soldNotice).toBe(PUBLIC_SOLD_NOTICE);
