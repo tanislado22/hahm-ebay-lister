@@ -1609,6 +1609,13 @@ const draftAll = async () => {
         <a className="btn btn-primary" href="/guatemala/acceso" style={{ fontSize: "20px", marginLeft: 0 }}>
           Acceso del encargado
         </a>
+        <a
+          className="btn btn-primary"
+          href={`/guatemala/precios?clientId=${encodeURIComponent(selectedClientId)}`}
+          style={{ fontSize: "20px", marginLeft: 0 }}
+        >
+          Tabla de precios
+        </a>
       </div>
     )}
     {workMode === "client" && (

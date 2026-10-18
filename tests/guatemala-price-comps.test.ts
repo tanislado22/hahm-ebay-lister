@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildGuatemalaCompReport,
   coerceGuatemalaCompReport,
+  garmentKind,
   guatemalaPriceIfEmpty,
   listingIsRelevant,
   type CatalogListing,
@@ -273,6 +274,123 @@ describe("comparación de precios de Tienda Guatemala", () => {
     ).toBe(true);
     expect(listingIsRelevant({ itemType: "Pantalón", brand: "Levi's", condition: "NEW_WITH_TAGS", size: "32x30" }, jeans[0])).toBe(false);
     expect(listingIsRelevant({ itemType: "Chumpa", brand: "Zara", condition: "GOOD", size: "M" }, ad({ title: "Chumpa M", itemType: "Chumpa", brand: "Zara", condition: "usado" }))).toBe(true);
+  });
+
+  it("trata la polo PJ Paul Jones 2XL aparte de una camiseta y amplía la talla", () => {
+    const polo = {
+      title: "Playera tipo polo PJ Paul Jones negra tejida manga corta talla 2XL",
+      itemType: "Playera tipo polo de punto",
+      brand: "PJ Paul Jones",
+      condition: "NEW_WITH_TAGS",
+      size: "2XL",
+      category: "mens_top",
+    };
+    expect(garmentKind(polo.itemType, polo.title)?.key).toBe("polo");
+    expect(garmentKind("Camiseta", "Playera Nike")?.key).toBe("camiseta");
+    const report = buildGuatemalaCompReport({
+      query: polo,
+      advertised: [
+        ad({ title: "Polo 2XL (PJ PAUL JONES)", brand: "PJ PAUL JONES", itemType: "Polo", size: "2XL", priceGtq: 120, url: "https://megapaca.store/products/polo-2xl" }),
+        ad({ title: "Polo M (PJ PAUL JONES)", brand: "PJ PAUL JONES", itemType: "Polo", size: "M", priceGtq: 90, url: "https://megapaca.store/products/polo-m" }),
+        ad({ title: "Polo L (PJ PAUL JONES)", brand: "PJ PAUL JONES", itemType: "Polo", size: "L", priceGtq: 110, url: "https://megapaca.store/products/polo-l" }),
+        ad({ title: "Playera M (PJ PAUL JONES)", brand: "PJ PAUL JONES", itemType: "Camiseta", size: "M", priceGtq: 40, url: "https://megapaca.store/products/tee" }),
+        ad({ title: "Polo 2XL usada", brand: "PJ PAUL JONES", itemType: "Polo", size: "2XL", condition: "usado", priceGtq: 30, url: "https://megapaca.store/products/used" }),
+      ],
+      sourceErrors: [],
+      sales: [],
+    });
+    expect(report.priceBasis).toBe("same-brand");
+    expect(report.suggestedPrice).toBe(110);
+    expect(report.message).toContain("Precio orientativo");
+    expect(report.message).toContain("Se amplió la talla");
+    expect(report.listed.map((item) => item.url)).toEqual([
+      "https://megapaca.store/products/polo-2xl",
+      "https://megapaca.store/products/polo-m",
+      "https://megapaca.store/products/polo-l",
+    ]);
+  });
+
+  it("solo usa otra marca cuando la tabla de la tienda la marca como comparable", () => {
+    const polo = {
+      itemType: "Polo",
+      brand: "PJ Paul Jones",
+      condition: "NEW_WITH_TAGS",
+      size: "2XL",
+    };
+    const catalog = [
+      ad({ title: "Polo 2XL", brand: "PJ Paul Jones", itemType: "Polo", size: "2XL", priceGtq: 100, url: "https://megapaca.store/products/one" }),
+      ad({ title: "Polo M", brand: "Van Heusen", itemType: "Polo", size: "M", priceGtq: 80, url: "https://megapaca.store/products/vh1" }),
+      ad({ title: "Polo L", brand: "Van Heusen", itemType: "Polo", size: "L", priceGtq: 85, url: "https://megapaca.store/products/vh2" }),
+      ad({ title: "Polo S", brand: "Van Heusen", itemType: "Polo", size: "S", priceGtq: 75, url: "https://megapaca.store/products/vh3" }),
+    ];
+    const withoutReason = buildGuatemalaCompReport({
+      query: polo,
+      advertised: catalog,
+      sourceErrors: [],
+      sales: [],
+    });
+    expect(withoutReason.suggestedPrice).toBeNull();
+    expect(withoutReason.listed.map((item) => item.brand)).toEqual(["PJ Paul Jones"]);
+
+    const withReason = buildGuatemalaCompReport({
+      query: polo,
+      advertised: catalog,
+      sourceErrors: [],
+      sales: [],
+      guides: [
+        {
+          brand: "PJ Paul Jones",
+          garment: "polo",
+          condition: "nuevo",
+          priceGtq: 95,
+          comparableBrands: ["Van Heusen"],
+        },
+      ],
+    });
+    expect(withReason.priceBasis).toBe("comparable-brands");
+    expect(withReason.suggestedPrice).toBe(80);
+    expect(withReason.message).toContain("Van Heusen");
+    expect(withReason.message).toContain("Precio orientativo");
+    expect(withReason.listed.every((item) => item.brand === "Van Heusen")).toBe(true);
+  });
+
+  it("estima con la tabla de la tienda y no inventa enlaces cuando faltan anuncios", () => {
+    const report = buildGuatemalaCompReport({
+      query: {
+        title: "Playera tipo polo PJ Paul Jones talla 2XL",
+        itemType: "Polo",
+        brand: "PJ PAUL JONES",
+        condition: "NEW_WITH_TAGS",
+        size: "2XL",
+        category: "mens_top",
+      },
+      advertised: [
+        ad({
+          title: "Polo 2XL (PJ PAUL JONES)",
+          brand: "PJ PAUL JONES",
+          itemType: "Polo",
+          size: "2XL",
+          priceGtq: 120,
+          url: "https://megapaca.store/products/polo-2xl",
+        }),
+      ],
+      sourceErrors: [],
+      sales: [],
+      guides: [
+        {
+          brand: "PJ Paul Jones",
+          garment: "polo",
+          condition: "nuevo",
+          priceGtq: 95,
+          comparableBrands: [],
+        },
+      ],
+    });
+    expect(report.priceBasis).toBe("store-estimate");
+    expect(report.suggestedPrice).toBe(95);
+    expect(report.message).toContain("Estimación de la tienda");
+    expect(report.message).not.toContain("https://");
+    expect(report.listed.map((item) => item.url)).toEqual(["https://megapaca.store/products/polo-2xl"]);
   });
 
   it("ignores a saved comparison from before the advertised catalogs", () => {

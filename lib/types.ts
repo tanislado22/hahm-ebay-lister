@@ -82,6 +82,8 @@ export interface GuatemalaCompReport {
     label: string;
   };
   suggestedPrice: number | null;
+  priceBasis: "exact" | "same-brand" | "comparable-brands" | "store-estimate" | null;
+  widened: string[];
 }
 
 export interface AnalyzeResponse {

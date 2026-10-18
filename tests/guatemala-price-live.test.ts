@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
+import { buildGuatemalaCompReport, garmentKind } from "@/lib/markets/guatemala-price-match";
 import { fetchGuatemalaAdvertised } from "@/lib/markets/guatemala-price-sources";
 
 describe("catálogos públicos de Guatemala", () => {
@@ -103,6 +103,57 @@ describe("catálogos públicos de Guatemala", () => {
       expect(report.suggestedPrice).toBeGreaterThan(0);
       expect(report.suggestedPrice).toBeGreaterThanOrEqual(report.advertised.low ?? 0);
       expect(report.suggestedPrice).toBeLessThanOrEqual(report.advertised.high ?? 0);
+    }
+  }, 45000);
+
+  it("consulta la polo PJ Paul Jones 2XL sin mezclarla con camisetas", async () => {
+    const query = {
+      title: "Playera tipo polo PJ Paul Jones negra tejida manga corta talla 2XL",
+      itemType: "Playera tipo polo de punto",
+      brand: "PJ Paul Jones",
+      condition: "NEW_WITH_TAGS",
+      size: "2XL",
+      category: "mens_top",
+    };
+    const catalogs = await fetchGuatemalaAdvertised(query);
+    const report = buildGuatemalaCompReport({
+      query,
+      advertised: catalogs.items,
+      sourceErrors: catalogs.errors,
+      sales: [],
+    });
+    console.log(
+      JSON.stringify({
+        sku: "3001",
+        errors: catalogs.errors,
+        fetched: catalogs.items.length,
+        status: report.status,
+        priceBasis: report.priceBasis,
+        suggestedPrice: report.suggestedPrice,
+        widened: report.widened,
+        message: report.message,
+        links: report.listed.map((item) => ({
+          brand: item.brand,
+          size: item.size,
+          price: item.priceGtq,
+          title: item.title,
+          url: item.url,
+        })),
+      })
+    );
+    expect(garmentKind(query.itemType, query.title)?.key).toBe("polo");
+    expect(report.listed.every((item) => garmentKind(item.itemType, item.title)?.key === "polo")).toBe(true);
+    expect(report.listed.every((item) => item.condition !== "usado")).toBe(true);
+    if (report.priceBasis === "exact" || report.priceBasis === "same-brand") {
+      expect(report.suggestedPrice).toBeGreaterThan(0);
+      expect(report.message).toContain("Precio orientativo");
+      expect(report.listed.length).toBeGreaterThanOrEqual(3);
+    } else if (report.status === "unavailable") {
+      expect(report.suggestedPrice).toBeNull();
+    } else {
+      expect(report.suggestedPrice).toBeNull();
+      expect(report.message).toContain("Escribe el precio manualmente");
+      expect(report.message).not.toContain("https://");
     }
   }, 45000);
 });

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import { clientIsGuatemala } from "@/lib/markets/client-market";
-import { buildGuatemalaCompReport, unavailableGuatemalaCompReport, type GarmentQuery } from "@/lib/markets/guatemala-price-match";
+import { buildGuatemalaCompReport, comparableBrandsFor, unavailableGuatemalaCompReport, type GarmentQuery, type StorePriceGuide } from "@/lib/markets/guatemala-price-match";
 import { fetchGuatemalaAdvertised } from "@/lib/markets/guatemala-price-sources";
+import { listGuatemalaPriceGuides } from "@/lib/markets/guatemala-price-guides-store";
 import { listGuatemalaSaleReferences } from "@/lib/markets/guatemala-inventory-store";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,8 @@ export async function POST(req: NextRequest) {
   };
   const clientId = text(body.clientId);
   try {
-    const catalogs = await fetchGuatemalaAdvertised(query);
+    const guides = await readPriceGuides(clientId);
+    const catalogs = await fetchGuatemalaAdvertised(query, comparableBrandsFor(query, guides));
     const sales = await readStoreSales(clientId);
     return NextResponse.json(
       buildGuatemalaCompReport({
@@ -39,11 +41,23 @@ export async function POST(req: NextRequest) {
         sourceErrors: catalogs.errors,
         sales: sales.rows,
         salesNote: sales.note,
+        guides,
       })
     );
   } catch (error) {
     console.error("[guatemala/comps] failed", error instanceof Error ? error.name : "Error");
     return NextResponse.json(unavailableGuatemalaCompReport());
+  }
+}
+
+async function readPriceGuides(clientId: string): Promise<StorePriceGuide[]> {
+  if (!clientId) return [];
+  try {
+    if (!(await clientIsGuatemala(clientId))) return [];
+    return await listGuatemalaPriceGuides(clientId);
+  } catch (error) {
+    console.error("[guatemala/comps] price guides failed", error instanceof Error ? error.name : "Error");
+    return [];
   }
 }
 

@@ -26,6 +26,7 @@ const MEGAPACA_WORDS: Record<string, string[]> = {
 
 const TAG_PRIORITY = [
   "jeans",
+  "polo",
   "camiseta",
   "chaqueta",
   "sudadera",
@@ -33,7 +34,6 @@ const TAG_PRIORITY = [
   "vestido",
   "short",
   "falda",
-  "polo",
   "tenis",
   "bota",
   "zapato",
@@ -48,14 +48,22 @@ export interface CatalogFetch {
   errors: string[];
 }
 
-export async function fetchGuatemalaAdvertised(query: GarmentQuery): Promise<CatalogFetch> {
-  const [megapaca, econopaca] = await Promise.all([
-    fetchMegapaca(query),
-    fetchEconopaca(query),
-  ]);
+export async function fetchGuatemalaAdvertised(
+  query: GarmentQuery,
+  extraBrands: string[] = []
+): Promise<CatalogFetch> {
+  const queries = [query, ...extraBrands.filter(Boolean).map((brand) => ({ ...query, brand }))];
+  const results = await Promise.all(
+    queries.map(async (item) => {
+      const [megapaca, econopaca] = await Promise.all([fetchMegapaca(item), fetchEconopaca(item)]);
+      return { megapaca, econopaca };
+    })
+  );
   return {
-    items: [...megapaca.items, ...econopaca.items],
-    errors: [megapaca.error, econopaca.error].filter((error): error is string => Boolean(error)),
+    items: results.flatMap((result) => [...result.megapaca.items, ...result.econopaca.items]),
+    errors: results
+      .flatMap((result) => [result.megapaca.error, result.econopaca.error])
+      .filter((error): error is string => Boolean(error)),
   };
 }
 

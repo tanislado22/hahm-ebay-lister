@@ -41,6 +41,14 @@ export interface StoreSaleInput {
   soldAt: string;
 }
 
+export interface StorePriceGuide {
+  brand: string;
+  garment: string;
+  condition: "nuevo" | "usado";
+  priceGtq: number;
+  comparableBrands: string[];
+}
+
 interface GarmentKind {
   key: string;
   search: string;
@@ -66,9 +74,15 @@ const GARMENT_KINDS: GarmentKind[] = [
   { key: "bolso", search: "bolso", query: "bolso|bolsa|cartera" },
 ];
 
+export const GARMENT_KIND_CHOICES = GARMENT_KINDS.map((kind) => ({
+  key: kind.key,
+  label: kind.search,
+}));
+
 const KIND_BY_KEY = new Map(GARMENT_KINDS.map((kind) => [kind.key, kind]));
 
 const DETECTORS: { key: string; pattern: RegExp }[] = [
+  { key: "polo", pattern: /\bpolo\b/ },
   { key: "camiseta", pattern: /camiseta|playera|t-?shirt|\btee\b/ },
   { key: "camisa", pattern: /camisa(?!eta)/ },
   { key: "blusa", pattern: /\bblusa\b/ },
@@ -80,7 +94,6 @@ const DETECTORS: { key: string; pattern: RegExp }[] = [
   { key: "chaqueta", pattern: /\bchaqueta\b|\bchamarra\b|\bjacket\b|\bchumpa\b/ },
   { key: "sudadera", pattern: /\bsudadera\b|\bhoodie\b/ },
   { key: "sueter", pattern: /\bsueter\b|\bsweater\b/ },
-  { key: "polo", pattern: /\bpolo\b/ },
   { key: "tenis", pattern: /\btenis\b|\bsneakers?\b/ },
   { key: "bota", pattern: /\bbotas?\b|\bboots?\b/ },
   { key: "zapato", pattern: /\bzapatos?\b|\bshoes?\b/ },
@@ -271,6 +284,57 @@ export function unavailableGuatemalaCompReport(now = new Date(), salesNote?: str
   });
 }
 
+export function comparableBrandsFor(query: GarmentQuery, guides: StorePriceGuide[]): string[] {
+  const guide = matchingPriceGuide(query, guides);
+  if (!guide) return [];
+  const own = brandKey(query.brand);
+  const names: string[] = [];
+  for (const brand of guide.comparableBrands) {
+    const key = brandKey(brand);
+    if (!key || (own && brandsMatch(own, key)) || names.some((saved) => brandsMatch(saved, key))) continue;
+    names.push(brand.trim());
+  }
+  return names;
+}
+
+export function preparePriceGuide(input: {
+  brand: unknown;
+  garment: unknown;
+  condition: unknown;
+  priceGtq: unknown;
+  comparableBrands: unknown;
+}): { ok: true; guide: StorePriceGuide } | { ok: false; error: string } {
+  const brand = typeof input.brand === "string" ? input.brand.trim() : "";
+  const garment = typeof input.garment === "string" ? input.garment.trim() : "";
+  const condition = input.condition === "nuevo" || input.condition === "usado" ? input.condition : null;
+  const price = typeof input.priceGtq === "number" ? input.priceGtq : Number(input.priceGtq);
+  if (!brandKey(brand)) return { ok: false, error: "Escribe la marca." };
+  if (!GARMENT_KIND_CHOICES.some((choice) => choice.key === garment)) {
+    return { ok: false, error: "Elige el tipo de prenda." };
+  }
+  if (!condition) return { ok: false, error: "Elige si la prenda es nueva o usada." };
+  if (!Number.isFinite(price) || price <= 0 || price > 20000) {
+    return { ok: false, error: "Escribe un precio en quetzales mayor que cero." };
+  }
+  const rawBrands = Array.isArray(input.comparableBrands)
+    ? input.comparableBrands
+    : typeof input.comparableBrands === "string"
+      ? input.comparableBrands.split(",")
+      : [];
+  return {
+    ok: true,
+    guide: {
+      brand,
+      garment,
+      condition,
+      priceGtq: Math.round(price * 100) / 100,
+      comparableBrands: comparableBrandsFor({ brand, itemType: garment, condition }, [
+        { brand, garment, condition, priceGtq: price, comparableBrands: rawBrands.map((item) => String(item)) },
+      ]),
+    },
+  };
+}
+
 export function buildGuatemalaCompReport(input: {
   now?: Date;
   query: GarmentQuery;
@@ -278,15 +342,18 @@ export function buildGuatemalaCompReport(input: {
   sourceErrors: string[];
   sales: StoreSaleInput[] | null;
   salesNote?: string;
+  guides?: StorePriceGuide[];
 }): GuatemalaCompReport {
   const now = input.now ?? new Date();
   const seen = new Set<string>();
-  const advertised = input.advertised.filter((item) => {
+  const pool = input.advertised.filter((item) => {
     const key = `${item.source}:${item.url}`;
     if (!item.url || seen.has(key)) return false;
     seen.add(key);
-    return listingIsRelevant(input.query, item);
+    return true;
   });
+  const chosen = chooseAdvertised(input.query, pool, input.guides ?? []);
+  const advertised = chosen.items;
   const sales = (input.sales ?? []).filter((sale) =>
     listingIsRelevant(input.query, {
       title: sale.title,
@@ -302,24 +369,31 @@ export function buildGuatemalaCompReport(input: {
   const salePrices = sales.map((sale) => sale.priceGtq);
   const advertisedRange = range(prices);
   const salesRange = range(salePrices);
-  const suggested = prices.length >= MIN_RELEVANT_COMPS ? medianQuetzales(prices) : null;
+  const guide = matchingPriceGuide(input.query, input.guides ?? []);
+  const adMedian = prices.length >= MIN_RELEVANT_COMPS ? medianQuetzales(prices) : null;
   const bothSourcesFailed =
     input.advertised.length === 0 &&
     (input.sourceErrors.length >= 2 ||
       input.sourceErrors.some((error) => error.includes("Megapaca ni Econopaca")));
   const missingKind = !garmentKind(input.query.itemType, input.query.title);
   const missingCondition = !conditionBucket(input.query.condition);
+  const estimate = !missingKind && !missingCondition && guide && adMedian == null ? guide.priceGtq : null;
+  const suggested = adMedian ?? estimate;
   let message: string;
-  if (bothSourcesFailed) {
+  if (bothSourcesFailed && estimate == null) {
     message = "No se pudo consultar Megapaca ni Econopaca. Escribe el precio manualmente.";
   } else if (missingKind) {
     message = "Falta el tipo de prenda para comparar con los catálogos. Escribe el precio manualmente.";
   } else if (missingCondition) {
     message = "Falta la condición de la prenda para comparar. Escribe el precio manualmente.";
-  } else if (suggested != null) {
-    message = `Sugerencia: ${formatQuetzales(suggested)}, según ${prices.length} precios anunciados entre ${formatQuetzales(advertisedRange.low ?? suggested)} y ${formatQuetzales(advertisedRange.high ?? suggested)}. ${GUATEMALA_ADVERTISED_LABEL} Puedes cambiar el precio.`;
+  } else if (adMedian != null) {
+    const between = `entre ${formatQuetzales(advertisedRange.low ?? adMedian)} y ${formatQuetzales(advertisedRange.high ?? adMedian)}`;
+    const widened = chosen.widened.length > 0 ? ` ${chosen.widened.join(" ")}` : "";
+    message = `Precio orientativo: ${formatQuetzales(adMedian)}, mediana de ${prices.length} anuncios ${chosen.criteria}, ${between}.${widened} ${GUATEMALA_ADVERTISED_LABEL} Puedes cambiar el precio.`;
+  } else if (estimate != null && guide) {
+    message = `Estimación de la tienda: ${formatQuetzales(estimate)} para ${guideLabel(guide)}. Encontré ${prices.length} anuncio${prices.length === 1 ? "" : "s"} relevante${prices.length === 1 ? "" : "s"}; no alcanzan para un precio orientativo. Esta cifra sale de la tabla de la tienda, no de enlaces inventados. Puedes cambiar el precio.`;
   } else {
-    message = `No hay suficientes precios anunciados parecidos para sugerir un monto. Encontré ${prices.length} con el mismo ${comparedFields(input.query)}${prices.length > 0 ? `, entre ${formatQuetzales(advertisedRange.low ?? 0)} y ${formatQuetzales(advertisedRange.high ?? 0)}` : ""}. ${GUATEMALA_ADVERTISED_LABEL} Se necesitan al menos ${MIN_RELEVANT_COMPS}. Escribe el precio manualmente.`;
+    message = `No hay suficientes precios anunciados parecidos para sugerir un monto. Encontré ${prices.length} con el mismo ${comparedFields(input.query)}${prices.length > 0 ? `, entre ${formatQuetzales(advertisedRange.low ?? 0)} y ${formatQuetzales(advertisedRange.high ?? 0)}` : ""}. ${GUATEMALA_ADVERTISED_LABEL} Se necesitan al menos ${MIN_RELEVANT_COMPS}. No hay una regla en la tabla de la tienda para esta marca, tipo y condición. Escribe el precio manualmente.`;
   }
   if (!bothSourcesFailed && input.sourceErrors.length > 0 && !missingKind) {
     message = `${message} ${input.sourceErrors.join(" ")}`;
@@ -359,7 +433,7 @@ export function buildGuatemalaCompReport(input: {
       count: prices.length,
       low: advertisedRange.low,
       high: advertisedRange.high,
-      median: suggested,
+      median: adMedian,
       label: GUATEMALA_ADVERTISED_LABEL,
     },
     storeSales: {
@@ -370,7 +444,90 @@ export function buildGuatemalaCompReport(input: {
       label: salesLabel(input.sales == null ? 0 : salePrices.length, salePrices, input.sales == null ? input.salesNote : undefined),
     },
     suggestedPrice: suggested,
+    priceBasis: adMedian != null ? chosen.basis : estimate != null ? "store-estimate" : null,
+    widened: adMedian != null ? chosen.widened : [],
   };
+}
+
+function chooseAdvertised(
+  query: GarmentQuery,
+  pool: CatalogListing[],
+  guides: StorePriceGuide[]
+): { items: CatalogListing[]; basis: "exact" | "same-brand" | "comparable-brands" | null; criteria: string; widened: string[] } {
+  const exact = pool.filter((item) => sameGarment(query, item) && sameBrand(query, item) && sameCondition(query, item) && sameSize(query, item));
+  if (exact.length >= MIN_RELEVANT_COMPS) {
+    return { items: exact, basis: "exact", criteria: "con la misma marca, tipo, condición y talla", widened: [] };
+  }
+  const sameBrandItems = pool.filter((item) => sameGarment(query, item) && sameBrand(query, item) && sameCondition(query, item));
+  if (sameBrandItems.length >= MIN_RELEVANT_COMPS) {
+    return {
+      items: sameBrandItems,
+      basis: "same-brand",
+      criteria: "de la misma marca y tipo, en la misma condición",
+      widened: ["Se amplió la talla: entran otras tallas y se mantiene la condición."],
+    };
+  }
+  const peers = new Set(comparableBrandsFor(query, guides).map((brand) => brandKey(brand)).filter((brand): brand is string => Boolean(brand)));
+  const comparable = pool.filter((item) => {
+    const found = brandKey(item.brand);
+    return sameGarment(query, item) && sameCondition(query, item) && found != null && [...peers].some((peer) => brandsMatch(peer, found));
+  });
+  if (comparable.length >= MIN_RELEVANT_COMPS) {
+    const names = comparableBrandsFor(query, guides).join(", ");
+    return {
+      items: comparable,
+      basis: "comparable-brands",
+      criteria: "de marcas comparables, con el mismo tipo y la misma condición",
+      widened: [`Se amplió la marca usando la tabla de la tienda: ${names}. La condición no cambia.`],
+    };
+  }
+  return { items: sameBrandItems, basis: null, criteria: "", widened: [] };
+}
+
+function matchingPriceGuide(query: GarmentQuery, guides: StorePriceGuide[]): StorePriceGuide | null {
+  const kind = garmentKind(query.itemType, query.title);
+  const condition = conditionBucket(query.condition);
+  const brand = brandKey(query.brand);
+  if (!kind || !condition || !brand) return null;
+  return (
+    guides.find(
+      (guide) =>
+        guide.garment === kind.key &&
+        guide.condition === condition &&
+        brandsMatch(brand, brandKey(guide.brand))
+    ) ?? null
+  );
+}
+
+function guideLabel(guide: StorePriceGuide): string {
+  const kind = GARMENT_KIND_CHOICES.find((choice) => choice.key === guide.garment);
+  const condition = guide.condition === "nuevo" ? "nueva" : "usada";
+  return `${kind?.label ?? guide.garment} ${guide.brand}, condición ${condition}`;
+}
+
+function sameGarment(query: GarmentQuery, item: CatalogListing): boolean {
+  const wanted = garmentKind(query.itemType, query.title);
+  const found = garmentKind(item.itemType, item.title);
+  if (!wanted || !found || wanted.key !== found.key) return false;
+  const wantedAudience = audienceKey(query.category, query.itemType, query.title);
+  const foundAudience = audienceKey(item.audience, item.itemType, item.title);
+  if (wantedAudience && foundAudience && wantedAudience !== foundAudience) return false;
+  return Number.isFinite(item.priceGtq) && item.priceGtq > 0 && item.priceGtq <= 20000;
+}
+
+function sameBrand(query: GarmentQuery, item: CatalogListing): boolean {
+  return brandsMatch(brandKey(query.brand), brandKey(item.brand));
+}
+
+function sameCondition(query: GarmentQuery, item: CatalogListing): boolean {
+  const wanted = conditionBucket(query.condition);
+  const found = conditionBucket(item.condition);
+  return Boolean(wanted && found && wanted === found);
+}
+
+function sameSize(query: GarmentQuery, item: CatalogListing): boolean {
+  const wanted = sizeKey(query.size);
+  return !wanted || sizeKey(item.size) === wanted;
 }
 
 const CURRENT_COMP_STATUSES = new Set(["ready", "insufficient", "unavailable"]);
@@ -410,5 +567,13 @@ export function coerceGuatemalaCompReport(value: unknown): GuatemalaCompReport |
           label: "No se pudieron consultar las ventas de esta tienda.",
         },
     suggestedPrice: typeof report.suggestedPrice === "number" ? report.suggestedPrice : null,
+    priceBasis:
+      report.priceBasis === "exact" ||
+      report.priceBasis === "same-brand" ||
+      report.priceBasis === "comparable-brands" ||
+      report.priceBasis === "store-estimate"
+        ? report.priceBasis
+        : null,
+    widened: Array.isArray(report.widened) ? report.widened.filter((item) => typeof item === "string") : [],
   };
 }
