@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { catalogPhotoPath } from "@/lib/markets/guatemala-catalog";
+import { SoldTicket } from "./sold-ticket";
 
-export function PhotoGallery({ ids, alt }: { ids: string[]; alt: string }) {
+export function PhotoGallery({ ids, alt, sold = false }: { ids: string[]; alt: string; sold?: boolean }) {
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
   const current = ids[active] ?? ids[0];
@@ -20,14 +21,20 @@ export function PhotoGallery({ ids, alt }: { ids: string[]; alt: string }) {
   }, [ids.length, open]);
 
   if (!current) {
-    return <div className="vsa-photo vsa-photo-empty">Sin foto</div>;
+    return (
+      <div className="vsa-photo vsa-photo-empty">
+        Sin foto
+        {sold ? <SoldTicket /> : null}
+      </div>
+    );
   }
 
   return (
     <div className="vsa-gallery">
       <button type="button" className="vsa-photo vsa-zoom" onClick={() => setOpen(true)}>
         <img src={catalogPhotoPath(current, 960)} alt={alt} width={960} height={960} />
-        <span>Ampliar foto</span>
+        <span className="vsa-zoom-label">Ampliar foto</span>
+        {sold ? <SoldTicket /> : null}
       </button>
       {ids.length > 1 ? (
         <div className="vsa-thumbs">
@@ -49,7 +56,10 @@ export function PhotoGallery({ ids, alt }: { ids: string[]; alt: string }) {
           <button type="button" className="vsa-lightbox-close" onClick={() => setOpen(false)}>
             Cerrar
           </button>
-          <img src={catalogPhotoPath(current, 960)} alt={alt} width={960} height={960} />
+          <div className="vsa-lightbox-photo">
+            <img src={catalogPhotoPath(current, 960)} alt={alt} width={960} height={960} />
+            {sold ? <SoldTicket /> : null}
+          </div>
           {ids.length > 1 ? (
             <div className="vsa-lightbox-nav">
               <button type="button" onClick={() => setActive((index) => (index - 1 + ids.length) % ids.length)}>

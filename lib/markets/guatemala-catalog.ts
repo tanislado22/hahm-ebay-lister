@@ -12,7 +12,7 @@ export const GUATEMALA_CATALOG_MESSAGES = {
   detailFailed: "No se pudo abrir la prenda.",
 } as const;
 
-export const PUBLIC_SOLD_BADGE = "Vendido";
+export const PUBLIC_SOLD_BADGE = "VENDIDO";
 export const PUBLIC_SOLD_NOTICE = "Vendido — ya no disponible";
 export const PUBLIC_SOLD_COUNT_LABEL = "Artículos vendidos";
 

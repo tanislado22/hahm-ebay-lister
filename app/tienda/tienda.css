@@ -92,7 +92,7 @@
 .vsa-filters select,
 .vsa-filters button,
 .vsa-back,
-.vsa-zoom span,
+.vsa-zoom-label,
 .vsa-lightbox button {
   min-height: 44px;
   border-radius: 12px;
@@ -194,18 +194,53 @@
   overflow: hidden;
 }
 
-.vsa-sold-seal {
+.vsa-sold-ticket {
   position: absolute;
-  left: 0.4rem;
-  right: 0.4rem;
-  bottom: 0.4rem;
-  padding: 0.3rem 0.45rem;
-  border-radius: 999px;
-  background: #1b1714;
-  color: white;
-  font-size: 0.78rem;
-  font-weight: 800;
-  text-align: center;
+  left: 6%;
+  bottom: 11%;
+  z-index: 2;
+  width: 54%;
+  max-width: 8.6rem;
+  aspect-ratio: 220 / 86;
+  transform: rotate(-10deg);
+  transform-origin: 18% 70%;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 2px rgba(27, 23, 20, 0.22));
+}
+
+.vsa-sold-ticket svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.vsa-sold-ticket span {
+  position: absolute;
+  inset: 12% 14% 16%;
+  display: grid;
+  place-items: center;
+  color: #111111;
+  font-weight: 900;
+  font-size: 15.5cqw;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
+.vsa-sold-ticket {
+  container-type: inline-size;
+}
+
+.vsa-gallery .vsa-sold-ticket,
+.vsa-lightbox .vsa-sold-ticket {
+  left: 5%;
+  bottom: 12%;
+  width: 38%;
+  max-width: 13.5rem;
+}
+
+.vsa-lightbox {
+  position: fixed;
 }
 
 .vsa-card.is-sold {
@@ -220,11 +255,6 @@
 
 .vsa-sold-notice {
   margin: 0 0 0.75rem;
-  padding: 0.8rem 0.9rem;
-  border-radius: 12px;
-  background: #1b1714;
-  color: white !important;
-  font-size: 1.05rem;
 }
 
 .vsa-photo img,
@@ -306,10 +336,10 @@
   background: transparent;
 }
 
-.vsa-zoom span {
+.vsa-zoom-label {
   position: absolute;
-  left: 0.6rem;
-  bottom: 0.6rem;
+  top: 0.6rem;
+  right: 0.6rem;
   display: inline-flex;
   align-items: center;
   padding: 0.35rem 0.7rem;
@@ -339,7 +369,6 @@
 }
 
 .vsa-lightbox {
-  position: fixed;
   inset: 0;
   z-index: 30;
   display: grid;
@@ -350,6 +379,13 @@
   background: rgba(20, 16, 12, 0.92);
 }
 
+.vsa-lightbox-photo {
+  position: relative;
+  max-width: 100%;
+  max-height: 78vh;
+}
+
+.vsa-lightbox-photo img,
 .vsa-lightbox img {
   width: auto;
   max-width: 100%;
@@ -357,6 +393,11 @@
   max-height: 78vh;
   object-fit: contain;
   background: #1b1714;
+}
+
+.vsa-lightbox-photo .vsa-sold-ticket {
+  left: 4%;
+  bottom: 8%;
 }
 
 .vsa-lightbox-nav,

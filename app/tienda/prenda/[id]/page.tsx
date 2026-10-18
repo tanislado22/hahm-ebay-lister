@@ -49,7 +49,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       {!result.ok ? <p className="vsa-note" role="alert">{result.error}</p> : null}
       {item ? (
         <article className="vsa-detail">
-          <PhotoGallery ids={item.photoIds} alt={item.title || item.sku} />
+          <PhotoGallery ids={item.photoIds} alt={item.title || item.sku} sold={item.availability === "vendido"} />
           <div>
             {item.availability === "vendido" ? <p className="vsa-sold-notice" role="status">{item.soldNotice || PUBLIC_SOLD_NOTICE}</p> : null}
             <h2>{item.title || "Prenda sin título"}</h2>
