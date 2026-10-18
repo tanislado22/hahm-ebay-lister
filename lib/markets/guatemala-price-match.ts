@@ -532,6 +532,11 @@ function sameSize(query: GarmentQuery, item: CatalogListing): boolean {
 
 const CURRENT_COMP_STATUSES = new Set(["ready", "insufficient", "unavailable"]);
 
+export function guatemalaCompReportIsCurrent(report: GuatemalaCompReport): boolean {
+  if (report.priceBasis) return true;
+  return /Precio orientativo|Estimación de la tienda|tabla de la tienda/.test(report.message);
+}
+
 // Saved jobs from before this report existed used another shape. Ignore those
 // so the card asks again instead of reading fields that are not there.
 export function coerceGuatemalaCompReport(value: unknown): GuatemalaCompReport | null {

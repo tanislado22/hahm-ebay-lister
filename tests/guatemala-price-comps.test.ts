@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildGuatemalaCompReport,
   coerceGuatemalaCompReport,
+  guatemalaCompReportIsCurrent,
   garmentKind,
   guatemalaPriceIfEmpty,
   listingIsRelevant,
@@ -387,6 +388,7 @@ describe("comparación de precios de Tienda Guatemala", () => {
       ],
     });
     expect(report.priceBasis).toBe("store-estimate");
+    expect(guatemalaCompReportIsCurrent(report)).toBe(true);
     expect(report.suggestedPrice).toBe(95);
     expect(report.message).toContain("Estimación de la tienda");
     expect(report.message).not.toContain("https://");
@@ -403,5 +405,21 @@ describe("comparación de precios de Tienda Guatemala", () => {
         message: "Falta configurar una fuente de comparaciones en Guatemala.",
       })
     ).toBeNull();
+  });
+
+  it("pide de nuevo una comparación guardada antes de la tabla de la tienda", () => {
+    const saved = coerceGuatemalaCompReport({
+      ok: true,
+      status: "insufficient",
+      message:
+        "No hay suficientes precios anunciados parecidos para sugerir un monto. Encontré 0 con el mismo tipo, marca, condición y talla. Estos son precios anunciados, no ventas comprobadas. Se necesitan al menos 3. Escribe el precio manualmente.",
+      listed: [],
+      sold: [],
+      suggestedPrice: null,
+      advertised: { count: 0, low: null, high: null, median: null, label: "anuncios" },
+      storeSales: { count: 0, low: null, high: null, median: null, label: "Ventas comprobadas de esta tienda: todavía no hay ventas parecidas." },
+    });
+    expect(saved).not.toBeNull();
+    expect(guatemalaCompReportIsCurrent(saved!)).toBe(false);
   });
 });

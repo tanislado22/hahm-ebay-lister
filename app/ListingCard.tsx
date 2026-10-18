@@ -7,7 +7,7 @@ import {
   formatGuatemalaMoment,
   formatQuetzales,
 } from "@/lib/markets/guatemala";
-import { coerceGuatemalaCompReport, guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
+import { coerceGuatemalaCompReport, guatemalaCompReportIsCurrent, guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
 import { GUATEMALA_INVENTORY_MESSAGES } from "@/lib/markets/guatemala-inventory";
 import type { GuatemalaCompReport, ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
@@ -280,14 +280,14 @@ const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
   useEffect(() => {
     if (!guatemala || group.status !== "done") return;
     const savedComps = coerceGuatemalaCompReport(group.guatemalaComps);
-    if (savedComps && loadedGarmentKey.current === null) {
-      loadedGarmentKey.current = garmentKey;
+    const savedIsCurrent = savedComps != null && guatemalaCompReportIsCurrent(savedComps);
+    if (loadedGarmentKey.current === garmentKey) return;
+    loadedGarmentKey.current = garmentKey;
+    if (savedIsCurrent && savedComps) {
       setLocalComps(savedComps);
       return;
     }
-    if (loadedGarmentKey.current === garmentKey) return;
-    loadedGarmentKey.current = garmentKey;
-    let cancelled = false;
+    const requestKey = garmentKey;
     void (async () => {
       try {
         const response = await apiPost("/api/markets/guatemala/comps", {
@@ -304,22 +304,23 @@ const [soldCompsError, setSoldCompsError] = useState<string | null>(null);
             : {},
         });
         const data = (await response.json()) as GuatemalaCompReport;
-        if (cancelled) return;
+        if (loadedGarmentKey.current !== requestKey) return;
         if (
           data?.ok &&
           (data.status === "ready" || data.status === "insufficient" || data.status === "unavailable")
         ) {
           setLocalComps(data);
+        } else if (savedComps) {
+          setLocalComps(savedComps);
         } else {
           setLocalComps(unavailableGuatemalaCompReport());
         }
       } catch {
-        if (!cancelled) setLocalComps(unavailableGuatemalaCompReport());
+        if (loadedGarmentKey.current === requestKey) {
+          setLocalComps(savedComps ?? unavailableGuatemalaCompReport());
+        }
       }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, [guatemala, group.status, group.guatemalaComps, inventoryClientId, garmentKey, listing]);
   useEffect(() => {
     if (!guatemala || priceTouched.current || !localComps) return;
