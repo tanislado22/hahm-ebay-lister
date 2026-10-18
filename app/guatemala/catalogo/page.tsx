@@ -1,22 +1,17 @@
-import type { Metadata } from "next";
-import { Suspense } from "react";
-import { CatalogScreen } from "./screen";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "Catálogo · Tienda Guatemala",
-  description: "Prendas disponibles de Tienda Guatemala.",
-};
-
-export default function GuatemalaCatalogPage() {
-  return (
-    <Suspense
-      fallback={
-        <main className="wrap">
-          <p>Cargando catálogo…</p>
-        </main>
-      }
-    >
-      <CatalogScreen />
-    </Suspense>
-  );
+export default async function GuatemalaCatalogPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const prenda = typeof params.prenda === "string" ? params.prenda : "";
+  if (prenda) redirect(`/tienda/prenda/${encodeURIComponent(prenda)}`);
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (key !== "prenda" && typeof value === "string" && value) search.set(key, value);
+  }
+  const suffix = search.toString();
+  redirect(suffix ? `/tienda?${suffix}` : "/tienda");
 }

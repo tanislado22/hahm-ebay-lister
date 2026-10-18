@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { decideStoreRequest, isStoreHostname } from "@/lib/markets/store-host";
 
 // Evaluated once per cold start — env vars do not change at runtime.
 const isProd =
@@ -37,12 +38,34 @@ export function middleware(request: NextRequest) {
     requestHeaders.set("x-cron-secret", authorization.slice("Bearer ".length).trim());
   }
 
-  const response = NextResponse.next({
-    request: { headers: requestHeaders },
-  });
+  const decision = decideStoreRequest(request.headers.get("host"), request.nextUrl.pathname);
+  if (decision.kind === "hidden") {
+    return NextResponse.json({ ok: false, error: "No disponible." }, { status: 404 });
+  }
+  if (decision.kind === "redirect") {
+    const url = request.nextUrl.clone();
+    url.protocol = "https";
+    url.hostname = decision.hostname;
+    url.pathname = decision.pathname;
+    const redirect = NextResponse.redirect(url, 308);
+    redirect.headers.set("X-Robots-Tag", "index, follow");
+    return redirect;
+  }
+
+  const response =
+    decision.kind === "rewrite"
+      ? NextResponse.rewrite(rewriteUrl(request, decision.pathname), { request: { headers: requestHeaders } })
+      : NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set("Content-Security-Policy", csp);
+  response.headers.set("X-Robots-Tag", isStoreHostname(request.headers.get("host")) ? "index, follow" : "noindex, nofollow");
 
   return response;
+}
+
+function rewriteUrl(request: NextRequest, pathname: string): URL {
+  const url = request.nextUrl.clone();
+  url.pathname = pathname;
+  return url;
 }
 
 export const config = {
