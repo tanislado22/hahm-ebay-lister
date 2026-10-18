@@ -42,11 +42,19 @@ export interface StoreSaleInput {
 }
 
 export interface StorePriceGuide {
+  scope: "general" | "brand";
   brand: string;
   garment: string;
   condition: "nuevo" | "usado";
-  priceGtq: number;
+  priceGtq: number | null;
+  adjustmentGtq: number | null;
   comparableBrands: string[];
+}
+
+export interface StorePriceNeed {
+  garment: string;
+  condition: "nuevo" | "usado";
+  label: string;
 }
 
 interface GarmentKind {
@@ -285,7 +293,7 @@ export function unavailableGuatemalaCompReport(now = new Date(), salesNote?: str
 }
 
 export function comparableBrandsFor(query: GarmentQuery, guides: StorePriceGuide[]): string[] {
-  const guide = matchingPriceGuide(query, guides);
+  const guide = brandPriceGuide(query, guides);
   if (!guide) return [];
   const own = brandKey(query.brand);
   const names: string[] = [];
@@ -298,41 +306,89 @@ export function comparableBrandsFor(query: GarmentQuery, guides: StorePriceGuide
 }
 
 export function preparePriceGuide(input: {
-  brand: unknown;
+  scope?: unknown;
+  brand?: unknown;
   garment: unknown;
   condition: unknown;
-  priceGtq: unknown;
-  comparableBrands: unknown;
+  priceGtq?: unknown;
+  adjustmentGtq?: unknown;
+  comparableBrands?: unknown;
 }): { ok: true; guide: StorePriceGuide } | { ok: false; error: string } {
+  const scope = input.scope === "brand" ? "brand" : "general";
   const brand = typeof input.brand === "string" ? input.brand.trim() : "";
   const garment = typeof input.garment === "string" ? input.garment.trim() : "";
   const condition = input.condition === "nuevo" || input.condition === "usado" ? input.condition : null;
-  const price = typeof input.priceGtq === "number" ? input.priceGtq : Number(input.priceGtq);
-  if (!brandKey(brand)) return { ok: false, error: "Escribe la marca." };
   if (!GARMENT_KIND_CHOICES.some((choice) => choice.key === garment)) {
     return { ok: false, error: "Elige el tipo de prenda." };
   }
   if (!condition) return { ok: false, error: "Elige si la prenda es nueva o usada." };
-  if (!Number.isFinite(price) || price <= 0 || price > 20000) {
-    return { ok: false, error: "Escribe un precio en quetzales mayor que cero." };
+  const comparableBrands = uniqueBrands(brand, readBrandList(input.comparableBrands));
+  if (scope === "general") {
+    const price = finiteAmount(input.priceGtq);
+    if (price == null || price <= 0 || price > 20000) {
+      return { ok: false, error: "Escribe el precio general en quetzales, mayor que cero." };
+    }
+    return {
+      ok: true,
+      guide: {
+        scope,
+        brand: "",
+        garment,
+        condition,
+        priceGtq: roundMoney(price),
+        adjustmentGtq: null,
+        comparableBrands: [],
+      },
+    };
   }
-  const rawBrands = Array.isArray(input.comparableBrands)
-    ? input.comparableBrands
-    : typeof input.comparableBrands === "string"
-      ? input.comparableBrands.split(",")
-      : [];
+  if (!brandKey(brand)) return { ok: false, error: "Escribe la marca del ajuste." };
+  const adjustment = input.adjustmentGtq == null || input.adjustmentGtq === "" ? null : finiteAmount(input.adjustmentGtq);
+  if (input.adjustmentGtq != null && input.adjustmentGtq !== "" && adjustment == null) {
+    return { ok: false, error: "El ajuste de marca tiene que ser un número de quetzales." };
+  }
+  if (adjustment != null && (adjustment === 0 || Math.abs(adjustment) > 20000)) {
+    return { ok: false, error: "El ajuste de marca no puede ser cero ni pasar de Q20000.00." };
+  }
+  if (adjustment == null && comparableBrands.length === 0) {
+    return { ok: false, error: "Escribe un ajuste o las marcas comparables." };
+  }
   return {
     ok: true,
     guide: {
+      scope,
       brand,
       garment,
       condition,
-      priceGtq: Math.round(price * 100) / 100,
-      comparableBrands: comparableBrandsFor({ brand, itemType: garment, condition }, [
-        { brand, garment, condition, priceGtq: price, comparableBrands: rawBrands.map((item) => String(item)) },
-      ]),
+      priceGtq: null,
+      adjustmentGtq: adjustment == null ? null : roundMoney(adjustment),
+      comparableBrands,
     },
   };
+}
+
+function finiteAmount(value: unknown): number | null {
+  const price = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(price) ? price : null;
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function readBrandList(value: unknown): string[] {
+  const raw = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+  return raw.map((item) => String(item));
+}
+
+function uniqueBrands(ownBrand: string, brands: string[]): string[] {
+  const own = brandKey(ownBrand);
+  const names: string[] = [];
+  for (const brand of brands) {
+    const key = brandKey(brand);
+    if (!key || (own && brandsMatch(own, key)) || names.some((saved) => brandsMatch(saved, key))) continue;
+    names.push(brand.trim());
+  }
+  return names;
 }
 
 export function buildGuatemalaCompReport(input: {
@@ -369,7 +425,9 @@ export function buildGuatemalaCompReport(input: {
   const salePrices = sales.map((sale) => sale.priceGtq);
   const advertisedRange = range(prices);
   const salesRange = range(salePrices);
-  const guide = matchingPriceGuide(input.query, input.guides ?? []);
+  const guides = input.guides ?? [];
+  const general = generalPriceGuide(input.query, guides);
+  const adjustment = brandPriceGuide(input.query, guides);
   const adMedian = prices.length >= MIN_RELEVANT_COMPS ? medianQuetzales(prices) : null;
   const bothSourcesFailed =
     input.advertised.length === 0 &&
@@ -377,11 +435,12 @@ export function buildGuatemalaCompReport(input: {
       input.sourceErrors.some((error) => error.includes("Megapaca ni Econopaca")));
   const missingKind = !garmentKind(input.query.itemType, input.query.title);
   const missingCondition = !conditionBucket(input.query.condition);
-  const estimate = !missingKind && !missingCondition && guide && adMedian == null ? guide.priceGtq : null;
-  const suggested = adMedian ?? estimate;
+  const proposal = storePriceProposal(input.query, guides);
+  const estimate = storeEstimate(general, adjustment, adMedian == null && !missingKind && !missingCondition);
+  const suggested = adMedian ?? estimate.price;
   let message: string;
-  if (bothSourcesFailed && estimate == null) {
-    message = "No se pudo consultar Megapaca ni Econopaca. Escribe el precio manualmente.";
+  if (bothSourcesFailed && estimate.price == null) {
+    message = `No se pudo consultar Megapaca ni Econopaca. Escribe el precio manualmente. ${proposalText(proposal)}`.trim();
   } else if (missingKind) {
     message = "Falta el tipo de prenda para comparar con los catálogos. Escribe el precio manualmente.";
   } else if (missingCondition) {
@@ -390,10 +449,12 @@ export function buildGuatemalaCompReport(input: {
     const between = `entre ${formatQuetzales(advertisedRange.low ?? adMedian)} y ${formatQuetzales(advertisedRange.high ?? adMedian)}`;
     const widened = chosen.widened.length > 0 ? ` ${chosen.widened.join(" ")}` : "";
     message = `Precio orientativo: ${formatQuetzales(adMedian)}, mediana de ${prices.length} anuncios ${chosen.criteria}, ${between}.${widened} ${GUATEMALA_ADVERTISED_LABEL} Puedes cambiar el precio.`;
-  } else if (estimate != null && guide) {
-    message = `Estimación de la tienda: ${formatQuetzales(estimate)} para ${guideLabel(guide)}. Encontré ${prices.length} anuncio${prices.length === 1 ? "" : "s"} relevante${prices.length === 1 ? "" : "s"}; no alcanzan para un precio orientativo. Esta cifra sale de la tabla de la tienda, no de enlaces inventados. Puedes cambiar el precio.`;
+  } else if (estimate.price != null && general) {
+    message = `Estimación de la tienda: ${formatQuetzales(estimate.price)} para ${estimateLabel(general, adjustment)}. Encontré ${prices.length} anuncio${prices.length === 1 ? "" : "s"} relevante${prices.length === 1 ? "" : "s"}; no alcanzan para un precio orientativo. No es un precio comprobado del mercado. Puedes cambiar el precio.`;
+  } else if (estimate.invalid) {
+    message = `El ajuste de marca deja la estimación fuera de un precio usable. Corrígelo en la tabla o escribe el precio manualmente. ${GUATEMALA_ADVERTISED_LABEL}`;
   } else {
-    message = `No hay suficientes precios anunciados parecidos para sugerir un monto. Encontré ${prices.length} con el mismo ${comparedFields(input.query)}${prices.length > 0 ? `, entre ${formatQuetzales(advertisedRange.low ?? 0)} y ${formatQuetzales(advertisedRange.high ?? 0)}` : ""}. ${GUATEMALA_ADVERTISED_LABEL} Se necesitan al menos ${MIN_RELEVANT_COMPS}. No hay una regla en la tabla de la tienda para esta marca, tipo y condición. Escribe el precio manualmente.`;
+    message = `No hay suficientes precios anunciados parecidos para sugerir un monto. Encontré ${prices.length} con el mismo ${comparedFields(input.query)}${prices.length > 0 ? `, entre ${formatQuetzales(advertisedRange.low ?? 0)} y ${formatQuetzales(advertisedRange.high ?? 0)}` : ""}. ${GUATEMALA_ADVERTISED_LABEL} Se necesitan al menos ${MIN_RELEVANT_COMPS}. ${proposalText(proposal)} Escribe el precio manualmente.`;
   }
   if (!bothSourcesFailed && input.sourceErrors.length > 0 && !missingKind) {
     message = `${message} ${input.sourceErrors.join(" ")}`;
@@ -444,8 +505,9 @@ export function buildGuatemalaCompReport(input: {
       label: salesLabel(input.sales == null ? 0 : salePrices.length, salePrices, input.sales == null ? input.salesNote : undefined),
     },
     suggestedPrice: suggested,
-    priceBasis: adMedian != null ? chosen.basis : estimate != null ? "store-estimate" : null,
+    priceBasis: adMedian != null ? chosen.basis : estimate.price != null ? "store-estimate" : null,
     widened: adMedian != null ? chosen.widened : [],
+    proposal: estimate.price == null && adMedian == null ? (proposal ? [proposal] : []) : [],
   };
 }
 
@@ -484,7 +546,18 @@ function chooseAdvertised(
   return { items: sameBrandItems, basis: null, criteria: "", widened: [] };
 }
 
-function matchingPriceGuide(query: GarmentQuery, guides: StorePriceGuide[]): StorePriceGuide | null {
+function generalPriceGuide(query: GarmentQuery, guides: StorePriceGuide[]): StorePriceGuide | null {
+  const kind = garmentKind(query.itemType, query.title);
+  const condition = conditionBucket(query.condition);
+  if (!kind || !condition) return null;
+  return (
+    guides.find(
+      (guide) => guide.scope === "general" && guide.garment === kind.key && guide.condition === condition && guide.priceGtq != null
+    ) ?? null
+  );
+}
+
+function brandPriceGuide(query: GarmentQuery, guides: StorePriceGuide[]): StorePriceGuide | null {
   const kind = garmentKind(query.itemType, query.title);
   const condition = conditionBucket(query.condition);
   const brand = brandKey(query.brand);
@@ -492,6 +565,7 @@ function matchingPriceGuide(query: GarmentQuery, guides: StorePriceGuide[]): Sto
   return (
     guides.find(
       (guide) =>
+        guide.scope === "brand" &&
         guide.garment === kind.key &&
         guide.condition === condition &&
         brandsMatch(brand, brandKey(guide.brand))
@@ -499,10 +573,37 @@ function matchingPriceGuide(query: GarmentQuery, guides: StorePriceGuide[]): Sto
   );
 }
 
-function guideLabel(guide: StorePriceGuide): string {
-  const kind = GARMENT_KIND_CHOICES.find((choice) => choice.key === guide.garment);
-  const condition = guide.condition === "nuevo" ? "nueva" : "usada";
-  return `${kind?.label ?? guide.garment} ${guide.brand}, condición ${condition}`;
+function storeEstimate(
+  general: StorePriceGuide | null,
+  adjustment: StorePriceGuide | null,
+  allowed: boolean
+): { price: number | null; invalid: boolean } {
+  if (!allowed || general?.priceGtq == null) return { price: null, invalid: false };
+  const total = roundMoney(general.priceGtq + (adjustment?.adjustmentGtq ?? 0));
+  if (total <= 0 || total > 20000) return { price: null, invalid: adjustment?.adjustmentGtq != null };
+  return { price: total, invalid: false };
+}
+
+export function storePriceProposal(query: GarmentQuery, guides: StorePriceGuide[] = []): StorePriceNeed | null {
+  const kind = garmentKind(query.itemType, query.title);
+  const condition = conditionBucket(query.condition);
+  if (!kind || !condition || generalPriceGuide(query, guides)) return null;
+  const conditionLabel = condition === "nuevo" ? "nueva" : "usada";
+  return { garment: kind.key, condition, label: `${kind.search} ${conditionLabel}` };
+}
+
+function proposalText(proposal: StorePriceNeed | null): string {
+  if (!proposal) return "";
+  return `Propuesta: define el precio general de ${proposal.label}. No hay un importe inicial. El ajuste por marca es opcional.`;
+}
+
+function estimateLabel(general: StorePriceGuide, adjustment: StorePriceGuide | null): string {
+  const kind = GARMENT_KIND_CHOICES.find((choice) => choice.key === general.garment);
+  const condition = general.condition === "nuevo" ? "nueva" : "usada";
+  const base = `${kind?.label ?? general.garment} ${condition}`;
+  if (adjustment?.adjustmentGtq == null) return base;
+  const sign = adjustment.adjustmentGtq > 0 ? "+" : "−";
+  return `${base}, con ajuste de ${sign}${formatQuetzales(Math.abs(adjustment.adjustmentGtq))} para ${adjustment.brand}`;
 }
 
 function sameGarment(query: GarmentQuery, item: CatalogListing): boolean {
@@ -534,7 +635,7 @@ const CURRENT_COMP_STATUSES = new Set(["ready", "insufficient", "unavailable"]);
 
 export function guatemalaCompReportIsCurrent(report: GuatemalaCompReport): boolean {
   if (report.priceBasis) return true;
-  return /Precio orientativo|Estimación de la tienda|tabla de la tienda/.test(report.message);
+  return /Precio orientativo|Estimación de la tienda|tabla de la tienda|Propuesta:/.test(report.message);
 }
 
 // Saved jobs from before this report existed used another shape. Ignore those
@@ -580,5 +681,13 @@ export function coerceGuatemalaCompReport(value: unknown): GuatemalaCompReport |
         ? report.priceBasis
         : null,
     widened: Array.isArray(report.widened) ? report.widened.filter((item) => typeof item === "string") : [],
+    proposal: Array.isArray(report.proposal)
+      ? report.proposal.flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const row = item as { garment?: unknown; condition?: unknown; label?: unknown };
+          if (typeof row.garment !== "string" || (row.condition !== "nuevo" && row.condition !== "usado")) return [];
+          return [{ garment: row.garment, condition: row.condition, label: typeof row.label === "string" ? row.label : row.garment }];
+        })
+      : [],
   };
 }

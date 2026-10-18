@@ -1,0 +1,44 @@
+.gt-meta {
+  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
+}
+
+.gt-condition select {
+  width: 100%;
+  max-width: none;
+  font-size: 1rem;
+}
+
+.gt-brand .v {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: break-word;
+  line-height: 1.3;
+}
+
+.gt-price-note {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-sunk);
+  font-size: 0.92rem;
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--color-ink-soft);
+}
+
+.gt-price-note p,
+.gt-price-note ul {
+  margin: 0.35rem 0;
+}
+
+.gt-price-note ul {
+  padding-left: 1.1rem;
+}
+
+.gt-price-note a {
+  color: var(--color-accent-deep);
+}

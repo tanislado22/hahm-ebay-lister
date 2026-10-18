@@ -84,6 +84,7 @@ export interface GuatemalaCompReport {
   suggestedPrice: number | null;
   priceBasis: "exact" | "same-brand" | "comparable-brands" | "store-estimate" | null;
   widened: string[];
+  proposal: { garment: string; condition: "nuevo" | "usado"; label: string }[];
 }
 
 export interface AnalyzeResponse {
