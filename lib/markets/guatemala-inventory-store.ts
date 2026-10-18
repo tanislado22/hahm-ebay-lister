@@ -12,6 +12,7 @@ import {
   type PublicCatalogFacets,
 } from "@/lib/markets/guatemala-catalog";
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
+import { isolatedPublicationSku } from "@/lib/markets/guatemala-publish";
 import { EXISTING_PRUEBA1_TEST_SALE } from "@/lib/markets/guatemala-recorded-test";
 import {
   GUATEMALA_PURGE_MESSAGES,
@@ -71,14 +72,16 @@ type SaveBody = Parameters<typeof prepareInventorySave>[0];
 export async function runInventorySave(
   repository: InventoryRepository,
   input: SaveBody,
-  clientAllowed: (clientId: string) => Promise<boolean>
+  clientAllowed: (clientId: string) => Promise<boolean>,
+  createdBy?: SaleActor | null
 ): Promise<InventorySaveResult> {
   const prepared = prepareInventorySave(input);
   if (!prepared.ok) return prepared;
   if (!(await clientAllowed(prepared.item.clientId))) {
     return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
   }
-  const inserted = await repository.insert(prepared.item);
+  const item = { ...prepared.item, createdBy: createdBy ?? null };
+  const inserted = await repository.insert(item);
   if (inserted) return { ok: true, action: "created", item: inserted };
   const existingBySource = await repository.findBySource(
     prepared.item.clientId,
@@ -90,7 +93,7 @@ export async function runInventorySave(
     return { ok: true, action: "already_saved", item: decision.item };
   }
   if (decision.action === "reject") return { ok: false, status: decision.status, error: decision.error };
-  const retried = await repository.insert(prepared.item);
+  const retried = await repository.insert(item);
   if (retried) return { ok: true, action: "created", item: retried };
   return { ok: false, status: 409, error: GUATEMALA_INVENTORY_MESSAGES.retry };
 }
@@ -220,6 +223,18 @@ async function createGuatemalaInventoryTables(): Promise<void> {
     ALTER TABLE guatemala_inventory_items
     ADD COLUMN IF NOT EXISTS cost_includes_photography BOOLEAN NOT NULL DEFAULT FALSE
   `;
+  await sql`
+    ALTER TABLE guatemala_inventory_items
+    ADD COLUMN IF NOT EXISTS created_by_role TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_items
+    ADD COLUMN IF NOT EXISTS created_by_account_id TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_items
+    ADD COLUMN IF NOT EXISTS created_by_username TEXT
+  `;
 }
 
 // Marks the sale already stored for SKU 3002 on Tienda Guatemala as a test.
@@ -290,6 +305,9 @@ interface ItemRow {
   status: string;
   cost_gtq?: string | null;
   cost_includes_photography?: boolean | string | null;
+  created_by_role?: string | null;
+  created_by_account_id?: string | null;
+  created_by_username?: string | null;
 }
 
 function itemStatus(value: unknown): InventoryItemStatus {
@@ -317,6 +335,17 @@ function storedFromRow(
     sale,
     costGtq: optionalCostText(row.cost_gtq),
     costIncludesPhotography: optionalCostText(row.cost_gtq) != null && flag(row.cost_includes_photography),
+    createdBy: createdByFrom(row),
+  };
+}
+
+function createdByFrom(row: ItemRow): SaleActor | null {
+  const role = row.created_by_role === "encargado" || row.created_by_role === "propietario" ? row.created_by_role : null;
+  if (!role) return null;
+  return {
+    role,
+    accountId: row.created_by_account_id ? String(row.created_by_account_id) : null,
+    username: row.created_by_username ? String(row.created_by_username) : null,
   };
 }
 
@@ -357,14 +386,16 @@ async function findRow(clientId: string, column: "source_group_id" | "sku", valu
     column === "sku"
       ? await sql`
           SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
-                 price_gtq::text AS price_gtq, status
+                 price_gtq::text AS price_gtq, status,
+                 created_by_role, created_by_account_id, created_by_username
           FROM guatemala_inventory_items
           WHERE client_id = ${clientId} AND sku = ${value}
           LIMIT 1
         `
       : await sql`
           SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
-                 price_gtq::text AS price_gtq, status
+                 price_gtq::text AS price_gtq, status,
+                 created_by_role, created_by_account_id, created_by_username
           FROM guatemala_inventory_items
           WHERE client_id = ${clientId} AND source_group_id = ${value}
           LIMIT 1
@@ -397,7 +428,8 @@ async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryI
     WITH inserted AS (
       INSERT INTO guatemala_inventory_items (
         id, client_id, source_group_id, sku, title, description,
-        brand, size, condition, price_gtq, currency, status
+        brand, size, condition, price_gtq, currency, status,
+        created_by_role, created_by_account_id, created_by_username
       )
       VALUES (
         ${id},
@@ -411,11 +443,15 @@ async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryI
         ${item.condition},
         ${item.priceGtq}::numeric,
         'GTQ',
-        ${GUATEMALA_INVENTORY_STATUS}
+        ${GUATEMALA_INVENTORY_STATUS},
+        ${item.createdBy?.role ?? null},
+        ${item.createdBy?.accountId ?? null},
+        ${item.createdBy?.username ?? null}
       )
       ON CONFLICT DO NOTHING
       RETURNING id, client_id, source_group_id, sku, title, description, brand, size, condition,
-        price_gtq::text AS price_gtq, status
+        price_gtq::text AS price_gtq, status,
+        created_by_role, created_by_account_id, created_by_username
     ),
     saved_photos AS (
       INSERT INTO guatemala_inventory_photos (id, item_id, position, media_type, data)
@@ -426,7 +462,7 @@ async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryI
       RETURNING item_id
     )
     SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
-      price_gtq, status
+      price_gtq, status, created_by_role, created_by_account_id, created_by_username
     FROM inserted
   `;
   const row = rows[0] as ItemRow | undefined;
@@ -434,9 +470,56 @@ async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryI
   return storedFromRow(row, item.photos);
 }
 
-export async function saveGuatemalaInventoryItem(input: SaveBody): Promise<InventorySaveResult> {
+export async function saveGuatemalaInventoryItem(
+  input: SaveBody,
+  createdBy?: SaleActor | null
+): Promise<InventorySaveResult> {
   await ensureGuatemalaInventoryTables();
-  return runInventorySave(postgresRepository(), input, clientIsGuatemala);
+  return runInventorySave(postgresRepository(), input, clientIsGuatemala, createdBy);
+}
+
+export async function guatemalaSkuTaken(clientId: string, sku: string): Promise<boolean> {
+  await ensureGuatemalaInventoryTables();
+  const stored = await findRow(clientId, "sku", sku);
+  return Boolean(stored);
+}
+
+export async function removeIsolatedGuatemalaPublication(
+  clientId: string,
+  itemId: string
+): Promise<{ ok: true; sku: string } | { ok: false; status: 404; error: string }> {
+  await ensureGuatemalaInventoryTables();
+  const sql = getSql();
+  const rows = await sql`
+    WITH target AS (
+      SELECT id, sku
+      FROM guatemala_inventory_items
+      WHERE id = ${itemId}
+        AND client_id = ${clientId}
+        AND sku ~ '^prueba-publicar-[a-z0-9]{8,24}$'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM guatemala_inventory_sales AS sale
+          WHERE sale.item_id = guatemala_inventory_items.id
+        )
+    ),
+    removed_photos AS (
+      DELETE FROM guatemala_inventory_photos
+      WHERE item_id IN (SELECT id FROM target)
+      RETURNING item_id
+    ),
+    removed AS (
+      DELETE FROM guatemala_inventory_items
+      WHERE id IN (SELECT id FROM target)
+      RETURNING sku
+    )
+    SELECT sku FROM removed
+  `;
+  const sku = rows[0]?.sku ? String(rows[0].sku) : "";
+  if (!sku || !isolatedPublicationSku(sku)) {
+    return { ok: false, status: 404, error: "No se eliminó ninguna prenda real." };
+  }
+  return { ok: true, sku };
 }
 
 export interface InventoryListItem {
@@ -552,7 +635,8 @@ export async function readGuatemalaInventoryItem(
   const rows = await sql`
     SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
       price_gtq::text AS price_gtq, status,
-      cost_gtq::text AS cost_gtq, cost_includes_photography
+      cost_gtq::text AS cost_gtq, cost_includes_photography,
+      created_by_role, created_by_account_id, created_by_username
     FROM guatemala_inventory_items
     WHERE id = ${itemId} AND client_id = ${clientId}
     LIMIT 1

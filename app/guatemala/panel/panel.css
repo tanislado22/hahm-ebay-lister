@@ -74,3 +74,125 @@
   padding: 0.75rem 0;
   border-top: 1px solid var(--color-border);
 }
+
+.gt-publish {
+  display: grid;
+  gap: 0.8rem;
+  max-width: 40rem;
+}
+
+.gt-publish form,
+.gt-publish .panel,
+.gt-publish label {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.gt-publish label {
+  font-weight: 700;
+}
+
+.gt-publish input,
+.gt-publish select,
+.gt-publish textarea,
+.gt-publish .btn,
+.gt-publish-upload {
+  width: 100%;
+  max-width: 100%;
+  min-height: 48px;
+  font-size: 1.05rem;
+}
+
+.gt-publish input,
+.gt-publish select,
+.gt-publish textarea {
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  padding: 0.7rem 0.9rem;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.gt-publish-upload {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  background: var(--color-accent, #0f6e56);
+  color: white;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.gt-publish-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.gt-publish-photos {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+}
+
+.gt-publish-photos figure,
+.gt-publish-photos img {
+  min-width: 0;
+  margin: 0;
+}
+
+.gt-publish-photos img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 12px;
+  background: #ebe3d6;
+}
+
+.gt-publish-photos button {
+  min-height: 44px;
+  margin-top: 0.3rem;
+}
+
+.gt-publish-review dl {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.8rem 0;
+}
+
+.gt-publish-review dt {
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.gt-publish-review dd,
+.gt-publish p,
+.gt-publish-note {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.gt-publish-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.gt-publish-actions .btn {
+  flex: 1 1 10rem;
+}
+
+@media (max-width: 640px) {
+  .gt-staff-nav .btn {
+    flex: 1 1 100%;
+  }
+}

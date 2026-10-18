@@ -43,7 +43,7 @@ export const GUATEMALA_STAFF_MESSAGES = {
   passwordMissing: "Esa cuenta no tiene una contraseña guardada.",
 } as const;
 
-export type GuatemalaAction = "read" | "sell" | "write" | "manage" | "correct" | "purge";
+export type GuatemalaAction = "read" | "sell" | "write" | "publish" | "manage" | "correct" | "purge";
 
 export interface AccessAccount {
   id: string;
@@ -196,6 +196,31 @@ export function decideGuatemalaAccess(input: {
     input.account && input.session
       ? sessionStillValid(input.account, input.session, input.now)
       : false;
+
+  if (input.action === "publish") {
+    if (owner) {
+      return { ok: true, actor: ownerActor, clientId: input.requestedClientId };
+    }
+    if (!staffValid || !input.account) {
+      return {
+        ok: false,
+        status: 401,
+        code: input.account || input.session ? "STAFF_SESSION_ENDED" : "ACCESS_CODE_REQUIRED",
+        error: input.account || input.session
+          ? GUATEMALA_STAFF_MESSAGES.sessionEnded
+          : GUATEMALA_STAFF_MESSAGES.signInRequired,
+      };
+    }
+    const requested = input.requestedClientId.trim();
+    if (requested && requested !== input.account.clientId) {
+      return { ok: false, status: 403, code: "FORBIDDEN", error: GUATEMALA_STAFF_MESSAGES.otherClient };
+    }
+    return {
+      ok: true,
+      actor: { role: "encargado", accountId: input.account.id, username: input.account.username },
+      clientId: input.account.clientId,
+    };
+  }
 
   if (input.action === "write" || input.action === "manage" || input.action === "correct" || input.action === "purge") {
     if (owner) {

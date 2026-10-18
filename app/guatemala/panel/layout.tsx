@@ -26,6 +26,9 @@ export default async function StaffLayout({ children }: { children: React.ReactN
   return (
     <div className="wrap gt-staff">
       <nav className="gt-staff-nav" aria-label="Encargado">
+        <a className="btn btn-primary" href="/guatemala/panel/publicar">
+          Publicar artículo
+        </a>
         <a className="btn btn-primary" href="/guatemala/panel/inventario">
           Inventario
         </a>

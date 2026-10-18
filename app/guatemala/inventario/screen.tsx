@@ -63,6 +63,7 @@ interface DetailItem extends ListItem {
   sale?: SaleInfo | null;
   costGtq?: string | null;
   costIncludesPhotography?: boolean;
+  createdBy?: { role: "propietario" | "encargado"; username: string | null } | null;
 }
 
 function photoSource(photo: InventoryPhoto): string {
@@ -431,6 +432,17 @@ export function InventoryScreen({
                       </div>
                     ) : null}
                   </>
+                ) : null}
+                {detail.createdBy?.role === "encargado" && detail.createdBy.username ? (
+                  <div>
+                    <dt>Publicada por</dt>
+                    <dd>{detail.createdBy.username}</dd>
+                  </div>
+                ) : detail.createdBy?.role === "propietario" ? (
+                  <div>
+                    <dt>Publicada por</dt>
+                    <dd>Propietario</dd>
+                  </div>
                 ) : null}
                 <div>
                   <dt>Talla</dt>

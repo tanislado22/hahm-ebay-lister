@@ -121,6 +121,72 @@ describe("acceso del encargado", () => {
     expect(other).toMatchObject({ ok: false, status: 403 });
   });
 
+  it("permite publicar solo en Tienda Guatemala y niega modificar, administrar o vender otra tienda", () => {
+    const publish = decideGuatemalaAccess({
+      owner: false,
+      account: account({ username: "oseaspacheco" }),
+      session: session(),
+      requestedClientId: "",
+      action: "publish",
+      now: NOW,
+    });
+    expect(publish.ok && publish.actor).toMatchObject({
+      role: "encargado",
+      username: "oseaspacheco",
+    });
+    if (publish.ok) expect(publish.clientId).toBe(GUATEMALA_ID);
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: account(),
+        session: session(),
+        requestedClientId: OTHER_ID,
+        action: "publish",
+        now: NOW,
+      })
+    ).toMatchObject({ ok: false, status: 403 });
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: account(),
+        session: session(),
+        requestedClientId: GUATEMALA_ID,
+        action: "write",
+        now: NOW,
+      }).ok
+    ).toBe(false);
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: account(),
+        session: session(),
+        requestedClientId: GUATEMALA_ID,
+        action: "manage",
+        now: NOW,
+      }).ok
+    ).toBe(false);
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: account(),
+        session: session(),
+        requestedClientId: GUATEMALA_ID,
+        action: "correct",
+        now: NOW,
+      }).ok
+    ).toBe(false);
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: account(),
+        session: session(),
+        requestedClientId: GUATEMALA_ID,
+        action: "purge",
+        now: NOW,
+      }).ok
+    ).toBe(false);
+  });
+
   it("niega crear prendas, administrar cuentas y el acceso del propietario", () => {
     expect(
       decideGuatemalaAccess({

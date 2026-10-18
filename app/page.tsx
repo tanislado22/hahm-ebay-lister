@@ -1607,7 +1607,10 @@ const draftAll = async () => {
           Gastos
         </a>
         <a className="btn btn-primary" href="/guatemala/acceso" style={{ fontSize: "20px", marginLeft: 0 }}>
-          Acceso del encargado
+          Administrar encargados
+        </a>
+        <a className="btn btn-primary" href="/guatemala/entrada" style={{ fontSize: "20px", marginLeft: 0 }}>
+          Iniciar sesión como encargado
         </a>
         <a
           className="btn btn-primary"
