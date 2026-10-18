@@ -40,8 +40,11 @@ export default function StaffEntryPage() {
   return (
     <main className="wrap gt-entry">
       <header>
-        <h1>Entrada del encargado</h1>
-        <p>Usa tu usuario de Tienda Guatemala. Esta entrada no pide el código del propietario ni una cuenta de Vercel.</p>
+        <h1>Iniciar sesión como encargado</h1>
+        <p>
+          Esta pantalla es solo para entrar con tu usuario de Tienda Guatemala. No administra cuentas ni pide el código del
+          propietario.
+        </p>
       </header>
       <section className="panel">
         <div className="gt-inventory-filters" role="group" aria-label="Forma de entrada">

@@ -134,10 +134,15 @@ export default function OwnerStaffPage() {
   return (
     <main className="wrap gt-access">
       <header>
-        <h1>Acceso del encargado</h1>
+        <h1>Administrar encargados</h1>
         <p>
-          Crea o invita una cuenta solo para Tienda Guatemala. La contraseña no se guarda en texto plano y no vuelve a
-          mostrarse.
+          Crea, invita o desactiva cuentas solo de Tienda Guatemala. El encargado no entra aquí: inicia sesión en su
+          propia pantalla. La contraseña no se guarda en texto plano y no vuelve a mostrarse.
+        </p>
+        <p>
+          <a className="btn btn-ghost" href="/guatemala/entrada">
+            Iniciar sesión como encargado
+          </a>
         </p>
       </header>
       <section className="panel">

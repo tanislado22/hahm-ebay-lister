@@ -36,6 +36,11 @@ const CONDITION_LABELS: Record<string, string> = {
   FAIR: "Usada · Regular",
 };
 
+export const GUATEMALA_CONDITION_CHOICES = Object.entries(CONDITION_LABELS).map(([value, label]) => ({
+  value,
+  label,
+}));
+
 export interface InventoryPhoto {
   id: string;
   mediaType: string;
@@ -53,6 +58,7 @@ export interface PreparedInventoryItem {
   condition: string;
   priceGtq: string;
   photos: InventoryPhoto[];
+  createdBy?: SaleActor | null;
 }
 
 export interface SaleCorrectionView {
