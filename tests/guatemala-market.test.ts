@@ -3,11 +3,11 @@ import { buildGuatemalaAnalysisPrompt } from "@/lib/markets/guatemala-prompt";
 import {
   exactGuatemalaSku,
   formatQuetzales,
-  guatemalaCompReport,
   guatemalaDuplicateSkuMessage,
   prepareGuatemalaListing,
   requestTargetsGuatemala,
 } from "@/lib/markets/guatemala";
+import { buildGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
 import { buildSku } from "@/lib/sku";
 import type { ListingResult } from "@/lib/types";
 
@@ -35,15 +35,22 @@ describe("Tienda Guatemala", () => {
     expect(prompt).toContain("0XL");
   });
 
-  it("informa que la fuente no está configurada y no devuelve precios", () => {
-    const report = guatemalaCompReport(new Date("2026-10-15T22:00:00.000Z"));
-    expect(report.status).toBe("source_not_configured");
+  it("no inventa un precio cuando no hay comparaciones", () => {
+    const report = buildGuatemalaCompReport({
+      now: new Date("2026-10-15T22:00:00.000Z"),
+      query: { itemType: "Camisa", brand: "Nike", condition: "GOOD", size: "M" },
+      advertised: [],
+      sourceErrors: [],
+      sales: [],
+    });
+    expect(report.status).toBe("insufficient");
     expect(report.currency).toBe("GTQ");
     expect(report.symbol).toBe("Q");
     expect(report.timezone).toBe("America/Guatemala");
+    expect(report.suggestedPrice).toBeNull();
     expect(report.listed).toEqual([]);
     expect(report.sold).toEqual([]);
-    expect(report.message).toContain("Falta configurar una fuente");
+    expect(report.message).toContain("Escribe el precio manualmente");
     expect(JSON.stringify(report)).not.toContain("24.99");
     expect(report.queriedAt).toBe("2026-10-15T22:00:00.000Z");
   });

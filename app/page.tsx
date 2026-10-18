@@ -5,6 +5,7 @@ import { accessHeaders, apiPost } from "@/lib/api-client";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { resizeImage } from "@/lib/resize";
 import { exactGuatemalaSku, guatemalaDuplicateSkuMessage } from "@/lib/markets/guatemala";
+import { guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
 import { buildSku, skuForVintedPrepare } from "@/lib/sku";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
@@ -1101,7 +1102,7 @@ const deleteAll = async () => {
         if (!data.ok || !data.listing) {
           throw new Error(data.error || "Could not write this listing.");
         }
-        const listing = guatemala
+        let listing = guatemala
           ? { ...data.listing, market: "guatemala", currency: "GTQ", suggested_price: undefined }
           : data.listing;
         let guatemalaComps = undefined;
@@ -1109,11 +1110,32 @@ const deleteAll = async () => {
           try {
             const compsRes = await apiPost("/api/markets/guatemala/comps", {
               clientId: selectedClientIdRef.current,
+              listing: {
+                title: listing.title,
+                item_type: listing.item_type,
+                brand: listing.brand,
+                condition: listing.condition,
+                size: listing.size,
+                category: listing.category,
+              },
             });
             const compsData = (await readJson(compsRes)) as ItemGroup["guatemalaComps"];
-            if (compsData?.status === "source_not_configured") guatemalaComps = compsData;
+            if (
+              compsData?.ok &&
+              (compsData.status === "ready" ||
+                compsData.status === "insufficient" ||
+                compsData.status === "unavailable")
+            ) {
+              guatemalaComps = compsData;
+              listing = {
+                ...listing,
+                suggested_price: guatemalaPriceIfEmpty(listing.suggested_price, compsData.suggestedPrice) ?? undefined,
+              };
+            } else {
+              guatemalaComps = unavailableGuatemalaCompReport();
+            }
           } catch {
-            /* the card asks again and still shows that no source is configured */
+            guatemalaComps = unavailableGuatemalaCompReport();
           }
         }
         setGroups((prev) =>
