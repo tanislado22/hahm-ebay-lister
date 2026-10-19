@@ -1509,7 +1509,7 @@ export async function listGuatemalaSaleReferences(clientId: string): Promise<
 export async function listPublicGuatemalaCatalog(
   filters: CatalogFilters
 ): Promise<
-  | { ok: true; items: PublicCatalogCard[]; facets: PublicCatalogFacets; soldCount: number }
+  | { ok: true; items: PublicCatalogCard[]; facets: PublicCatalogFacets; soldCount: number; collectionEmpty: boolean }
   | { ok: false; status: 404; error: string }
 > {
   const clientId = await readyPublicCatalogClient();
@@ -1559,6 +1559,7 @@ export async function listPublicGuatemalaCatalog(
     items: publicCatalogCards(sources, clientId, filters),
     facets: publicCatalogFacets(sources, clientId),
     soldCount: publicSoldArticleCount(sources, clientId),
+    collectionEmpty: sources.length === 0,
   };
 }
 

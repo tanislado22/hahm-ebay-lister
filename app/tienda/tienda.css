@@ -17,7 +17,7 @@
   width: 100%;
   max-width: 1120px;
   margin: 0 auto;
-  padding: 0.9rem 0.85rem 2.5rem;
+  padding: 0.6rem 0.85rem 2rem;
   overflow-x: clip;
   color: var(--vsa-ink);
   background: var(--vsa-bg);
@@ -34,19 +34,21 @@
 .vsa-top {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.9rem;
+  gap: 0.55rem;
+  margin-bottom: 0.5rem;
 }
 
 .vsa-mark {
   display: grid;
   place-items: center;
-  width: 3rem;
-  height: 3rem;
+  flex: 0 0 auto;
+  width: 2.15rem;
+  height: 2.15rem;
   margin: 0;
   border-radius: 999px;
   background: var(--vsa-green);
   color: white;
+  font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.02em;
 }
@@ -60,37 +62,44 @@
 }
 
 .vsa h1 {
-  font-size: 1.55rem;
+  font-size: 1.22rem;
 }
 
 .vsa-top p:last-child {
-  margin: 0.15rem 0 0;
+  margin: 0.05rem 0 0;
   color: var(--vsa-muted);
+  font-size: 0.8rem;
 }
 
-.vsa-filters {
+.vsa-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.vsa-controls {
+  margin: 0 0 0.5rem;
+}
+
+.vsa-toolbar {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.55rem;
-  margin-bottom: 0.9rem;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.4rem;
+  align-items: start;
 }
 
-.vsa-filters label {
-  display: grid;
-  gap: 0.25rem;
-  min-width: 0;
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-
-.vsa-filters label:first-child,
-.vsa-filters button {
-  grid-column: 1 / -1;
-}
-
-.vsa-filters input,
-.vsa-filters select,
-.vsa-filters button,
+.vsa-search input,
+.vsa-search-go,
+.vsa-filter-button,
+.vsa-filter-panel input,
+.vsa-filter-panel select,
+.vsa-filter-panel button,
 .vsa-back,
 .vsa-zoom-label,
 .vsa-lightbox button {
@@ -102,24 +111,112 @@
   font: inherit;
 }
 
-.vsa-filters input,
-.vsa-filters select {
+.vsa-search input,
+.vsa-filter-panel input,
+.vsa-filter-panel select {
   width: 100%;
-  padding: 0.45rem 0.6rem;
+  padding: 0.45rem 0.65rem;
 }
 
-.vsa-filters button,
+.vsa-search-go,
+.vsa-filter-button,
+.vsa-filter-panel button,
 .vsa-lightbox button,
 .vsa-thumbs button,
 .vsa-zoom {
   cursor: pointer;
 }
 
-.vsa-filters button {
+.vsa-search-go,
+.vsa-filter-button,
+.vsa-filter-panel button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.75rem;
+  font-weight: 800;
+}
+
+.vsa-search-go,
+.vsa-filter-panel button {
   background: var(--vsa-green);
   color: white;
   border-color: var(--vsa-green-deep);
-  font-weight: 800;
+}
+
+.vsa-filter-toggle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.vsa-filter-toggle:focus-visible ~ .vsa-toolbar .vsa-filter-button {
+  outline: 3px solid var(--vsa-green);
+  outline-offset: 2px;
+}
+
+.vsa-filter-panel {
+  display: none;
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+  padding: 0.75rem;
+  border: 1px solid var(--vsa-line);
+  border-radius: 16px;
+  background: var(--vsa-card);
+}
+
+.vsa-filter-toggle:checked ~ .vsa-filter-panel {
+  display: grid;
+}
+
+.vsa-filter-panel button {
+  grid-column: 1 / -1;
+}
+
+.vsa-filter-panel label {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.vsa-price-range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+}
+
+.vsa-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.5rem;
+}
+
+.vsa-chips a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 44px;
+  padding: 0.2rem 0.7rem;
+  border: 1px solid var(--vsa-line);
+  border-radius: 999px;
+  background: white;
+  color: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.vsa-chips a:last-child {
+  background: transparent;
+  text-decoration: underline;
 }
 
 .vsa-count,
@@ -143,7 +240,7 @@
 .vsa-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.65rem;
+  gap: 0.5rem;
 }
 
 .vsa-card {
@@ -160,21 +257,22 @@
 .vsa-availability {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
-  margin: 0 0 0.8rem;
+  gap: 0.4rem;
+  margin: 0 0 0.65rem;
 }
 
 .vsa-availability a {
-  flex: 1 1 6.5rem;
+  flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 44px;
-  padding: 0.4rem 0.7rem;
+  padding: 0.35rem 0.8rem;
   border: 1px solid var(--vsa-line);
   border-radius: 999px;
   background: white;
   color: var(--vsa-ink);
+  font-size: 0.88rem;
   font-weight: 800;
   text-align: center;
   text-decoration: none;
@@ -189,9 +287,27 @@
 .vsa-photo {
   position: relative;
   display: block;
-  aspect-ratio: 1;
+  aspect-ratio: 4 / 5;
   background: #ebe3d6;
   overflow: hidden;
+}
+
+.vsa-empty {
+  margin: 1.1rem 0 0;
+  padding: 1.35rem 1rem;
+  border-radius: 16px;
+  background: white;
+  text-align: center;
+  font-family: Georgia, "Iowan Old Style", Palatino, serif;
+  font-size: 1.12rem;
+  line-height: 1.4;
+}
+
+.vsa-sold-count {
+  margin: 0 0 0.5rem;
+  color: var(--vsa-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .vsa-sold-ticket {
@@ -257,6 +373,15 @@
   margin: 0 0 0.75rem;
 }
 
+.vsa-photo > span:not(.vsa-sold-ticket):not(.vsa-zoom-label) {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: var(--vsa-muted);
+  font-size: 0.86rem;
+}
+
 .vsa-photo img,
 .vsa-thumbs img,
 .vsa-lightbox img {
@@ -297,8 +422,12 @@
 
 .vsa-price {
   color: var(--vsa-green-deep) !important;
-  font-size: 1.05rem !important;
+  font-size: 1.18rem !important;
   font-weight: 800;
+}
+
+.vsa-sold-label {
+  font-size: 0.78rem;
 }
 
 .vsa-back {
@@ -411,46 +540,49 @@
   font-weight: 800;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 380px) {
   .vsa-availability a {
-    flex-basis: 100%;
+    flex: 1 1 0;
+    padding-right: 0.25rem;
+    padding-left: 0.25rem;
+    font-size: 0.78rem;
   }
 }
 
-@media (max-width: 340px) {
-  .vsa-grid,
-  .vsa-filters {
+@media (max-width: 300px) {
+  .vsa-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 640px) {
+  .vsa-filter-panel {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
 @media (min-width: 800px) {
   .vsa {
-    padding: 1.4rem 1.2rem 3rem;
+    padding: 0.85rem 1.2rem 2.5rem;
   }
 
   .vsa h1 {
-    font-size: 2.2rem;
+    font-size: 1.65rem;
   }
 
-  .vsa-filters {
-    grid-template-columns: 1.4fr repeat(3, 1fr);
+  .vsa-mark {
+    width: 2.4rem;
+    height: 2.4rem;
+    font-size: 0.74rem;
   }
 
-  .vsa-filters label:first-child {
-    grid-column: auto;
-  }
-
-  .vsa-filters button {
-    grid-column: 1 / -1;
-    justify-self: start;
-    min-width: 10rem;
-    padding: 0 1rem;
+  .vsa-controls {
+    max-width: 36rem;
   }
 
   .vsa-grid {
     grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
+    gap: 0.9rem;
   }
 
   .vsa-detail {
