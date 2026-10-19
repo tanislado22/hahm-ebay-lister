@@ -1,33 +1,56 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { headers } from "next/headers";
+import { SoldTicket } from "./sold-ticket";
 import {
-  catalogEmptyMessage,
-  catalogPageSearch,
-  catalogPhotoPath,
-  parseCatalogFilters,
+  PUBLIC_COLLECTION_EMPTY,
   PUBLIC_SOLD_BADGE,
   PUBLIC_SOLD_COUNT_LABEL,
-  type CatalogAvailability,
+  catalogClearSearch,
+  catalogEmptyMessage,
+  catalogFilterChips,
+  catalogPageSearch,
+  parseCatalogFilters,
+  type CatalogFilters,
 } from "@/lib/markets/guatemala-catalog";
 import { formatStoredQuetzales } from "@/lib/markets/guatemala-inventory";
 import { listPublicGuatemalaCatalog } from "@/lib/markets/guatemala-inventory-store";
+import { GARMENT_KIND_CHOICES } from "@/lib/markets/guatemala-price-match";
 import { isStoreHostname } from "@/lib/markets/store-host";
-import { SoldTicket } from "./sold-ticket";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Variedades San Andrés",
+  description: "Catálogo de prendas de Variedades San Andrés. Precios en quetzales.",
+};
+
+const AVAILABILITY = [
+  ["todos", "Todos"],
+  ["disponibles", "Disponibles"],
+  ["vendidos", "Vendidos"],
+] as const;
+
+function catalogHref(home: string, search: string): string {
+  return search ? `${home}?${search}` : home;
+}
 
 export default async function StorePage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params = await searchParams;
-  const filters = parseCatalogFilters(params);
+  const filters = parseCatalogFilters(await searchParams);
   const storefront = isStoreHostname((await headers()).get("host"));
   const home = storefront ? "/" : "/tienda";
   const result = await listPublicGuatemalaCatalog(filters);
-  const facets = result.ok ? result.facets : null;
   const items = result.ok ? result.items : [];
+  const facets = result.ok ? result.facets : { categories: [], sizes: [], brands: [] };
+  const chips = catalogFilterChips(filters);
+  const filterCount = chips.filter((chip) => chip.id !== "q").length;
+  const product = (id: string) => (storefront ? `/prenda/${id}` : `/tienda/prenda/${id}`);
+  const availabilityHref = (availability: CatalogFilters["availability"]) =>
+    catalogHref(home, catalogPageSearch({ ...filters, availability }));
 
   return (
     <main className="vsa">
@@ -38,89 +61,97 @@ export default async function StorePage({
           <p>Precios en quetzales</p>
         </div>
       </header>
-      <form className="vsa-filters" method="get" action={home}>
-        <label>
-          Buscar
-          <input name="q" defaultValue={filters.q} placeholder="Título, marca o SKU" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
-        </label>
-        <label>
-          Categoría
-          <select name="categoria" defaultValue={filters.category}>
-            <option value="">Todas</option>
-            {(facets?.categories ?? []).map((category) => (
-              <option key={category.key} value={category.key}>{category.label}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Talla
-          <select name="talla" defaultValue={filters.size}>
-            <option value="">Todas</option>
-            {(facets?.sizes ?? []).map((size) => (
-              <option key={size} value={size}>{size}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Marca
-          <select name="marca" defaultValue={filters.brand}>
-            <option value="">Todas</option>
-            {(facets?.brands ?? []).map((brand) => (
-              <option key={brand} value={brand}>{brand}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Precio mínimo
-          <input name="min" inputMode="decimal" defaultValue={filters.minPrice ?? ""} placeholder="Q" />
-        </label>
-        <label>
-          Precio máximo
-          <input name="max" inputMode="decimal" defaultValue={filters.maxPrice ?? ""} placeholder="Q" />
-        </label>
+      <form className="vsa-controls" action={home} method="get">
         {filters.availability !== "todos" ? <input type="hidden" name="estado" value={filters.availability} /> : null}
-        <button type="submit">Aplicar</button>
+        <input id="vsa-filter-open" className="vsa-filter-toggle" type="checkbox" />
+        <div className="vsa-toolbar">
+          <label className="vsa-search">
+            <span className="vsa-sr">Buscar</span>
+            <input type="search" name="q" defaultValue={filters.q} placeholder="Buscar" enterKeyHint="search" />
+          </label>
+          <button className="vsa-search-go" type="submit">Buscar</button>
+          <label className="vsa-filter-button" htmlFor="vsa-filter-open">
+            Filtrar{filterCount > 0 ? ` (${filterCount})` : ""}
+          </label>
+        </div>
+        <div className="vsa-filter-panel">
+          <label>
+            Categoría
+            <select name="categoria" defaultValue={filters.category}>
+              <option value="">Todas</option>
+              {GARMENT_KIND_CHOICES.map((choice) => (
+                <option key={choice.key} value={choice.key}>{choice.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Talla
+            <select name="talla" defaultValue={filters.size}>
+              <option value="">Todas</option>
+              {facets.sizes.map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
+          <label>
+            Marca
+            <select name="marca" defaultValue={filters.brand}>
+              <option value="">Todas</option>
+              {facets.brands.map((brand) => <option key={brand} value={brand}>{brand}</option>)}
+            </select>
+          </label>
+          <div className="vsa-price-range">
+            <label>
+              Desde
+              <input name="min" inputMode="decimal" defaultValue={filters.minPrice ?? ""} placeholder="Q" />
+            </label>
+            <label>
+              Hasta
+              <input name="max" inputMode="decimal" defaultValue={filters.maxPrice ?? ""} placeholder="Q" />
+            </label>
+          </div>
+          <button type="submit">Aplicar</button>
+        </div>
       </form>
+      {chips.length > 0 ? (
+        <div className="vsa-chips">
+          {chips.map((chip) => (
+            <Link key={chip.id} href={catalogHref(home, chip.search)}>{chip.label} <span aria-hidden="true">×</span><span className="vsa-sr">Quitar</span></Link>
+          ))}
+          <Link href={catalogHref(home, catalogClearSearch(filters))}>Limpiar</Link>
+        </div>
+      ) : null}
       <nav className="vsa-availability" aria-label="Disponibilidad">
-        {(["todos", "disponibles", "vendidos"] as const).map((option) => (
-          <Link
-            key={option}
-            href={availabilityHref(home, filters, option)}
-            aria-current={filters.availability === option ? "page" : undefined}
-          >
-            {option === "todos" ? "Todos" : option === "disponibles" ? "Disponibles" : "Vendidos"}
-          </Link>
+        {AVAILABILITY.map(([value, label]) => (
+          <Link key={value} href={availabilityHref(value)} aria-current={filters.availability === value ? "page" : undefined}>{label}</Link>
         ))}
       </nav>
+      {result.ok && result.soldCount > 0 ? (
+        <p className="vsa-sold-count">{PUBLIC_SOLD_COUNT_LABEL}: {result.soldCount}</p>
+      ) : null}
       {!result.ok ? <p className="vsa-note" role="alert">{result.error}</p> : null}
-      {result.ok ? <p className="vsa-count">{PUBLIC_SOLD_COUNT_LABEL}: {result.soldCount}</p> : null}
-      {result.ok && items.length === 0 ? <p className="vsa-note">{catalogEmptyMessage(filters)}</p> : null}
-      <div className="vsa-grid">
+      {result.ok && items.length === 0 ? (
+        <p className="vsa-empty">
+          {result.collectionEmpty ? PUBLIC_COLLECTION_EMPTY : catalogEmptyMessage(filters)}
+        </p>
+      ) : null}
+      <section className="vsa-grid" aria-label="Prendas">
         {items.map((item) => (
-          <Link key={item.id} className={item.availability === "vendido" ? "vsa-card is-sold" : "vsa-card"} href={storefront ? `/prenda/${encodeURIComponent(item.id)}` : `/tienda/prenda/${encodeURIComponent(item.id)}`}>
+          <Link key={item.id} className="vsa-card" href={product(item.id)}>
             <span className="vsa-photo">
               {item.coverPhotoId ? (
-                <img src={catalogPhotoPath(item.coverPhotoId, 480)} alt="" width={480} height={480} />
-              ) : (
-                <span className="vsa-photo-empty">Sin foto</span>
-              )}
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={`/api/markets/guatemala/catalog/foto/${encodeURIComponent(item.coverPhotoId)}?w=480`} alt="" />
+              ) : <span>Sin foto</span>}
               {item.availability === "vendido" ? <SoldTicket /> : null}
             </span>
             <span className="vsa-copy">
-              <strong>{item.title || "Prenda sin título"}</strong>
-              {item.availability === "vendido" ? <span className="vsa-sold-label">{PUBLIC_SOLD_BADGE}</span> : null}
-              {item.brand ? <span>{item.brand}</span> : null}
-              <span>{item.size ? `Talla ${item.size}` : "Sin talla"}</span>
               <span className="vsa-price">{formatStoredQuetzales(item.priceGtq)}</span>
+              <strong>{item.title || "Prenda sin título"}</strong>
+              <span>{item.size ? `Talla ${item.size}` : "Sin talla"}{item.brand ? ` · ${item.brand}` : ""}</span>
+              {item.availability === "vendido" ? <span className="vsa-sold-label">{item.soldBadge || PUBLIC_SOLD_BADGE}</span> : null}
             </span>
           </Link>
         ))}
-      </div>
+      </section>
     </main>
   );
-}
-
-function availabilityHref(home: string, filters: ReturnType<typeof parseCatalogFilters>, next: CatalogAvailability): string {
-  const query = catalogPageSearch({ ...filters, availability: next });
-  return query ? `${home}?${query}` : home;
 }

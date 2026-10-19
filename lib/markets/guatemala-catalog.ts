@@ -3,7 +3,7 @@ import { GARMENT_KIND_CHOICES, garmentKind } from "@/lib/markets/guatemala-price
 
 export const GUATEMALA_CATALOG_MESSAGES = {
   empty: "Todavía no hay prendas disponibles.",
-  none: "Todavía no hay prendas.",
+  none: "Estamos preparando nuestra colección. Vuelve pronto.",
   noSold: "Todavía no hay artículos vendidos.",
   noMatch: "Ninguna prenda coincide con la búsqueda.",
   loadFailed: "No se pudo cargar el catálogo.",
@@ -15,6 +15,7 @@ export const GUATEMALA_CATALOG_MESSAGES = {
 export const PUBLIC_SOLD_BADGE = "VENDIDO";
 export const PUBLIC_SOLD_NOTICE = "Vendido — ya no disponible";
 export const PUBLIC_SOLD_COUNT_LABEL = "Artículos vendidos";
+export const PUBLIC_COLLECTION_EMPTY = GUATEMALA_CATALOG_MESSAGES.none;
 
 export interface CatalogPhoto {
   id: string;
@@ -252,6 +253,43 @@ export function publicCatalogDetailView(
     soldNotice: availability === "vendido" ? PUBLIC_SOLD_NOTICE : "",
   };
   return pick(detail, DETAIL_KEYS);
+}
+
+export interface CatalogFilterChip {
+  id: string;
+  label: string;
+  search: string;
+}
+
+export function catalogFilterChips(filters: CatalogFilters): CatalogFilterChip[] {
+  const current = normalizeFilters(filters);
+  const chips: CatalogFilterChip[] = [];
+  const add = (id: string, label: string, next: CatalogFilters) => {
+    chips.push({ id, label, search: catalogPageSearch(next) });
+  };
+  if (current.q) add("q", current.q, { ...current, q: "" });
+  if (current.category) {
+    const label = GARMENT_KIND_CHOICES.find((choice) => choice.key === current.category)?.label ?? current.category;
+    add("categoria", label, { ...current, category: "" });
+  }
+  if (current.size) add("talla", `Talla ${current.size}`, { ...current, size: "" });
+  if (current.brand) add("marca", current.brand, { ...current, brand: "" });
+  if (current.minPrice != null) add("min", `Desde Q${current.minPrice}`, { ...current, minPrice: null });
+  if (current.maxPrice != null) add("max", `Hasta Q${current.maxPrice}`, { ...current, maxPrice: null });
+  return chips;
+}
+
+export function catalogClearSearch(filters: CatalogFilters): string {
+  const current = normalizeFilters(filters);
+  return catalogPageSearch({
+    ...current,
+    q: "",
+    category: "",
+    size: "",
+    brand: "",
+    minPrice: null,
+    maxPrice: null,
+  });
 }
 
 export function catalogPageSearch(filters: CatalogFilters): string {

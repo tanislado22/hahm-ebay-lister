@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  catalogClearSearch,
   catalogEmptyMessage,
+  catalogFilterChips,
   catalogItemVisible,
   catalogOrderAllowed,
   catalogPageSearch,
@@ -145,7 +147,7 @@ describe("catálogo público de Tienda Guatemala", () => {
     expect(publicCatalogDetail(book, TIENDA, "prenda-prueba1")).toBeNull();
     expect(publicCatalogDetail(book, TIENDA, "prenda-ajena")).toBeNull();
     expect(publicCatalogDetail(book, OTHER, "prenda-3001")).toBeNull();
-    expect(catalogEmptyMessage("")).toBe("Todavía no hay prendas.");
+    expect(catalogEmptyMessage("")).toBe("Estamos preparando nuestra colección. Vuelve pronto.");
     expect(catalogEmptyMessage({ q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "disponibles" })).toBe("Todavía no hay prendas disponibles.");
     expect(catalogEmptyMessage({ q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "vendidos" })).toBe("Todavía no hay artículos vendidos.");
     expect(catalogEmptyMessage("xyz")).toBe("Ninguna prenda coincide con la búsqueda.");
@@ -215,6 +217,12 @@ describe("catálogo público de Tienda Guatemala", () => {
     expect(publicSoldArticleCount([voided], TIENDA)).toBe(0);
     expect(publicCatalogCards([confirmed], TIENDA, { q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "vendidos" })).toHaveLength(1);
     expect(publicCatalogCards([confirmed, available], TIENDA, { q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "disponibles" }).every((card) => card.availability === "disponible")).toBe(true);
+    const selected = { q: "polo", category: "camisa", size: "M", brand: "Arrow", minPrice: 40, maxPrice: 100, availability: "disponibles" as const };
+    const chips = catalogFilterChips(selected);
+    expect(chips.map((chip) => chip.label)).toEqual(["polo", "camisa", "Talla M", "Arrow", "Desde Q40", "Hasta Q100"]);
+    expect(chips.find((chip) => chip.id === "categoria")?.search).toContain("estado=disponibles");
+    expect(chips.find((chip) => chip.id === "categoria")?.search).not.toContain("categoria=");
+    expect(catalogClearSearch(selected)).toBe("estado=disponibles");
     expect(catalogPageSearch({ q: "polo", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "todos" })).toBe("q=polo");
     expect(catalogPageSearch({ q: "", category: "", size: "", brand: "", minPrice: null, maxPrice: null, availability: "vendidos" })).toBe("estado=vendidos");
     expect(publicCatalogCards([item({ clientId: OTHER, status: "vendida", sales: [{ isTest: false, voidedAt: null }] })], TIENDA, "")).toEqual([]);
