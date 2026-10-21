@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { guatemalaRequest } from "../request";
+import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
 import { GARMENT_KIND_CHOICES, storePriceProposal } from "@/lib/markets/guatemala-price-match";
 import type { StorePriceGuide } from "@/lib/markets/guatemala-price-match";
 
@@ -31,6 +32,8 @@ export function PriceGuideScreen() {
     garment: GARMENT_KIND_CHOICES.some((choice) => choice.key === requestedGarment) ? requestedGarment : EMPTY.garment,
     condition: requestedCondition || EMPTY.condition,
   });
+  const [savedForm, setSavedForm] = useState(form);
+  useUnsavedChanges(JSON.stringify(form) !== JSON.stringify(savedForm));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -86,7 +89,9 @@ export function PriceGuideScreen() {
       setError(data.error || "No se pudo guardar la regla.");
       return;
     }
-    setForm({ ...EMPTY, garment: form.garment, condition: form.condition });
+    const next = { ...EMPTY, garment: form.garment, condition: form.condition };
+    setForm(next);
+    setSavedForm(next);
     await load();
   }
 
@@ -106,6 +111,7 @@ export function PriceGuideScreen() {
 
   return (
     <main className="wrap">
+      <ReturnHomeBar role="propietario" />
       <h1>Estimaciones de Tienda Guatemala</h1>
       <p>
         Primero se usan anuncios reales. Si no alcanzan, entra el precio general del tipo de prenda y la condición.

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { guatemalaRequest } from "../request";
+import { ReturnHomeBar, UnsavedChangesProvider, useUnsavedChanges } from "../return-home";
 import "../inventario/inventory.css";
 import "../panel/panel.css";
 
@@ -19,6 +20,14 @@ const STATUS_LABEL = {
 };
 
 export default function OwnerStaffPage() {
+  return (
+    <UnsavedChangesProvider>
+      <OwnerStaffScreen />
+    </UnsavedChangesProvider>
+  );
+}
+
+function OwnerStaffScreen() {
   const [accounts, setAccounts] = useState<StaffAccount[]>([]);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -26,6 +35,7 @@ export default function OwnerStaffPage() {
   const [notice, setNotice] = useState("");
   const [invite, setInvite] = useState<{ username: string; code: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  useUnsavedChanges(username.trim() !== "" || password !== "");
 
   async function load() {
     setLoading(true);
@@ -133,6 +143,7 @@ export default function OwnerStaffPage() {
 
   return (
     <main className="wrap gt-access">
+      <ReturnHomeBar role="propietario" />
       <header>
         <h1>Administrar encargados</h1>
         <p>

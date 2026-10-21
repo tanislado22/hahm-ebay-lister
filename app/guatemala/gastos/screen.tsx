@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { guatemalaRequest } from "../request";
+import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
 import { formatStoredQuetzales } from "@/lib/markets/guatemala-inventory";
 import {
   GUATEMALA_EXPENSE_CATEGORIES,
@@ -71,6 +72,7 @@ export function ExpensesScreen({
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [formBaseline, setFormBaseline] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
@@ -132,9 +134,14 @@ export function ExpensesScreen({
     router.replace(`${basePath}?${search.toString()}`);
   }
 
+  function rememberForm(next: typeof EMPTY_FORM) {
+    setForm(next);
+    setFormBaseline(JSON.stringify(next));
+  }
+
   function openCreate() {
     setEditingId(null);
-    setForm({ ...EMPTY_FORM, spentOn: guatemalaTodayKey() });
+    rememberForm({ ...EMPTY_FORM, spentOn: guatemalaTodayKey() });
     setFormError("");
     setPendingDeleteId(null);
     setFormOpen(true);
@@ -142,7 +149,7 @@ export function ExpensesScreen({
 
   function openEdit(expense: StoredExpense) {
     setEditingId(expense.id);
-    setForm({
+    rememberForm({
       spentOn: expense.spentOn,
       category: expense.category,
       description: expense.description,
@@ -256,9 +263,11 @@ export function ExpensesScreen({
 
   const listedTotal = payload ? sumExpenseAmounts(payload.expenses) : null;
   const withClient = (path: string) => (staffMode ? path : `${path}?clientId=${encodeURIComponent(clientId)}`);
+  useUnsavedChanges(formOpen && JSON.stringify(form) !== formBaseline);
 
   return (
     <main className="wrap gt-inventory gt-report gt-expenses">
+      {staffMode ? null : <ReturnHomeBar role="propietario" />}
       <header>
         <h1>Gastos</h1>
         <p>Gastos de Tienda Guatemala. Quedan guardados para este cliente y no se mezclan con otras tiendas.</p>

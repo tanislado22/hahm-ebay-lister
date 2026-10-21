@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { guatemalaRequest } from "../request";
+import { ReturnHomeBar } from "../return-home";
 import { formatGuatemalaMoment } from "@/lib/markets/guatemala";
 import { formatStoredQuetzales } from "@/lib/markets/guatemala-inventory";
 import type { InventoryPhoto } from "@/lib/markets/guatemala-inventory";
@@ -144,6 +145,7 @@ export function SalesReportScreen({
 
   return (
     <main className="wrap gt-inventory gt-report">
+      {staffMode ? null : <ReturnHomeBar role="propietario" />}
       <header>
         <h1>Reportes de ventas</h1>
         <p>Ventas, costo de las prendas vendidas y gastos de Tienda Guatemala.</p>
