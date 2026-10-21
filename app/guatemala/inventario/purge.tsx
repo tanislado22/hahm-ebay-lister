@@ -4,6 +4,7 @@ import { useState } from "react";
 import { formatGuatemalaMoment } from "@/lib/markets/guatemala";
 import { formatStoredQuetzales } from "@/lib/markets/guatemala-inventory";
 import type { PurgeCounts, PurgeGarment } from "@/lib/markets/guatemala-purge";
+import { useUnsavedChanges } from "../return-home";
 
 export function PurgePanel({
   clientId,
@@ -22,6 +23,8 @@ export function PurgePanel({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState("");
+
+  useUnsavedChanges(open && (chosen.length > 0 || typed.trim() !== "" || plan !== null));
 
   async function loadChoices() {
     setBusy(true);

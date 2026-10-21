@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { STAFF_COOKIE } from "@/lib/markets/guatemala-staff";
 import { staffSessionFromToken } from "@/lib/markets/guatemala-staff-store";
 import { LogoutButton } from "./logout";
+import { StaffReturnHome } from "./return-home";
+import { UnsavedChangesProvider } from "../return-home";
 import "./panel.css";
 
 export const dynamic = "force-dynamic";
@@ -24,23 +26,26 @@ export default async function StaffLayout({ children }: { children: React.ReactN
   if (!session) redirect("/guatemala/entrada");
 
   return (
-    <div className="wrap gt-staff">
-      <nav className="gt-staff-nav" aria-label="Encargado">
-        <a className="btn btn-primary" href="/guatemala/panel/publicar">
-          Publicar artículo
-        </a>
-        <a className="btn btn-primary" href="/guatemala/panel/inventario">
-          Inventario
-        </a>
-        <a className="btn btn-primary" href="/guatemala/panel/reportes">
-          Reportes de ventas
-        </a>
-        <a className="btn btn-primary" href="/guatemala/panel/gastos">
-          Gastos
-        </a>
-        <LogoutButton />
-      </nav>
-      {children}
-    </div>
+    <UnsavedChangesProvider>
+      <div className="wrap gt-staff">
+        <StaffReturnHome />
+        <nav className="gt-staff-nav" aria-label="Encargado">
+          <a className="btn btn-primary" href="/guatemala/panel/publicar">
+            Publicar artículo
+          </a>
+          <a className="btn btn-primary" href="/guatemala/panel/inventario">
+            Inventario
+          </a>
+          <a className="btn btn-primary" href="/guatemala/panel/reportes">
+            Reportes de ventas
+          </a>
+          <a className="btn btn-primary" href="/guatemala/panel/gastos">
+            Gastos
+          </a>
+          <LogoutButton />
+        </nav>
+        {children}
+      </div>
+    </UnsavedChangesProvider>
   );
 }

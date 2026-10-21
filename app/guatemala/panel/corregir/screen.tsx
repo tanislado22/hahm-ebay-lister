@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { guatemalaRequest } from "../../request";
+import { useUnsavedChanges } from "../../return-home";
 import {
   GUATEMALA_CONDITION_CHOICES,
   GUATEMALA_INVENTORY_MESSAGES,
@@ -48,6 +49,17 @@ export function CorrectScreen({ clientId }: { clientId: string }) {
   const [step, setStep] = useState<"datos" | "revision">("datos");
   const [sold, setSold] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [savedSnapshot, setSavedSnapshot] = useState("");
+  const draftSnapshot = JSON.stringify({
+    title,
+    description,
+    brand,
+    size,
+    condition,
+    price,
+    photos: photos.map((photo) => photo.id),
+  });
+  useUnsavedChanges((loaded && !sold && savedSnapshot !== "" && draftSnapshot !== savedSnapshot) || Boolean(pending));
 
   useEffect(() => {
     if (!itemId) return;
@@ -73,8 +85,20 @@ export function CorrectScreen({ clientId }: { clientId: string }) {
       setCondition(item.condition || "");
       setPrice(item.priceGtq || "");
       setStatus(item.status);
-      setPhotos(item.photos || []);
+      const photos = item.photos || [];
+      setPhotos(photos);
       setSold(item.status === "vendida");
+      setSavedSnapshot(
+        JSON.stringify({
+          title: item.title || "",
+          description: item.description || "",
+          brand: item.brand || "",
+          size: item.size || "",
+          condition: item.condition || "",
+          price: item.priceGtq || "",
+          photos: photos.map((photo) => photo.id),
+        })
+      );
       setLoaded(true);
     })();
     return () => {
@@ -119,6 +143,17 @@ export function CorrectScreen({ clientId }: { clientId: string }) {
         setError(correctedBody.error || PUBLICATION_MESSAGES.retry);
         return;
       }
+      setSavedSnapshot(
+        JSON.stringify({
+          title,
+          description,
+          brand,
+          size,
+          condition,
+          price,
+          photos: photos.map((photo) => photo.id),
+        })
+      );
       if (correctedBody.item?.sku) setSku(correctedBody.item.sku);
       if (!republish) {
         setNotice(correctedBody.message || PUBLICATION_MESSAGES.corrected);

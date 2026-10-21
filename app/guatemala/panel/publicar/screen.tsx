@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { guatemalaRequest } from "../../request";
+import { useUnsavedChanges } from "../../return-home";
 import { guatemalaPriceIfEmpty } from "@/lib/markets/guatemala-price-match";
 import {
   GUATEMALA_CONDITION_CHOICES,
@@ -324,6 +325,12 @@ export function PublishScreen() {
       </button>
     );
   }
+
+  const publishDirty =
+    step !== "publicado" &&
+    (photos.length > 0 ||
+      [sku, title, description, brand, size, condition, price, itemType, category].some((value) => value.trim() !== ""));
+  useUnsavedChanges(publishDirty || pending === "Publicando…");
 
   if (step === "publicado" && publishedId) {
     return (

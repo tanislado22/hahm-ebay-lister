@@ -16,6 +16,7 @@ import {
 } from "@/lib/markets/guatemala-inventory";
 import { publishReviewBlockers } from "@/lib/markets/guatemala-publish";
 import "./inventory.css";
+import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
 import { PurgePanel } from "./purge";
 
 interface SaleCorrectionInfo {
@@ -403,6 +404,20 @@ export function InventoryScreen({
     }
   }
 
+  const saleDirty = saleStep === "confirm" || (saleStep === "form" && chargedDraft.trim() !== "");
+  const correctionDirty =
+    correctionStep === "price-summary" ||
+    correctionStep === "void-summary" ||
+    ((correctionStep === "price" || correctionStep === "void") &&
+      (correctionPrice.trim() !== "" || correctionReason.trim() !== ""));
+  const costDirty = Boolean(
+    itemId &&
+      detail &&
+      (costDraft.trim() !== (detail.costGtq ?? "").trim() ||
+        costIncludesPhoto !== Boolean(detail.costIncludesPhotography))
+  );
+  useUnsavedChanges(saleDirty || correctionDirty || costDirty || savingSale || savingCorrection || savingCost || savingPublication);
+
   const publicationLocked = Boolean(
     detail && (detail.status === "vendida" || (detail.sale && !detail.sale.voidedAt))
   );
@@ -417,6 +432,7 @@ export function InventoryScreen({
 
   return (
     <main className="wrap gt-inventory">
+      {staffMode ? null : <ReturnHomeBar role="propietario" />}
       <header>
         <h1>Inventario</h1>
         <p>Prendas de Tienda Guatemala guardadas en el servidor.</p>
