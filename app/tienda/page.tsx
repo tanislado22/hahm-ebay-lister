@@ -17,6 +17,16 @@ import { formatStoredQuetzales } from "@/lib/markets/guatemala-inventory";
 import { listPublicGuatemalaCatalog } from "@/lib/markets/guatemala-inventory-store";
 import { GARMENT_KIND_CHOICES } from "@/lib/markets/guatemala-price-match";
 import { isStoreHostname } from "@/lib/markets/store-host";
+import {
+  GUATEMALA_ARTICLE_WHATSAPP_LABEL,
+  GUATEMALA_CATALOG_WHATSAPP_LABEL,
+  GUATEMALA_CATALOG_WHATSAPP_MESSAGE,
+  catalogRequestOrigin,
+  guatemalaArticleWhatsappMessage,
+  guatemalaWhatsappUrl,
+  publicArticleUrl,
+} from "@/lib/markets/guatemala-whatsapp";
+import { WhatsappLink } from "./whatsapp-link";
 
 export const dynamic = "force-dynamic";
 
@@ -41,8 +51,12 @@ export default async function StorePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const filters = parseCatalogFilters(await searchParams);
-  const storefront = isStoreHostname((await headers()).get("host"));
+  const headerList = await headers();
+  const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
+  const storefront = isStoreHostname(host);
+  const origin = catalogRequestOrigin(host, headerList.get("x-forwarded-proto"));
   const home = storefront ? "/" : "/tienda";
+  const catalogWhatsapp = guatemalaWhatsappUrl(GUATEMALA_CATALOG_WHATSAPP_MESSAGE);
   const result = await listPublicGuatemalaCatalog(filters);
   const items = result.ok ? result.items : [];
   const facets = result.ok ? result.facets : { categories: [], sizes: [], brands: [] };
@@ -61,6 +75,9 @@ export default async function StorePage({
           <p>Precios en quetzales</p>
         </div>
       </header>
+      <WhatsappLink className="vsa-whatsapp-general" href={catalogWhatsapp}>
+        {GUATEMALA_CATALOG_WHATSAPP_LABEL}
+      </WhatsappLink>
       <form className="vsa-controls" action={home} method="get">
         {filters.availability !== "todos" ? <input type="hidden" name="estado" value={filters.availability} /> : null}
         <input id="vsa-filter-open" className="vsa-filter-toggle" type="checkbox" />
@@ -134,23 +151,37 @@ export default async function StorePage({
         </p>
       ) : null}
       <section className="vsa-grid" aria-label="Prendas">
-        {items.map((item) => (
-          <Link key={item.id} className="vsa-card" href={product(item.id)}>
-            <span className="vsa-photo">
-              {item.coverPhotoId ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={`/api/markets/guatemala/catalog/foto/${encodeURIComponent(item.coverPhotoId)}?w=480`} alt="" />
-              ) : <span>Sin foto</span>}
-              {item.availability === "vendido" ? <SoldTicket /> : null}
-            </span>
-            <span className="vsa-copy">
-              <span className="vsa-price">{formatStoredQuetzales(item.priceGtq)}</span>
-              <strong>{item.title || "Prenda sin título"}</strong>
-              <span>{item.size ? `Talla ${item.size}` : "Sin talla"}{item.brand ? ` · ${item.brand}` : ""}</span>
-              {item.availability === "vendido" ? <span className="vsa-sold-label">{item.soldBadge || PUBLIC_SOLD_BADGE}</span> : null}
-            </span>
-          </Link>
-        ))}
+        {items.map((item) => {
+          const articleUrl = publicArticleUrl(origin, storefront, item.id);
+          const consult = guatemalaWhatsappUrl(guatemalaArticleWhatsappMessage({
+            title: item.title,
+            sku: item.sku,
+            priceGtq: item.priceGtq,
+            publicUrl: articleUrl,
+          }));
+          return (
+            <article key={item.id} className="vsa-card">
+              <Link className="vsa-card-link" href={product(item.id)}>
+                <span className="vsa-photo">
+                  {item.coverPhotoId ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={`/api/markets/guatemala/catalog/foto/${encodeURIComponent(item.coverPhotoId)}?w=480`} alt="" />
+                  ) : <span>Sin foto</span>}
+                  {item.availability === "vendido" ? <SoldTicket /> : null}
+                </span>
+                <span className="vsa-copy">
+                  <span className="vsa-price">{formatStoredQuetzales(item.priceGtq)}</span>
+                  <strong>{item.title || "Prenda sin título"}</strong>
+                  <span>{item.size ? `Talla ${item.size}` : "Sin talla"}{item.brand ? ` · ${item.brand}` : ""}</span>
+                  {item.availability === "vendido" ? <span className="vsa-sold-label">{item.soldBadge || PUBLIC_SOLD_BADGE}</span> : null}
+                </span>
+              </Link>
+              <div className="vsa-card-action">
+                <WhatsappLink href={consult}>{GUATEMALA_ARTICLE_WHATSAPP_LABEL}</WhatsappLink>
+              </div>
+            </article>
+          );
+        })}
       </section>
     </main>
   );

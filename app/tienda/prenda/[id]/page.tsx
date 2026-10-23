@@ -5,7 +5,15 @@ import { PUBLIC_SOLD_NOTICE } from "@/lib/markets/guatemala-catalog";
 import { formatStoredQuetzales } from "@/lib/markets/guatemala-inventory";
 import { readPublicGuatemalaCatalogItem } from "@/lib/markets/guatemala-inventory-store";
 import { isStoreHostname } from "@/lib/markets/store-host";
+import {
+  GUATEMALA_ARTICLE_WHATSAPP_LABEL,
+  catalogRequestOrigin,
+  guatemalaArticleWhatsappMessage,
+  guatemalaWhatsappUrl,
+  publicArticleUrl,
+} from "@/lib/markets/guatemala-whatsapp";
 import { PhotoGallery } from "../../gallery";
+import { WhatsappLink } from "../../whatsapp-link";
 
 export const dynamic = "force-dynamic";
 
@@ -29,9 +37,12 @@ export async function generateMetadata({
 
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const storefront = isStoreHostname((await headers()).get("host"));
+  const headerList = await headers();
+  const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
+  const storefront = isStoreHostname(host);
   const home = storefront ? "/" : "/tienda";
   const result = await readPublicGuatemalaCatalogItem(id);
+  const articleUrl = publicArticleUrl(catalogRequestOrigin(host, headerList.get("x-forwarded-proto")), storefront, id);
   const item = result.ok ? result.item : null;
 
   return (
@@ -60,6 +71,14 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             {item.categoryLabel ? <p>Categoría: {item.categoryLabel}</p> : null}
             <p>SKU {item.sku}</p>
             {item.description ? <p className="vsa-description">{item.description}</p> : null}
+            <WhatsappLink href={guatemalaWhatsappUrl(guatemalaArticleWhatsappMessage({
+              title: item.title,
+              sku: item.sku,
+              priceGtq: item.priceGtq,
+              publicUrl: articleUrl,
+            }))}>
+              {GUATEMALA_ARTICLE_WHATSAPP_LABEL}
+            </WhatsappLink>
           </div>
         </article>
       ) : null}
