@@ -20,6 +20,7 @@ export const GUATEMALA_SALE_MESSAGES = {
 
 export const GUATEMALA_INVENTORY_MESSAGES = {
   skuRequired: "Escribe el SKU antes de guardar.",
+  skuInUse: "Este número SKU ya está en uso. Usa otro número para este artículo",
   priceInvalid: "Escribe un precio válido en quetzales.",
   photosRequired: "Agrega al menos una foto antes de guardar.",
   notGuatemala: "Este inventario pertenece solo a Tienda Guatemala.",
@@ -236,8 +237,41 @@ function normalizePhotos(value: unknown): InventoryPhoto[] {
   return photos;
 }
 
-export function skuBelongsToAnotherItem(sku: string): string {
-  return `El SKU ${sku} ya pertenece a otra prenda. Elige un SKU diferente.`;
+export function skuBelongsToAnotherItem(_sku: string): string {
+  return GUATEMALA_INVENTORY_MESSAGES.skuInUse;
+}
+
+// Editing the original article keeps the stored text. A requested replacement is ignored.
+export function preservedGuatemalaSku(storedSku: string, _requested?: unknown): string {
+  return storedSku;
+}
+
+export interface DuplicateSkuReport {
+  sku: string;
+  itemIds: string[];
+}
+
+// Reports earlier duplicates. The input list is not changed.
+export function reportDuplicateSkus(
+  items: { id: string; clientId: string; sku: string }[],
+  clientId: string
+): DuplicateSkuReport[] {
+  const groups = new Map<string, string[]>();
+  for (const item of items) {
+    if (item.clientId !== clientId) continue;
+    const ids = groups.get(item.sku);
+    if (ids) ids.push(item.id);
+    else groups.set(item.sku, [item.id]);
+  }
+  return [...groups.entries()]
+    .filter(([, itemIds]) => itemIds.length > 1)
+    .map(([sku, itemIds]) => ({ sku, itemIds }))
+    .sort((left, right) => (left.sku < right.sku ? -1 : left.sku > right.sku ? 1 : 0));
+}
+
+export function duplicateSkuReportMessage(groups: { sku: string }[]): string {
+  if (groups.length === 0) return "";
+  return `Estos SKU ya están repetidos: ${groups.map((group) => group.sku).join(", ")}. No se borró ni se cambió ningún artículo.`;
 }
 
 export function alreadyStoredWithSku(sku: string): string {

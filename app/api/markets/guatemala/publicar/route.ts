@@ -15,7 +15,11 @@ export async function GET(request: NextRequest) {
   }
   try {
     const taken = await guatemalaSkuTaken(access.clientId, sku);
-    return NextResponse.json({ ok: true, available: !taken });
+    return NextResponse.json({
+      ok: true,
+      available: !taken,
+      error: taken ? GUATEMALA_INVENTORY_MESSAGES.skuInUse : undefined,
+    });
   } catch (error) {
     console.error("[guatemala/publicar] sku failed", error instanceof Error ? error.name : "Error");
     return NextResponse.json({ ok: false, error: "No se pudo comprobar el SKU." }, { status: 500 });

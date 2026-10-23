@@ -6,6 +6,7 @@ import { guatemalaRequest } from "../request";
 import { formatGuatemalaMoment } from "@/lib/markets/guatemala";
 import {
   availableGarmentLabel,
+  duplicateSkuReportMessage,
   formatStoredQuetzales,
   guatemalaConditionLabel,
   guatemalaInventoryStatusLabel,
@@ -104,6 +105,7 @@ export function InventoryScreen({
   const [detail, setDetail] = useState<DetailItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [duplicateNotice, setDuplicateNotice] = useState("");
   const [saleStep, setSaleStep] = useState<"form" | "confirm" | null>(null);
   const [chargedDraft, setChargedDraft] = useState("");
   const [saleError, setSaleError] = useState("");
@@ -161,6 +163,7 @@ export function InventoryScreen({
             error?: string;
             available?: number;
             items?: ListItem[];
+            duplicateSkus?: { sku: string }[];
           };
           if (signal.aborted) return;
           if (!response.ok || !body.ok) {
@@ -169,6 +172,7 @@ export function InventoryScreen({
           } else {
             setAvailable(body.available ?? 0);
             setItems(body.items ?? []);
+            setDuplicateNotice(duplicateSkuReportMessage(body.duplicateSkus ?? []));
           }
         }
       } catch {
@@ -441,6 +445,11 @@ export function InventoryScreen({
       {error ? (
         <p className="note note-error" role="alert">
           {error}
+        </p>
+      ) : null}
+      {duplicateNotice ? (
+        <p className="note" role="status">
+          {duplicateNotice}
         </p>
       ) : null}
 

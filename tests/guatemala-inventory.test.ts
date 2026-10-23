@@ -3,7 +3,10 @@ import {
   GUATEMALA_INVENTORY_MESSAGES,
   inventorySearchMatches,
   prepareInventorySave,
+  preservedGuatemalaSku,
   quetzalPriceText,
+  reportDuplicateSkus,
+  duplicateSkuReportMessage,
   resolveInventoryInsert,
   type StoredInventoryItem,
 } from "@/lib/markets/guatemala-inventory";
@@ -99,7 +102,7 @@ describe("inventario de Tienda Guatemala", () => {
     expect(other.ok).toBe(false);
     if (other.ok) return;
     expect(other.status).toBe(409);
-    expect(other.error).toContain("3.001-A");
+    expect(other.error).toBe(GUATEMALA_INVENTORY_MESSAGES.skuInUse);
     expect(repository.items).toHaveLength(1);
     expect(repository.items[0]?.title).toBe("Camisa azul");
     expect(repository.items[0]?.priceGtq).toBe("30.50");
@@ -158,5 +161,65 @@ describe("inventario de Tienda Guatemala", () => {
     expect(decision).toMatchObject({ action: "already_saved", item: stored });
     expect(stored.priceGtq).toBe("30.50");
     expect(stored.photos[0]?.data).toBe(photo);
+  });
+
+  it("bloquea el SKU de una prenda vendida y conserva ceros y guiones", async () => {
+    const repository = memoryRepository();
+    const saved = await runInventorySave(
+      repository,
+      payload({ sku: "001-2", sourceGroupId: "grupo-ceros" }),
+      async () => true
+    );
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+    expect(saved.item.sku).toBe("001-2");
+    repository.items[0]!.status = "vendida";
+
+    const repeated = await runInventorySave(
+      repository,
+      payload({ sku: "001-2", sourceGroupId: "grupo-otro", title: "Otra prenda" }),
+      async () => true
+    );
+    expect(repeated).toMatchObject({ ok: false, status: 409, error: GUATEMALA_INVENTORY_MESSAGES.skuInUse });
+
+    const different = await runInventorySave(
+      repository,
+      payload({ sku: "1-2", sourceGroupId: "grupo-sin-cero" }),
+      async () => true
+    );
+    expect(different.ok).toBe(true);
+    expect(repository.items.map((item) => item.sku).sort()).toEqual(["001-2", "1-2"]);
+    expect(preservedGuatemalaSku("001-2", "999-A")).toBe("001-2");
+    expect(buildSku("001", 0)).not.toBe("001");
+  });
+
+  it("bloquea dos guardados simultáneos del mismo SKU", async () => {
+    const repository = memoryRepository();
+    const [first, second] = await Promise.all([
+      runInventorySave(repository, payload({ sku: "001-2", sourceGroupId: "grupo-a" }), async () => true),
+      runInventorySave(repository, payload({ sku: "001-2", sourceGroupId: "grupo-b" }), async () => true),
+    ]);
+    const results = [first, second];
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.some((result) => !result.ok && result.error === GUATEMALA_INVENTORY_MESSAGES.skuInUse)).toBe(true);
+    expect(repository.items).toHaveLength(1);
+    expect(repository.items[0]?.sku).toBe("001-2");
+  });
+
+  it("reporta SKU duplicados anteriores sin modificar los artículos", () => {
+    const items = [
+      { id: "a", clientId: "client-guatemala", sku: "001-2" },
+      { id: "b", clientId: "client-guatemala", sku: "001-2" },
+      { id: "c", clientId: "client-guatemala", sku: "1-2" },
+      { id: "d", clientId: "otra-tienda", sku: "001-2" },
+    ];
+    const before = JSON.stringify(items);
+    const report = reportDuplicateSkus(items, "client-guatemala");
+    expect(report).toEqual([{ sku: "001-2", itemIds: ["a", "b"] }]);
+    expect(JSON.stringify(items)).toBe(before);
+    expect(duplicateSkuReportMessage(report)).toBe(
+      "Estos SKU ya están repetidos: 001-2. No se borró ni se cambió ningún artículo."
+    );
+    expect(duplicateSkuReportMessage([])).toBe("");
   });
 });

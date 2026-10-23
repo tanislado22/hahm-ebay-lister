@@ -54,7 +54,10 @@ import {
   inventoryLikePattern,
   inventoryListFilter,
   prepareGarmentCost,
+  duplicateSkuReportMessage,
   prepareInventorySave,
+  preservedGuatemalaSku,
+  reportDuplicateSkus,
   quetzalPriceText,
   resolveInventoryInsert,
   type GuatemalaSaleSnapshot,
@@ -65,6 +68,7 @@ import {
   type PublicationEventView,
   type SaleActor,
   type StoredInventoryItem,
+  type DuplicateSkuReport,
 } from "@/lib/markets/guatemala-inventory";
 
 export interface InventoryRepository {
@@ -155,6 +159,7 @@ async function createGuatemalaInventoryTables(): Promise<void> {
     CREATE INDEX IF NOT EXISTS guatemala_inventory_items_client_idx
     ON guatemala_inventory_items (client_id)
   `;
+  await ensureGuatemalaSkuUniqueIndex(sql);
   await sql`
     CREATE TABLE IF NOT EXISTS guatemala_inventory_sales (
       id TEXT PRIMARY KEY,
@@ -437,6 +442,26 @@ function postgresRepository(): InventoryRepository {
   };
 }
 
+async function ensureGuatemalaSkuUniqueIndex(sql: ReturnType<typeof getSql>): Promise<void> {
+  const duplicates = await sql`
+    SELECT client_id, sku, COUNT(*)::int AS copies
+    FROM guatemala_inventory_items
+    GROUP BY client_id, sku
+    HAVING COUNT(*) > 1
+  `;
+  if (duplicates.length > 0) {
+    const listed = duplicates.map((row) => String(row.sku)).join(", ");
+    console.error(
+      `[guatemala/inventory] SKU duplicados anteriores: ${listed}. No se borró ni se cambió ningún artículo.`
+    );
+    return;
+  }
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS guatemala_inventory_client_sku_key
+    ON guatemala_inventory_items (client_id, sku)
+  `;
+}
+
 async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryItem | null> {
   const sql = getSql();
   const id = crypto.randomUUID();
@@ -449,13 +474,19 @@ async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryI
     }))
   );
   const rows = await sql`
-    WITH inserted AS (
+    WITH locked AS (
+      SELECT pg_advisory_xact_lock(
+        hashtext('guatemala-sku'),
+        hashtext(${`${item.clientId}\u001f${item.sku}`})
+      ) AS locked
+    ),
+    inserted AS (
       INSERT INTO guatemala_inventory_items (
         id, client_id, source_group_id, sku, title, description,
         brand, size, condition, price_gtq, currency, status,
         created_by_role, created_by_account_id, created_by_username
       )
-      VALUES (
+      SELECT
         ${id},
         ${item.clientId},
         ${item.sourceGroupId},
@@ -471,6 +502,12 @@ async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryI
         ${item.createdBy?.role ?? null},
         ${item.createdBy?.accountId ?? null},
         ${item.createdBy?.username ?? null}
+      FROM locked
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM guatemala_inventory_items AS taken
+        WHERE taken.client_id = ${item.clientId}
+          AND taken.sku = ${item.sku}
       )
       ON CONFLICT DO NOTHING
       RETURNING id, client_id, source_group_id, sku, title, description, brand, size, condition,
@@ -563,7 +600,10 @@ export async function listGuatemalaInventory(
   clientId: string,
   query: string,
   filterInput: unknown = "disponibles"
-): Promise<{ available: number; items: InventoryListItem[] } | { ok: false; status: 403; error: string }> {
+): Promise<
+  | { available: number; items: InventoryListItem[]; duplicateSkus: DuplicateSkuReport[]; duplicateSkuMessage: string }
+  | { ok: false; status: 403; error: string }
+> {
   await ensureGuatemalaInventoryTables();
   if (!(await clientIsGuatemala(clientId))) {
     return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
@@ -621,6 +661,19 @@ export async function listGuatemalaInventory(
           AND (${status}::text IS NULL OR item.status = ${status})
         ORDER BY item.created_at DESC
       `;
+  const duplicateRows = await sql`
+    SELECT sku, array_agg(id) AS item_ids
+    FROM guatemala_inventory_items
+    WHERE client_id = ${clientId}
+    GROUP BY sku
+    HAVING COUNT(*) > 1
+  `;
+  const duplicateSkus = reportDuplicateSkus(
+    duplicateRows.flatMap((row) =>
+      aggregateIds(row.item_ids).map((id) => ({ id, clientId, sku: String(row.sku) }))
+    ),
+    clientId
+  );
   return {
     available: Number(counts[0]?.available ?? 0),
     items: rows.map((row) => ({
@@ -638,7 +691,17 @@ export async function listGuatemalaInventory(
           ? { id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }
           : null,
     })),
+    duplicateSkus,
+    duplicateSkuMessage: duplicateSkuReportMessage(duplicateSkus),
   };
+}
+
+function aggregateIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((id) => String(id));
+  if (typeof value !== "string" || !value.startsWith("{") || !value.endsWith("}")) return [];
+  const body = value.slice(1, -1);
+  if (!body) return [];
+  return body.split(",").map((id) => id.trim().replace(/^"|"$/g, ""));
 }
 
 function statusForFilter(filter: InventoryListFilter): string | null {
@@ -701,7 +764,7 @@ export async function correctGuatemalaPublication(
     ...input,
     clientId,
     sourceGroupId: loaded.sourceGroupId,
-    sku: loaded.item.sku,
+    sku: preservedGuatemalaSku(loaded.item.sku, input.sku),
   });
   if (!prepared.ok) return prepared;
   return writePublication(clientId, itemId, "corregir", prepared.item, actor);

@@ -135,8 +135,8 @@ export function PublishScreen() {
       return false;
     }
     if (!body.available) {
-      setSkuNote(`El SKU ${trimmed} ya pertenece a otra prenda.`);
-      setError(`El SKU ${trimmed} ya pertenece a otra prenda. Elige un SKU diferente.`);
+      setSkuNote(GUATEMALA_INVENTORY_MESSAGES.skuInUse);
+      setError(body.error || GUATEMALA_INVENTORY_MESSAGES.skuInUse);
       return false;
     }
     setSkuNote("Ese SKU está libre.");
