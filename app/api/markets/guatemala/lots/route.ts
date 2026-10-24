@@ -6,6 +6,7 @@ import {
   assignGuatemalaItemLot,
   correctGuatemalaLotExpense,
   createGuatemalaPurchaseLot,
+  deleteEmptyGuatemalaPurchaseLot,
   listGuatemalaPurchaseLots,
   readGuatemalaLotSku,
   updateGuatemalaPurchaseLot,
@@ -53,11 +54,13 @@ export async function POST(request: NextRequest) {
   }
   const action = String(body.action ?? "");
   const accessAction =
-    action === "corregir" || action === "corregir-gasto"
-      ? "lotCorrect"
-      : action === "anular" || action === "anular-gasto"
-        ? "lotVoid"
-        : "lotWrite";
+    action === "eliminar"
+      ? "lotDelete"
+      : action === "corregir" || action === "corregir-gasto"
+        ? "lotCorrect"
+        : action === "anular" || action === "anular-gasto"
+          ? "lotVoid"
+          : "lotWrite";
   const access = await authorizeGuatemalaRequest(request, clientFrom(request, body), accessAction);
   if (!access.ok) return access.response;
   try {
@@ -104,6 +107,14 @@ export async function POST(request: NextRequest) {
       });
       if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
       return NextResponse.json({ ok: true, lot: result.lot, message: GUATEMALA_LOT_MESSAGES.lotUpdated });
+    }
+    if (action === "eliminar") {
+      const result = await deleteEmptyGuatemalaPurchaseLot({
+        clientId: access.clientId,
+        lotId: String(body.lotId ?? ""),
+      });
+      if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+      return NextResponse.json({ ok: true, lotNumber: result.lotNumber, message: GUATEMALA_LOT_MESSAGES.lotDeleted });
     }
     if (action === "anular") {
       const result = await voidGuatemalaPurchaseLot({

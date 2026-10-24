@@ -10,6 +10,7 @@ import {
   GUATEMALA_LOT_MESSAGES,
   lotArticleCounts,
   lotAverageCost,
+  lotMayBeDeleted,
   nextLotNumber,
   nextLotSku,
   prepareLotExpense,
@@ -301,9 +302,21 @@ export async function createGuatemalaPurchaseLot(input: {
     chosen AS (
       SELECT CASE
         WHEN ${requested}::int IS NULL THEN (
-          SELECT COALESCE(MAX(lot_number), 0) + 1
-          FROM guatemala_purchase_lots
-          WHERE client_id = ${input.clientId}
+          SELECT COALESCE(MIN(candidate.n), 1)
+          FROM generate_series(
+            1,
+            (
+              SELECT COALESCE(MAX(lot.lot_number), 0) + 1
+              FROM guatemala_purchase_lots AS lot
+              WHERE lot.client_id = ${input.clientId}
+            )
+          ) AS candidate(n)
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM guatemala_purchase_lots AS taken
+            WHERE taken.client_id = ${input.clientId}
+              AND taken.lot_number = candidate.n
+          )
         )
         ELSE ${requested}::int
       END AS lot_number
@@ -405,10 +418,12 @@ export async function addGuatemalaLotExpense(input: {
   const sql = getSql();
   const rows = await sql`
     WITH locked AS (
-      SELECT pg_advisory_xact_lock(
-        hashtext('guatemala-lot-expense'),
-        hashtext(${`${input.clientId}\u001f${prepared.expense.requestId}`})
-      ) AS locked
+      SELECT
+        pg_advisory_xact_lock(
+          hashtext('guatemala-lot-expense'),
+          hashtext(${`${input.clientId}\u001f${prepared.expense.requestId}`})
+        ) AS request_locked,
+        pg_advisory_xact_lock(hashtext('guatemala-lot'), hashtext(${input.clientId})) AS lot_locked
     ),
     inserted AS (
       INSERT INTO guatemala_lot_expenses (
@@ -702,8 +717,12 @@ export async function assignGuatemalaItemLot(input: {
   if (!item) return { ok: false, status: 404, error: GUATEMALA_INVENTORY_MESSAGES.missingItem };
   const kept = assignItemToLot({ sku: String(item.sku) }, input.lotId);
   const rows = await sql`
+    WITH locked AS (
+      SELECT pg_advisory_xact_lock(hashtext('guatemala-lot'), hashtext(${input.clientId})) AS locked
+    )
     UPDATE guatemala_inventory_items AS item
     SET lot_id = ${kept.lotId}
+    FROM locked
     WHERE item.id = ${input.itemId}
       AND item.client_id = ${input.clientId}
       AND item.sku = ${kept.sku}
@@ -711,11 +730,154 @@ export async function assignGuatemalaItemLot(input: {
         SELECT 1 FROM guatemala_purchase_lots AS lot
         WHERE lot.id = ${kept.lotId} AND lot.client_id = item.client_id AND lot.status = 'activo'
       )
-    RETURNING sku, lot_id
+    RETURNING item.sku AS sku, item.lot_id AS lot_id
   `;
   const saved = rows[0];
   if (!saved) return { ok: false, status: 409, error: GUATEMALA_LOT_MESSAGES.voided };
   return { ok: true, sku: String(saved.sku), lotId: String(saved.lot_id) };
+}
+
+export async function deleteEmptyGuatemalaPurchaseLot(input: {
+  clientId: string;
+  lotId: string;
+}): Promise<{ ok: true; lotNumber: number } | { ok: false; status: 403 | 404 | 409; error: string }> {
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  await ensureGuatemalaLotTables();
+  await ensureGuatemalaExpenseTables();
+  const inventory = await import("@/lib/markets/guatemala-inventory-store");
+  await inventory.ensureGuatemalaInventoryTables();
+  const sql = getSql();
+  const rows = await sql`
+    WITH locked AS (
+      SELECT pg_advisory_xact_lock(hashtext('guatemala-lot'), hashtext(${input.clientId})) AS locked
+    ),
+    target AS (
+      SELECT id, lot_number
+      FROM guatemala_purchase_lots
+      WHERE id = ${input.lotId} AND client_id = ${input.clientId}
+    ),
+    links AS (
+      SELECT
+        (SELECT COUNT(*)::int FROM guatemala_inventory_items AS item
+          WHERE item.client_id = ${input.clientId} AND item.lot_id = target.id) AS associated_items,
+        (SELECT COUNT(*)::int FROM guatemala_lot_expenses AS expense
+          WHERE expense.client_id = ${input.clientId} AND expense.lot_id = target.id) AS expenses,
+        (SELECT COUNT(*)::int FROM guatemala_expenses AS mirror
+          WHERE mirror.client_id = ${input.clientId}
+            AND mirror.lot_expense_id IN (
+              SELECT expense.id FROM guatemala_lot_expenses AS expense
+              WHERE expense.client_id = ${input.clientId} AND expense.lot_id = target.id
+            )) AS mirrored_expenses,
+        (SELECT COUNT(*)::int FROM guatemala_lot_expense_revisions AS revision
+          WHERE revision.client_id = ${input.clientId}
+            AND revision.expense_id IN (
+              SELECT expense.id FROM guatemala_lot_expenses AS expense
+              WHERE expense.client_id = ${input.clientId} AND expense.lot_id = target.id
+            )) AS expense_revisions,
+        (SELECT COUNT(*)::int FROM guatemala_inventory_sales AS sale
+          WHERE sale.client_id = ${input.clientId}
+            AND (
+              sale.item_id IN (
+                SELECT item.id FROM guatemala_inventory_items AS item
+                WHERE item.client_id = ${input.clientId} AND item.lot_id = target.id
+              )
+              OR sale.sku ~ ('^L' || target.lot_number::text || '-[0-9]+$')
+            )) AS sales,
+        (SELECT COUNT(*)::int FROM guatemala_sale_corrections AS correction
+          WHERE correction.client_id = ${input.clientId}
+            AND correction.item_id IN (
+              SELECT item.id FROM guatemala_inventory_items AS item
+              WHERE item.client_id = ${input.clientId}
+                AND (
+                  item.lot_id = target.id
+                  OR item.sku ~ ('^L' || target.lot_number::text || '-[0-9]+$')
+                )
+            )) AS sale_corrections,
+        (SELECT COUNT(*)::int FROM guatemala_publication_events AS event
+          WHERE event.client_id = ${input.clientId}
+            AND event.item_id IN (
+              SELECT item.id FROM guatemala_inventory_items AS item
+              WHERE item.client_id = ${input.clientId}
+                AND (
+                  item.lot_id = target.id
+                  OR item.sku ~ ('^L' || target.lot_number::text || '-[0-9]+$')
+                )
+            )) AS publication_events,
+        (SELECT COUNT(*)::int FROM guatemala_inventory_items AS item
+          WHERE item.client_id = ${input.clientId}
+            AND item.sku ~ ('^L' || target.lot_number::text || '-[0-9]+$')) AS reserved_skus,
+        (SELECT COUNT(*)::int FROM guatemala_inventory_photos AS photo
+          WHERE photo.item_id IN (
+            SELECT item.id FROM guatemala_inventory_items AS item
+            WHERE item.client_id = ${input.clientId}
+              AND (
+                item.lot_id = target.id
+                OR item.sku ~ ('^L' || target.lot_number::text || '-[0-9]+$')
+              )
+          )) AS photos
+      FROM target
+      CROSS JOIN locked
+    ),
+    removable AS (
+      SELECT links.associated_items = 0
+        AND links.expenses = 0
+        AND links.mirrored_expenses = 0
+        AND links.expense_revisions = 0
+        AND links.sales = 0
+        AND links.sale_corrections = 0
+        AND links.publication_events = 0
+        AND links.reserved_skus = 0
+        AND links.photos = 0 AS empty
+      FROM links
+    ),
+    removed_revisions AS (
+      DELETE FROM guatemala_purchase_lot_revisions AS revision
+      WHERE revision.lot_id IN (SELECT id FROM target)
+        AND EXISTS (SELECT 1 FROM removable WHERE empty)
+      RETURNING revision.id
+    ),
+    removed AS (
+      DELETE FROM guatemala_purchase_lots AS lot
+      WHERE lot.id IN (SELECT id FROM target)
+        AND EXISTS (SELECT 1 FROM removable WHERE empty)
+        AND (SELECT COUNT(*) FROM removed_revisions) >= 0
+      RETURNING lot.id, lot.lot_number
+    )
+    SELECT
+      target.lot_number,
+      removed.id AS removed_id,
+      links.associated_items,
+      links.expenses,
+      links.mirrored_expenses,
+      links.expense_revisions,
+      links.sales,
+      links.sale_corrections,
+      links.publication_events,
+      links.reserved_skus,
+      links.photos
+    FROM target
+    JOIN links ON true
+    LEFT JOIN removed ON true
+  `;
+  const row = rows[0];
+  if (!row) return { ok: false, status: 404, error: GUATEMALA_LOT_MESSAGES.notFound };
+  const links = {
+    associatedItems: Number(row.associated_items) || 0,
+    expenses: Number(row.expenses) || 0,
+    mirroredExpenses: Number(row.mirrored_expenses) || 0,
+    expenseRevisions: Number(row.expense_revisions) || 0,
+    sales: Number(row.sales) || 0,
+    saleCorrections: Number(row.sale_corrections) || 0,
+    publicationEvents: Number(row.publication_events) || 0,
+    reservedSkus: Number(row.reserved_skus) || 0,
+  };
+  const photos = Number(row.photos) || 0;
+  if (!row.removed_id || !lotMayBeDeleted(links) || photos > 0) {
+    return { ok: false, status: 409, error: GUATEMALA_LOT_MESSAGES.lotNotEmpty };
+  }
+  return { ok: true, lotNumber: Number(row.lot_number) };
 }
 
 export async function activeGuatemalaLot(clientId: string, lotId: string): Promise<boolean> {

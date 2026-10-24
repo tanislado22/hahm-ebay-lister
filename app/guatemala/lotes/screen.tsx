@@ -10,8 +10,17 @@ import {
   GUATEMALA_LOT_EXPENSE_CATEGORIES,
   GUATEMALA_LOT_MESSAGES,
   lotExpenseCategoryLabel,
+  lotFieldEnterSubmits,
 } from "@/lib/markets/guatemala-lots";
 import "../inventario/inventory.css";
+
+function keepEnterInNotes(event: React.KeyboardEvent<HTMLFormElement>) {
+  if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+  const target = event.target;
+  const field = target instanceof HTMLTextAreaElement ? "notes" : target instanceof HTMLButtonElement ? "save" : "line";
+  if (lotFieldEnterSubmits(field)) return;
+  event.preventDefault();
+}
 
 interface LotExpense {
   id: string;
@@ -48,6 +57,7 @@ interface LotPermissions {
   write: boolean;
   correct: boolean;
   void: boolean;
+  remove: boolean;
 }
 
 export function LotsScreen({
@@ -61,7 +71,8 @@ export function LotsScreen({
   const params = useSearchParams();
   const clientId = lockedClientId || params.get("clientId") || "";
   const [lots, setLots] = useState<PurchaseLot[]>([]);
-  const [permissions, setPermissions] = useState<LotPermissions>({ write: false, correct: false, void: false });
+  const [permissions, setPermissions] = useState<LotPermissions>({ write: false, correct: false, void: false, remove: false });
+  const [showVoided, setShowVoided] = useState(false);
   const [note, setNote] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
@@ -106,7 +117,7 @@ export function LotsScreen({
       }
       setLots(body.lots ?? []);
       setNote(body.note || GUATEMALA_LOT_MESSAGES.notProfit);
-      setPermissions(body.permissions ?? { write: false, correct: false, void: false });
+      setPermissions(body.permissions ?? { write: false, correct: false, void: false, remove: false });
       setError("");
     } catch {
       setError("No se pudieron cargar los lotes.");
@@ -250,6 +261,29 @@ export function LotsScreen({
     await load();
   }
 
+  async function deleteEmptyLot() {
+    if (!selected || !permissions.remove) return;
+    const confirmed = window.confirm(
+      `¿Eliminar definitivamente el lote ${selected.lotNumber}, «${selected.name}»? Solo se borra si nunca tuvo artículos, gastos, ventas ni SKU. El número quedará libre.`
+    );
+    if (!confirmed) return;
+    setSaving(true);
+    const response = await storeRequest("/api/markets/guatemala/lots", {
+      action: "eliminar",
+      clientId,
+      lotId: selected.id,
+    });
+    const body = (await response.json()) as { ok?: boolean; error?: string; message?: string };
+    setSaving(false);
+    if (!response.ok || !body.ok) {
+      setError(body.error || "No se pudo eliminar el lote.");
+      return;
+    }
+    setSelectedId("");
+    setNotice(body.message || GUATEMALA_LOT_MESSAGES.lotDeleted);
+    await load();
+  }
+
   async function voidExpense(expenseId: string) {
     if (!window.confirm("¿Anular este gasto? Dejará de sumar al lote y al registro de gastos.")) return;
     setSaving(true);
@@ -295,25 +329,63 @@ export function LotsScreen({
         </p>
       ) : null}
       {creating ? (
-        <form className="panel" onSubmit={(event) => void createLot(event)}>
-          <label>Nombre<input value={lotForm.name} onChange={(event) => setLotForm({ ...lotForm, name: event.target.value })} required /></label>
-          <label>Fecha<input type="date" value={lotForm.receivedOn} onChange={(event) => setLotForm({ ...lotForm, receivedOn: event.target.value })} required /></label>
-          <label>Número de lote, opcional<input inputMode="numeric" value={lotForm.lotNumber} onChange={(event) => setLotForm({ ...lotForm, lotNumber: event.target.value })} placeholder="Si lo dejas vacío, se usa el siguiente número libre" /></label>
-          <label>Proveedor, opcional<input value={lotForm.supplier} onChange={(event) => setLotForm({ ...lotForm, supplier: event.target.value })} /></label>
-          <label>Peso, opcional<input value={lotForm.weight} onChange={(event) => setLotForm({ ...lotForm, weight: event.target.value })} placeholder="Por ejemplo 25.4" /></label>
-          <label>Cantidad vendible, opcional<input inputMode="numeric" value={lotForm.sellableCount} onChange={(event) => setLotForm({ ...lotForm, sellableCount: event.target.value })} placeholder="Puede quedar pendiente" /></label>
-          <label>Notas<textarea value={lotForm.notes} onChange={(event) => setLotForm({ ...lotForm, notes: event.target.value })} /></label>
-          <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? "Guardando…" : "Guardar lote"}</button>
+        <form className="panel gt-lot-form" onKeyDown={keepEnterInNotes} onSubmit={(event) => void createLot(event)}>
+          <label>
+            <span>Nombre</span>
+            <input value={lotForm.name} onChange={(event) => setLotForm({ ...lotForm, name: event.target.value })} required />
+          </label>
+          <label>
+            <span>Fecha</span>
+            <input type="date" value={lotForm.receivedOn} onChange={(event) => setLotForm({ ...lotForm, receivedOn: event.target.value })} required />
+          </label>
+          <label>
+            <span>Número de lote</span>
+            <input inputMode="numeric" value={lotForm.lotNumber} onChange={(event) => setLotForm({ ...lotForm, lotNumber: event.target.value })} />
+            <span className="gt-lot-hint">Opcional. Si lo dejas vacío, se usa el siguiente número libre.</span>
+          </label>
+          <label>
+            <span>Proveedor</span>
+            <input value={lotForm.supplier} onChange={(event) => setLotForm({ ...lotForm, supplier: event.target.value })} />
+            <span className="gt-lot-hint">Opcional.</span>
+          </label>
+          <label>
+            <span>Peso</span>
+            <input value={lotForm.weight} onChange={(event) => setLotForm({ ...lotForm, weight: event.target.value })} placeholder="Por ejemplo 25.4" />
+            <span className="gt-lot-hint">Opcional.</span>
+          </label>
+          <label>
+            <span>Cantidad vendible</span>
+            <input inputMode="numeric" value={lotForm.sellableCount} onChange={(event) => setLotForm({ ...lotForm, sellableCount: event.target.value })} />
+            <span className="gt-lot-hint">Opcional. Puede quedar pendiente hasta terminar el conteo.</span>
+          </label>
+          <label className="gt-lot-notes">
+            <span>Notas</span>
+            <textarea value={lotForm.notes} onChange={(event) => setLotForm({ ...lotForm, notes: event.target.value })} rows={5} />
+          </label>
+          <div className="gt-lot-actions">
+            <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? "Guardando…" : "Guardar lote"}</button>
+          </div>
         </form>
       ) : null}
       <div className="gt-inventory-filters" role="group" aria-label="Lotes">
-        {lots.map((lot) => (
+        <button
+          type="button"
+          className="gt-filter"
+          aria-pressed={showVoided}
+          onClick={() => {
+            setShowVoided((open) => !open);
+            if (showVoided && selected?.status === "anulado") setSelectedId("");
+          }}
+        >
+          Ver anulados
+        </button>
+        {lots.filter((lot) => showVoided || lot.status === "activo").map((lot) => (
           <button key={lot.id} type="button" className="gt-filter" aria-pressed={lot.id === selectedId} onClick={() => {
             setSelectedId(lot.id);
             setEditingExpenseId("");
             setExpenseForm((form) => ({ ...form, spentOn: form.spentOn || guatemalaTodayKey() }));
           }}>
-            Lote {lot.lotNumber} · {lot.name}
+            Lote {lot.lotNumber} · {lot.name}{lot.status === "anulado" ? " · anulado" : ""}
           </button>
         ))}
       </div>
@@ -328,9 +400,14 @@ export function LotsScreen({
           <p>Cantidad vendible {selected.sellableCount ?? "Pendiente de conteo"}</p>
           <p>Registrados {selected.registeredCount} · Disponibles {selected.availableCount} · Vendidos {selected.soldCount}</p>
           {selected.status === "anulado" ? <p>Lote anulado. El número se conserva.</p> : null}
-          {selected.notes ? <p>{selected.notes}</p> : null}
+          {selected.notes ? <p className="gt-lot-saved-notes">{selected.notes}</p> : null}
           {permissions.void && selected.status === "activo" ? (
             <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => void voidLot()}>Anular lote</button>
+          ) : null}
+          {permissions.remove ? (
+            <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => void deleteEmptyLot()}>
+              Eliminar lote vacío
+            </button>
           ) : null}
           {permissions.correct && selected.status === "activo" ? (
             <form onSubmit={(event) => void correctCount(event)}>

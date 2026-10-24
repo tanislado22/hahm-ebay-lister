@@ -33,6 +33,7 @@ export const GUATEMALA_STAFF_MESSAGES = {
   cannotPurge: "No puedes eliminar prendas del inventario.",
   cannotCorrectLots: "No puedes corregir lotes ni gastos. El propietario puede darte ese permiso.",
   cannotVoidLots: "No puedes anular lotes ni gastos. El propietario puede darte ese permiso.",
+  cannotDeleteLots: "Solo el propietario puede eliminar un lote vacío.",
   signInRequired: "Se requiere iniciar sesión.",
   usernameInvalid:
     "El usuario debe tener entre 3 y 32 caracteres: letras, números, punto, guion o guion bajo.",
@@ -55,7 +56,8 @@ export type GuatemalaAction =
   | "purge"
   | "lotWrite"
   | "lotCorrect"
-  | "lotVoid";
+  | "lotVoid"
+  | "lotDelete";
 
 export interface AccessAccount {
   id: string;
@@ -233,6 +235,23 @@ export function decideGuatemalaAccess(input: {
       ok: true,
       actor: { role: "encargado", accountId: input.account.id, username: input.account.username },
       clientId: input.account.clientId,
+    };
+  }
+
+  if (input.action === "lotDelete") {
+    if (owner) {
+      return { ok: true, actor: ownerActor, clientId: input.requestedClientId };
+    }
+    if (staffValid) {
+      return { ok: false, status: 403, code: "FORBIDDEN", error: GUATEMALA_STAFF_MESSAGES.cannotDeleteLots };
+    }
+    return {
+      ok: false,
+      status: 401,
+      code: input.account || input.session ? "STAFF_SESSION_ENDED" : "ACCESS_CODE_REQUIRED",
+      error: input.account || input.session
+        ? GUATEMALA_STAFF_MESSAGES.sessionEnded
+        : GUATEMALA_STAFF_MESSAGES.signInRequired,
     };
   }
 

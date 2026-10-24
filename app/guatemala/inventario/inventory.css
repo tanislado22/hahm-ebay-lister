@@ -254,6 +254,63 @@
   font-weight: 800;
 }
 
+.gt-lot-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.gt-lot-form label {
+  display: grid;
+  gap: 0.45rem;
+  font-weight: 700;
+}
+
+.gt-lot-form input,
+.gt-lot-form select,
+.gt-lot-form textarea {
+  width: 100%;
+  min-height: 48px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  padding: 0.75rem 0.9rem;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 400;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.gt-lot-form textarea {
+  min-height: 8rem;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.gt-lot-saved-notes {
+  white-space: pre-wrap;
+}
+
+.gt-lot-hint {
+  font-weight: 400;
+  color: var(--color-ink-soft);
+}
+
+.gt-lot-actions .btn {
+  min-height: 48px;
+}
+
+@media (min-width: 720px) {
+  .gt-lot-form {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .gt-lot-form label:first-child,
+  .gt-lot-notes,
+  .gt-lot-actions {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (min-width: 800px) {
   .gt-inventory-list {
     grid-template-columns: 1fr 1fr;

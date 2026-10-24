@@ -481,10 +481,12 @@ async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryI
   );
   const rows = await sql`
     WITH locked AS (
-      SELECT pg_advisory_xact_lock(
-        hashtext('guatemala-sku'),
-        hashtext(${`${item.clientId}\u001f${item.sku}`})
-      ) AS locked
+      SELECT
+        pg_advisory_xact_lock(
+          hashtext('guatemala-sku'),
+          hashtext(${`${item.clientId}\u001f${item.sku}`})
+        ) AS sku_locked,
+        pg_advisory_xact_lock(hashtext('guatemala-lot'), hashtext(${item.clientId})) AS lot_locked
     ),
     inserted AS (
       INSERT INTO guatemala_inventory_items (

@@ -11,7 +11,7 @@ export async function authorizeGuatemalaRequest(
   requestedClientId: string,
   action: GuatemalaAction
 ): Promise<
-  | { ok: true; actor: SaleActor; clientId: string; lotPermissions: { write: boolean; correct: boolean; void: boolean } }
+  | { ok: true; actor: SaleActor; clientId: string; lotPermissions: { write: boolean; correct: boolean; void: boolean; remove: boolean } }
   | { ok: false; response: NextResponse }
 > {
   const limited = rateLimitRequest(request);
@@ -53,6 +53,7 @@ export async function authorizeGuatemalaRequest(
       write: true,
       correct: decision.actor.role === "propietario" || loaded?.account.canCorrectLots === true,
       void: decision.actor.role === "propietario" || loaded?.account.canVoidLots === true,
+      remove: decision.actor.role === "propietario",
     },
   };
 }

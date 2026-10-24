@@ -7,6 +7,8 @@ import {
   correctLotExpense,
   lotAverageCost,
   lotArticleCounts,
+  lotFieldEnterSubmits,
+  lotMayBeDeleted,
   lotNumberIsAvailable,
   nextLotNumber,
   nextLotSku,
@@ -104,7 +106,8 @@ describe("lotes de compra de Tienda Guatemala", () => {
     expect(assigned.priceGtq).toBe("40.00");
     expect(item.sku).toBe("3001");
     expect(lotNumberIsAvailable([1, 2], 1)).toBe(false);
-    expect(nextLotNumber([1, 2, 4])).toBe(5);
+    expect(nextLotNumber([1, 2, 4])).toBe(3);
+    expect(nextLotNumber([2, 4])).toBe(1);
   });
 
   it("separa el conteo vendible de las prendas registradas y no resta el gasto dos veces", () => {
@@ -160,5 +163,35 @@ describe("lotes de compra de Tienda Guatemala", () => {
     expect(decideGuatemalaAccess({ ...base, account: { ...account, canCorrectLots: true }, action: "lotCorrect" }).ok).toBe(true);
     expect(decideGuatemalaAccess({ ...base, account: { ...account, canVoidLots: true }, action: "lotVoid" }).ok).toBe(true);
     expect(decideGuatemalaAccess({ ...base, owner: true, staffPanel: false, action: "lotVoid" }).ok).toBe(true);
+    expect(decideGuatemalaAccess({ ...base, action: "lotDelete" }).ok).toBe(false);
+    expect(decideGuatemalaAccess({ ...base, account: { ...account, canVoidLots: true }, action: "lotDelete" }).ok).toBe(false);
+    expect(decideGuatemalaAccess({ ...base, owner: true, staffPanel: false, action: "lotDelete" }).ok).toBe(true);
+  });
+
+  it("solo libera el número de un lote sin artículos, gastos, ventas ni SKU", () => {
+    const empty = {
+      associatedItems: 0,
+      expenses: 0,
+      mirroredExpenses: 0,
+      expenseRevisions: 0,
+      sales: 0,
+      saleCorrections: 0,
+      publicationEvents: 0,
+      reservedSkus: 0,
+    };
+    expect(lotMayBeDeleted(empty)).toBe(true);
+    expect(lotMayBeDeleted({ ...empty, expenses: 1 })).toBe(false);
+    expect(lotMayBeDeleted({ ...empty, associatedItems: 1 })).toBe(false);
+    expect(lotMayBeDeleted({ ...empty, sales: 1 })).toBe(false);
+    expect(lotMayBeDeleted({ ...empty, reservedSkus: 1 })).toBe(false);
+    expect(lotMayBeDeleted({ ...empty, mirroredExpenses: 1 })).toBe(false);
+    const kept = [1, 2];
+    const freed = kept.filter((number) => number !== 1);
+    expect(lotNumberIsAvailable(freed, 1)).toBe(true);
+    expect(nextLotNumber(freed)).toBe(1);
+    expect(lotNumberIsAvailable(kept, 1)).toBe(false);
+    expect(lotFieldEnterSubmits("line")).toBe(false);
+    expect(lotFieldEnterSubmits("notes")).toBe(true);
+    expect(lotFieldEnterSubmits("save")).toBe(true);
   });
 });

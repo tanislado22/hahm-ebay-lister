@@ -42,6 +42,8 @@ export const GUATEMALA_LOT_MESSAGES = {
   expenseVoidedNotice: "Gasto anulado.",
   lotUpdated: "Lote actualizado.",
   lotVoided: "Lote anulado.",
+  lotDeleted: "Lote eliminado. Su número quedó libre.",
+  lotNotEmpty: "Este lote tiene artículos, gastos, ventas o SKU reservados. Puedes anularlo, pero su número no se libera.",
   assigned: "La prenda quedó en el lote. El SKU no cambió.",
   skuSuggested: "Revisa el SKU antes de guardar.",
   notProfit: "El costo promedio no es la ganancia. El precio de venta no cambia al agregar gastos.",
@@ -189,7 +191,38 @@ export function lotNumberIsAvailable(usedNumbers: readonly number[], requested: 
 }
 
 export function nextLotNumber(usedNumbers: readonly number[]): number {
-  return usedNumbers.reduce((max, value) => (value > max ? value : max), 0) + 1;
+  const used = new Set(usedNumbers);
+  let candidate = 1;
+  while (used.has(candidate)) candidate += 1;
+  return candidate;
+}
+
+export interface LotDeleteLinks {
+  associatedItems: number;
+  expenses: number;
+  mirroredExpenses: number;
+  expenseRevisions: number;
+  sales: number;
+  saleCorrections: number;
+  publicationEvents: number;
+  reservedSkus: number;
+}
+
+export function lotFieldEnterSubmits(field: "line" | "notes" | "save"): boolean {
+  return field !== "line";
+}
+
+export function lotMayBeDeleted(links: LotDeleteLinks): boolean {
+  return (
+    links.associatedItems === 0 &&
+    links.expenses === 0 &&
+    links.mirroredExpenses === 0 &&
+    links.expenseRevisions === 0 &&
+    links.sales === 0 &&
+    links.saleCorrections === 0 &&
+    links.publicationEvents === 0 &&
+    links.reservedSkus === 0
+  );
 }
 
 function parsePositiveInteger(value: unknown): number | null {
