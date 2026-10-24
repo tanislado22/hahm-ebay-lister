@@ -31,6 +31,8 @@ export const GUATEMALA_STAFF_MESSAGES = {
   cannotManage: "No puedes administrar usuarios ni clientes.",
   cannotCorrect: "No puedes corregir ni anular ventas.",
   cannotPurge: "No puedes eliminar prendas del inventario.",
+  cannotCorrectLots: "No puedes corregir lotes ni gastos. El propietario puede darte ese permiso.",
+  cannotVoidLots: "No puedes anular lotes ni gastos. El propietario puede darte ese permiso.",
   signInRequired: "Se requiere iniciar sesión.",
   usernameInvalid:
     "El usuario debe tener entre 3 y 32 caracteres: letras, números, punto, guion o guion bajo.",
@@ -43,7 +45,17 @@ export const GUATEMALA_STAFF_MESSAGES = {
   passwordMissing: "Esa cuenta no tiene una contraseña guardada.",
 } as const;
 
-export type GuatemalaAction = "read" | "sell" | "write" | "publish" | "manage" | "correct" | "purge";
+export type GuatemalaAction =
+  | "read"
+  | "sell"
+  | "write"
+  | "publish"
+  | "manage"
+  | "correct"
+  | "purge"
+  | "lotWrite"
+  | "lotCorrect"
+  | "lotVoid";
 
 export interface AccessAccount {
   id: string;
@@ -52,6 +64,8 @@ export interface AccessAccount {
   active: boolean;
   sessionGeneration: number;
   deactivatedAt: string | null;
+  canCorrectLots?: boolean;
+  canVoidLots?: boolean;
 }
 
 export interface AccessSession {
@@ -214,6 +228,36 @@ export function decideGuatemalaAccess(input: {
     const requested = input.requestedClientId.trim();
     if (requested && requested !== input.account.clientId) {
       return { ok: false, status: 403, code: "FORBIDDEN", error: GUATEMALA_STAFF_MESSAGES.otherClient };
+    }
+    return {
+      ok: true,
+      actor: { role: "encargado", accountId: input.account.id, username: input.account.username },
+      clientId: input.account.clientId,
+    };
+  }
+
+  if (input.action === "lotWrite" || input.action === "lotCorrect" || input.action === "lotVoid") {
+    if (owner) {
+      return { ok: true, actor: ownerActor, clientId: input.requestedClientId };
+    }
+    if (!staffValid || !input.account) {
+      return {
+        ok: false,
+        status: 401,
+        code: input.account || input.session ? "STAFF_SESSION_ENDED" : "ACCESS_CODE_REQUIRED",
+        error: input.account || input.session
+          ? GUATEMALA_STAFF_MESSAGES.sessionEnded
+          : GUATEMALA_STAFF_MESSAGES.signInRequired,
+      };
+    }
+    if (input.requestedClientId.trim() && input.account.clientId !== input.requestedClientId.trim()) {
+      return { ok: false, status: 403, code: "FORBIDDEN", error: GUATEMALA_STAFF_MESSAGES.otherClient };
+    }
+    if (input.action === "lotCorrect" && input.account.canCorrectLots !== true) {
+      return { ok: false, status: 403, code: "FORBIDDEN", error: GUATEMALA_STAFF_MESSAGES.cannotCorrectLots };
+    }
+    if (input.action === "lotVoid" && input.account.canVoidLots !== true) {
+      return { ok: false, status: 403, code: "FORBIDDEN", error: GUATEMALA_STAFF_MESSAGES.cannotVoidLots };
     }
     return {
       ok: true,

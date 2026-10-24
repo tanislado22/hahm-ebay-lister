@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { guatemalaRequest } from "../../request";
 import { useUnsavedChanges } from "../../return-home";
 import { guatemalaPriceIfEmpty } from "@/lib/markets/guatemala-price-match";
@@ -39,7 +39,7 @@ interface PreparedListing {
 
 const MAX_PHOTOS = 8;
 
-export function PublishScreen() {
+export function PublishScreen({ clientId = "" }: { clientId?: string }) {
   const draftId = useRef(crypto.randomUUID());
   const saving = useRef(false);
   const priceTouched = useRef(false);
@@ -61,6 +61,39 @@ export function PublishScreen() {
   const [pending, setPending] = useState("");
   const [publishedId, setPublishedId] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [lots, setLots] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
+  const [lotId, setLotId] = useState("");
+  const skuTouched = useRef(false);
+
+  useEffect(() => {
+    if (!clientId) return;
+    void guatemalaRequest(`/api/markets/guatemala/lots?clientId=${encodeURIComponent(clientId)}`, undefined, { actor: "encargado" })
+      .then((response) => response.json())
+      .then((body: { ok?: boolean; lots?: { id: string; lotNumber: number; name: string; status: string }[] }) => {
+        if (!body.ok) return;
+        setLots((body.lots ?? []).filter((lot) => lot.status !== "anulado").map((lot) => ({
+          id: lot.id,
+          lotNumber: lot.lotNumber,
+          name: lot.name,
+        })));
+      })
+      .catch(() => setLots([]));
+  }, [clientId]);
+
+  async function chooseLot(nextLotId: string) {
+    setLotId(nextLotId);
+    setStep("datos");
+    if (!nextLotId) return;
+    const response = await guatemalaRequest(
+      `/api/markets/guatemala/lots?clientId=${encodeURIComponent(clientId)}&skuLote=${encodeURIComponent(nextLotId)}`,
+      undefined,
+      { actor: "encargado" }
+    );
+    const body = (await response.json()) as { ok?: boolean; sku?: string; note?: string };
+    if (!response.ok || !body.ok || !body.sku) return;
+    setSkuNote(body.note || "Revisa el SKU antes de guardar.");
+    if (!skuTouched.current) setSku(body.sku);
+  }
 
   function keepDraft() {
     setStep("datos");
@@ -74,6 +107,8 @@ export function PublishScreen() {
     priceTouched.current = false;
     setPhotos([]);
     setSku(blank.sku);
+    skuTouched.current = false;
+    setLotId("");
     setTitle(blank.title);
     setDescription(blank.description);
     setBrand(blank.brand);
@@ -282,6 +317,7 @@ export function PublishScreen() {
           condition,
           price,
           photos,
+          lotId: lotId || undefined,
         },
         { actor: "encargado" }
       );
@@ -423,6 +459,15 @@ export function PublishScreen() {
           </div>
           <p>{photos.length === 0 ? "Todavía no hay fotos." : `${photos.length} foto${photos.length === 1 ? "" : "s"}. La primera es la portada.`}</p>
           <label>
+            Lote
+            <select value={lotId} onChange={(event) => void chooseLot(event.target.value)}>
+              <option value="">Sin lote</option>
+              {lots.map((lot) => (
+                <option key={lot.id} value={lot.id}>Lote {lot.lotNumber} · {lot.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
             SKU
             <input
               value={sku}
@@ -430,6 +475,7 @@ export function PublishScreen() {
               autoCorrect="off"
               spellCheck={false}
               onChange={(event) => {
+                skuTouched.current = true;
                 setSku(event.target.value);
                 setSkuNote("");
                 setStep("datos");

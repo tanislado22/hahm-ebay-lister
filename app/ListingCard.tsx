@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SIZE_REQUIRED_CATEGORIES } from "@/lib/categories";
-import { apiPost } from "@/lib/api-client";
+import { apiGet, apiPost } from "@/lib/api-client";
 import {
   formatGuatemalaMoment,
   formatQuetzales,
@@ -116,6 +116,9 @@ export function ListingCard({
   const [savingInventory, setSavingInventory] = useState(false);
   const [inventoryNote, setInventoryNote] = useState("");
   const [inventoryError, setInventoryError] = useState(false);
+  const [inventoryLotId, setInventoryLotId] = useState("");
+  const [inventoryLots, setInventoryLots] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
+  const [suggestedSku, setSuggestedSku] = useState("");
   const savingInventoryRef = useRef(false);
   const priceTouched = useRef(false);
   const cover = photoById(group.photoIds[0]);
@@ -128,6 +131,22 @@ useEffect(() => {
   }
 
 }, [group.status]);
+
+  useEffect(() => {
+    if (!guatemala || !inventoryClientId) return;
+    void apiGet(`/api/markets/guatemala/lots?clientId=${encodeURIComponent(inventoryClientId)}`)
+      .then((response) => response.json())
+      .then((body: { ok?: boolean; lots?: { id: string; lotNumber: number; name: string; status: string }[] }) => {
+        if (!body.ok) return;
+        setInventoryLots((body.lots ?? []).filter((lot) => lot.status !== "anulado").map((lot) => ({
+          id: lot.id,
+          lotNumber: lot.lotNumber,
+          name: lot.name,
+        })));
+      })
+      .catch(() => setInventoryLots([]));
+  }, [guatemala, inventoryClientId]);
+
   const specifics = useMemo(() => {
     const entries = Object.entries(listing?.item_specifics ?? {});
     return entries.filter(([k, v]) => v && v.trim() !== "" && !k.startsWith("---"));
@@ -189,6 +208,7 @@ useEffect(() => {
         condition: listing.condition ?? "",
         price: listing.suggested_price,
         photos,
+        lotId: inventoryLotId || undefined,
       });
       const body = (await response.json()) as { ok?: boolean; action?: string; error?: string };
       if (!response.ok || !body.ok) {
@@ -1196,6 +1216,36 @@ const keyword = [
             <>
               {group.status === "done" && listing ? (
                 <div className="post-row">
+                  {inventoryLots.length > 0 ? (
+                    <label>
+                      Lote
+                      <select
+                        value={inventoryLotId}
+                        onChange={(event) => {
+                          const next = event.target.value;
+                          setInventoryLotId(next);
+                          setSuggestedSku("");
+                          if (!next || !inventoryClientId) return;
+                          void apiGet(`/api/markets/guatemala/lots?clientId=${encodeURIComponent(inventoryClientId)}&skuLote=${encodeURIComponent(next)}`)
+                            .then((response) => response.json())
+                            .then((body: { ok?: boolean; sku?: string }) => {
+                              if (body.ok && body.sku) setSuggestedSku(body.sku);
+                            })
+                            .catch(() => setSuggestedSku(""));
+                        }}
+                      >
+                        <option value="">Sin lote</option>
+                        {inventoryLots.map((lot) => (
+                          <option key={lot.id} value={lot.id}>Lote {lot.lotNumber} · {lot.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  {suggestedSku ? (
+                    <button type="button" className="btn btn-ghost" onClick={() => onRenameSku(group.id, suggestedSku)}>
+                      Usar SKU {suggestedSku}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="btn btn-primary"

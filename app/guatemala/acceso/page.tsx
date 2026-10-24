@@ -11,6 +11,8 @@ interface StaffAccount {
   username: string;
   status: "activo" | "pendiente" | "desactivado";
   createdAt: string;
+  canCorrectLots?: boolean;
+  canVoidLots?: boolean;
 }
 
 const STATUS_LABEL = {
@@ -116,6 +118,22 @@ function OwnerStaffScreen() {
     await load();
   }
 
+  async function savePermissions(account: StaffAccount, canCorrectLots: boolean, canVoidLots: boolean) {
+    setError("");
+    const response = await guatemalaRequest("/api/markets/guatemala/staff", {
+      action: "permisos",
+      accountId: account.id,
+      canCorrectLots,
+      canVoidLots,
+    });
+    const body = (await response.json()) as { ok?: boolean; error?: string };
+    if (!response.ok || !body.ok) {
+      setError(body.error || "No se pudieron guardar los permisos.");
+      return;
+    }
+    await load();
+  }
+
   async function reactivate(account: StaffAccount) {
     if (
       !window.confirm(
@@ -213,6 +231,26 @@ function OwnerStaffScreen() {
                 <br />
                 {STATUS_LABEL[account.status]}
               </span>
+              {account.status === "activo" ? (
+                <span>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={account.canCorrectLots === true}
+                      onChange={(event) => void savePermissions(account, event.target.checked, account.canVoidLots === true)}
+                    />
+                    Corregir lotes
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={account.canVoidLots === true}
+                      onChange={(event) => void savePermissions(account, account.canCorrectLots === true, event.target.checked)}
+                    />
+                    Anular lotes
+                  </label>
+                </span>
+              ) : null}
               {account.status === "desactivado" ? (
                 <button type="button" className="btn btn-primary" onClick={() => void reactivate(account)}>
                   Reactivar

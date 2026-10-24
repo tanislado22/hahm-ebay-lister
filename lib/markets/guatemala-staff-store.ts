@@ -21,6 +21,8 @@ export interface StaffAccountView {
   status: "activo" | "pendiente" | "desactivado";
   createdAt: string;
   deactivatedAt: string | null;
+  canCorrectLots: boolean;
+  canVoidLots: boolean;
 }
 
 export interface StaffSessionView {
@@ -57,7 +59,9 @@ async function createTables(): Promise<void> {
       active BOOLEAN NOT NULL DEFAULT FALSE,
       session_generation INTEGER NOT NULL DEFAULT 1,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      deactivated_at TIMESTAMPTZ
+      deactivated_at TIMESTAMPTZ,
+      can_correct_lots BOOLEAN NOT NULL DEFAULT FALSE,
+      can_void_lots BOOLEAN NOT NULL DEFAULT FALSE
     )
   `;
   await sql`
@@ -78,6 +82,14 @@ async function createTables(): Promise<void> {
       used_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `;
+  await sql`
+    ALTER TABLE guatemala_staff_accounts
+    ADD COLUMN IF NOT EXISTS can_correct_lots BOOLEAN NOT NULL DEFAULT FALSE
+  `;
+  await sql`
+    ALTER TABLE guatemala_staff_accounts
+    ADD COLUMN IF NOT EXISTS can_void_lots BOOLEAN NOT NULL DEFAULT FALSE
   `;
 }
 
@@ -111,7 +123,8 @@ export async function listGuatemalaStaff(): Promise<
   await ensureGuatemalaStaffTables();
   const sql = getSql();
   const rows = await sql`
-    SELECT id, username, active, password_hash, created_at, deactivated_at
+    SELECT id, username, active, password_hash, created_at, deactivated_at,
+      can_correct_lots, can_void_lots
     FROM guatemala_staff_accounts
     WHERE client_id = ${bound.clientId}
     ORDER BY created_at DESC
@@ -124,6 +137,8 @@ export async function listGuatemalaStaff(): Promise<
       status: accountStatus(row),
       createdAt: iso(row.created_at),
       deactivatedAt: row.deactivated_at ? iso(row.deactivated_at) : null,
+      canCorrectLots: flag(row.can_correct_lots),
+      canVoidLots: flag(row.can_void_lots),
     })),
   };
 }
@@ -160,6 +175,8 @@ export async function createGuatemalaStaff(input: {
       status: "activo",
       createdAt: iso(row.created_at),
       deactivatedAt: null,
+      canCorrectLots: false,
+      canVoidLots: false,
     },
   };
 }
@@ -360,7 +377,8 @@ export async function loadStaffAuth(token: string | null | undefined): Promise<L
   const sql = getSql();
   const rows = await sql`
     SELECT staff.id, staff.client_id, staff.username, staff.active, staff.session_generation,
-      staff.deactivated_at, session.session_generation AS session_generation_at_login, session.expires_at
+      staff.deactivated_at, staff.can_correct_lots, staff.can_void_lots,
+      session.session_generation AS session_generation_at_login, session.expires_at
     FROM guatemala_staff_sessions AS session
     INNER JOIN guatemala_staff_accounts AS staff ON staff.id = session.account_id
     WHERE session.token_hash = ${tokenHash(token)}
@@ -376,6 +394,8 @@ export async function loadStaffAuth(token: string | null | undefined): Promise<L
       active: flag(row.active),
       sessionGeneration: Number(row.session_generation),
       deactivatedAt: row.deactivated_at ? iso(row.deactivated_at) : null,
+      canCorrectLots: flag(row.can_correct_lots),
+      canVoidLots: flag(row.can_void_lots),
     },
     session: {
       accountId: String(row.id),
@@ -396,6 +416,28 @@ export async function staffSessionFromToken(token: string | null | undefined): P
     clientId: loaded.account.clientId,
     username: loaded.account.username,
   };
+}
+
+export async function setGuatemalaStaffLotPermissions(input: {
+  accountId: unknown;
+  canCorrectLots: unknown;
+  canVoidLots: unknown;
+}): Promise<{ ok: true } | { ok: false; status: 404; error: string }> {
+  const accountId = typeof input.accountId === "string" ? input.accountId : "";
+  if (!accountId) return { ok: false, status: 404, error: GUATEMALA_STAFF_MESSAGES.notFound };
+  const bound = await requireBoundClient();
+  if (!bound.ok) return { ok: false, status: 404, error: bound.error };
+  await ensureGuatemalaStaffTables();
+  const sql = getSql();
+  const rows = await sql`
+    UPDATE guatemala_staff_accounts
+    SET can_correct_lots = ${input.canCorrectLots === true},
+        can_void_lots = ${input.canVoidLots === true}
+    WHERE id = ${accountId} AND client_id = ${bound.clientId}
+    RETURNING id
+  `;
+  if (!rows[0]) return { ok: false, status: 404, error: GUATEMALA_STAFF_MESSAGES.notFound };
+  return { ok: true };
 }
 
 export async function revokeStaffToken(token: string | null | undefined): Promise<void> {

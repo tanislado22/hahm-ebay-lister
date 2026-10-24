@@ -13,6 +13,8 @@ import {
   type PublicCatalogFacets,
 } from "@/lib/markets/guatemala-catalog";
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
+import { GUATEMALA_LOT_MESSAGES } from "@/lib/markets/guatemala-lots";
+import { activeGuatemalaLot } from "@/lib/markets/guatemala-lots-store";
 import {
   changePublication,
   isolatedPublicationSku,
@@ -158,6 +160,10 @@ async function createGuatemalaInventoryTables(): Promise<void> {
   await sql`
     CREATE INDEX IF NOT EXISTS guatemala_inventory_items_client_idx
     ON guatemala_inventory_items (client_id)
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_items
+    ADD COLUMN IF NOT EXISTS lot_id TEXT
   `;
   await ensureGuatemalaSkuUniqueIndex(sql);
   await sql`
@@ -483,7 +489,7 @@ async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryI
     inserted AS (
       INSERT INTO guatemala_inventory_items (
         id, client_id, source_group_id, sku, title, description,
-        brand, size, condition, price_gtq, currency, status,
+        brand, size, condition, price_gtq, currency, status, lot_id,
         created_by_role, created_by_account_id, created_by_username
       )
       SELECT
@@ -499,6 +505,7 @@ async function insertItem(item: PreparedInventoryItem): Promise<StoredInventoryI
         ${item.priceGtq}::numeric,
         'GTQ',
         ${GUATEMALA_INVENTORY_STATUS},
+        ${item.lotId ?? null},
         ${item.createdBy?.role ?? null},
         ${item.createdBy?.accountId ?? null},
         ${item.createdBy?.username ?? null}
@@ -536,6 +543,11 @@ export async function saveGuatemalaInventoryItem(
   createdBy?: SaleActor | null
 ): Promise<InventorySaveResult> {
   await ensureGuatemalaInventoryTables();
+  const prepared = prepareInventorySave(input);
+  if (prepared.ok && prepared.item.lotId) {
+    const active = await activeGuatemalaLot(prepared.item.clientId, prepared.item.lotId);
+    if (!active) return { ok: false, status: 400, error: GUATEMALA_LOT_MESSAGES.notFound };
+  }
   return runInventorySave(postgresRepository(), input, clientIsGuatemala, createdBy);
 }
 
@@ -599,7 +611,8 @@ export interface InventoryListItem {
 export async function listGuatemalaInventory(
   clientId: string,
   query: string,
-  filterInput: unknown = "disponibles"
+  filterInput: unknown = "disponibles",
+  lotId: string | null = null
 ): Promise<
   | { available: number; items: InventoryListItem[]; duplicateSkus: DuplicateSkuReport[]; duplicateSkuMessage: string }
   | { ok: false; status: 403; error: string }
@@ -618,6 +631,7 @@ export async function listGuatemalaInventory(
     SELECT COUNT(*)::int AS available
     FROM guatemala_inventory_items
     WHERE client_id = ${clientId} AND status = ${GUATEMALA_INVENTORY_STATUS}
+      AND (${lotId}::text IS NULL OR lot_id = ${lotId})
   `;
   const rows = pattern
     ? await sql`
@@ -637,6 +651,7 @@ export async function listGuatemalaInventory(
           LIMIT 1
         ) AS photo ON TRUE
         WHERE item.client_id = ${clientId}
+          AND (${lotId}::text IS NULL OR item.lot_id = ${lotId})
           AND (${status}::text IS NULL OR item.status = ${status})
           AND (item.sku ILIKE ${pattern} ESCAPE '\\' OR item.title ILIKE ${pattern} ESCAPE '\\')
         ORDER BY item.created_at DESC
@@ -658,6 +673,7 @@ export async function listGuatemalaInventory(
           LIMIT 1
         ) AS photo ON TRUE
         WHERE item.client_id = ${clientId}
+          AND (${lotId}::text IS NULL OR item.lot_id = ${lotId})
           AND (${status}::text IS NULL OR item.status = ${status})
         ORDER BY item.created_at DESC
       `;

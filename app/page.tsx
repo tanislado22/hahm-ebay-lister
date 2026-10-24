@@ -1606,6 +1606,13 @@ const draftAll = async () => {
         >
           Gastos
         </a>
+        <a
+          className="btn btn-primary"
+          href={`/guatemala/lotes?clientId=${encodeURIComponent(selectedClientId)}`}
+          style={{ fontSize: "20px", marginLeft: 0 }}
+        >
+          Lotes de compra
+        </a>
         <a className="btn btn-primary" href="/guatemala/acceso" style={{ fontSize: "20px", marginLeft: 0 }}>
           Administrar encargados
         </a>

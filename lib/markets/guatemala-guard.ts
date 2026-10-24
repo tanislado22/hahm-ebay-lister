@@ -10,7 +10,10 @@ export async function authorizeGuatemalaRequest(
   request: NextRequest,
   requestedClientId: string,
   action: GuatemalaAction
-): Promise<{ ok: true; actor: SaleActor; clientId: string } | { ok: false; response: NextResponse }> {
+): Promise<
+  | { ok: true; actor: SaleActor; clientId: string; lotPermissions: { write: boolean; correct: boolean; void: boolean } }
+  | { ok: false; response: NextResponse }
+> {
   const limited = rateLimitRequest(request);
   if (limited) return { ok: false, response: limited };
   const token = request.cookies.get(STAFF_COOKIE)?.value;
@@ -42,7 +45,16 @@ export async function authorizeGuatemalaRequest(
       ),
     };
   }
-  return decision;
+  return {
+    ok: true,
+    actor: decision.actor,
+    clientId: decision.clientId,
+    lotPermissions: {
+      write: true,
+      correct: decision.actor.role === "propietario" || loaded?.account.canCorrectLots === true,
+      void: decision.actor.role === "propietario" || loaded?.account.canVoidLots === true,
+    },
+  };
 }
 
 export function withStaffCookie(response: NextResponse, token: string | null): NextResponse {

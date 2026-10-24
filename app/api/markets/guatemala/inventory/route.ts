@@ -13,8 +13,9 @@ export async function GET(request: NextRequest) {
   if (!access.ok) return access.response;
   const query = request.nextUrl.searchParams.get("q") ?? "";
   const filter = request.nextUrl.searchParams.get("estado");
+  const lotId = request.nextUrl.searchParams.get("lote") || null;
   try {
-    const result = await listGuatemalaInventory(access.clientId, query, filter);
+    const result = await listGuatemalaInventory(access.clientId, query, filter, lotId);
     if ("ok" in result && result.ok === false) {
       return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
     }

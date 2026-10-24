@@ -44,6 +44,8 @@ async function createGuatemalaExpenseTables(): Promise<void> {
       included_in_garment_cost BOOLEAN NOT NULL DEFAULT FALSE,
       recorded_by_role TEXT,
       recorded_by_username TEXT,
+      lot_expense_id TEXT,
+      voided_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
@@ -51,6 +53,19 @@ async function createGuatemalaExpenseTables(): Promise<void> {
   await sql`
     CREATE INDEX IF NOT EXISTS guatemala_expenses_client_spent_idx
     ON guatemala_expenses (client_id, spent_on)
+  `;
+  await sql`
+    ALTER TABLE guatemala_expenses
+    ADD COLUMN IF NOT EXISTS lot_expense_id TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_expenses
+    ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS guatemala_expenses_lot_expense_key
+    ON guatemala_expenses (lot_expense_id)
+    WHERE lot_expense_id IS NOT NULL
   `;
 }
 
@@ -98,6 +113,7 @@ function rowToExpense(row: Record<string, unknown>): StoredExpense {
     includedInGarmentCost: flag(row.included_in_garment_cost),
     recordedByRole: roleOf(row.recorded_by_role),
     recordedByUsername: row.recorded_by_username ? String(row.recorded_by_username) : null,
+    lotExpenseId: row.lot_expense_id ? String(row.lot_expense_id) : null,
     createdAt: isoTimestamp(row.created_at),
     updatedAt: isoTimestamp(row.updated_at),
   };
@@ -108,7 +124,7 @@ async function readExpense(clientId: string, id: string): Promise<StoredExpense 
   const rows = await sql`
     SELECT id, client_id, spent_on, category, description,
       amount_gtq::text AS amount_gtq, payee, included_in_garment_cost,
-      recorded_by_role, recorded_by_username, created_at, updated_at
+      recorded_by_role, recorded_by_username, lot_expense_id, created_at, updated_at
     FROM guatemala_expenses
     WHERE id = ${id} AND client_id = ${clientId}
     LIMIT 1
@@ -127,11 +143,12 @@ export async function listGuatemalaExpenses(input: {
   const rows = await sql`
     SELECT id, client_id, spent_on, category, description,
       amount_gtq::text AS amount_gtq, payee, included_in_garment_cost,
-      recorded_by_role, recorded_by_username, created_at, updated_at
+      recorded_by_role, recorded_by_username, lot_expense_id, created_at, updated_at
     FROM guatemala_expenses
     WHERE client_id = ${input.clientId}
       AND spent_on >= ${input.from}::date
       AND spent_on <= ${input.to}::date
+      AND voided_at IS NULL
     ORDER BY spent_on DESC, created_at DESC
   `;
   return expensesInRange(
@@ -249,7 +266,7 @@ export async function updateGuatemalaExpense(input: {
   now?: Date;
 }): Promise<
   | { ok: true; expense: StoredExpense; message: string }
-  | { ok: false; status: 400 | 403 | 404; error: string }
+  | { ok: false; status: 400 | 403 | 404 | 409; error: string }
 > {
   const prepared = prepareExpense(input);
   if (!prepared.ok) return prepared;
@@ -266,6 +283,9 @@ export async function updateGuatemalaExpense(input: {
     input.now ?? new Date()
   );
   if (!changed.ok) return changed;
+  if (existing?.lotExpenseId) {
+    return { ok: false, status: 409, error: GUATEMALA_EXPENSE_MESSAGES.linkedToLot };
+  }
   const expense = changed.expense;
   const sql = getSql();
   const rows = await sql`
@@ -278,6 +298,7 @@ export async function updateGuatemalaExpense(input: {
         included_in_garment_cost = ${expense.includedInGarmentCost},
         updated_at = ${expense.updatedAt}::timestamptz
     WHERE id = ${expense.id} AND client_id = ${expense.clientId}
+      AND lot_expense_id IS NULL
     RETURNING id
   `;
   if (!rows[0]) return { ok: false, status: 404, error: GUATEMALA_EXPENSE_MESSAGES.notFound };
@@ -287,18 +308,22 @@ export async function updateGuatemalaExpense(input: {
 export async function deleteGuatemalaExpense(input: {
   clientId: string;
   expenseId: string;
-}): Promise<{ ok: true; message: string } | { ok: false; status: 403 | 404; error: string }> {
+}): Promise<{ ok: true; message: string } | { ok: false; status: 403 | 404 | 409; error: string }> {
   if (!(await clientIsGuatemala(input.clientId))) {
     return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
   }
   await ensureGuatemalaExpenseTables();
   const existing = await readExpense(input.clientId, input.expenseId);
+  if (existing?.lotExpenseId) {
+    return { ok: false, status: 409, error: GUATEMALA_EXPENSE_MESSAGES.linkedToLot };
+  }
   const removed = deleteExpenseRecord(existing ? [existing] : [], input.clientId, input.expenseId);
   if (!removed.ok) return removed;
   const sql = getSql();
   const rows = await sql`
     DELETE FROM guatemala_expenses
     WHERE id = ${input.expenseId} AND client_id = ${input.clientId}
+      AND lot_expense_id IS NULL
     RETURNING id
   `;
   if (!rows[0]) return { ok: false, status: 404, error: GUATEMALA_EXPENSE_MESSAGES.notFound };

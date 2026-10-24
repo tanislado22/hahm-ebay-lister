@@ -96,6 +96,7 @@ export function InventoryScreen({
   const clientId = lockedClientId || params.get("clientId") || "";
   const itemId = params.get("item") ?? "";
   const filter = inventoryListFilter(params.get("estado"));
+  const lotFilter = params.get("lote") || "";
   function storeRequest(path: string, body?: unknown) {
     return guatemalaRequest(path, body, staffMode ? { actor: "encargado" } : undefined);
   }
@@ -129,6 +130,8 @@ export function InventoryScreen({
   const [publicationError, setPublicationError] = useState("");
   const [publicationNotice, setPublicationNotice] = useState("");
   const [savingPublication, setSavingPublication] = useState(false);
+  const [lotChoices, setLotChoices] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
+  const [assignLotId, setAssignLotId] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -156,7 +159,7 @@ export function InventoryScreen({
           }
         } else {
           const response = await storeRequest(
-            `/api/markets/guatemala/inventory?clientId=${encodeURIComponent(clientId)}&q=${encodeURIComponent(query)}&estado=${encodeURIComponent(filter)}`
+            `/api/markets/guatemala/inventory?clientId=${encodeURIComponent(clientId)}&q=${encodeURIComponent(query)}&estado=${encodeURIComponent(filter)}&lote=${encodeURIComponent(lotFilter)}`
           );
           const body = (await response.json()) as {
             ok?: boolean;
@@ -189,7 +192,7 @@ export function InventoryScreen({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [clientId, itemId, query, filter]);
+  }, [clientId, itemId, query, filter, lotFilter]);
 
   useEffect(() => {
     setSaleStep(null);
@@ -204,9 +207,11 @@ export function InventoryScreen({
     setCostIncludesPhoto(Boolean(detail?.costIncludesPhotography));
   }, [detail?.id, detail?.costGtq, detail?.costIncludesPhotography]);
 
-  function inventoryHref(next: { item?: string; estado?: InventoryListFilter }) {
+  function inventoryHref(next: { item?: string; estado?: InventoryListFilter; lote?: string }) {
     const search = new URLSearchParams({ estado: next.estado ?? filter });
     if (!staffMode) search.set("clientId", clientId);
+    const lote = next.lote ?? lotFilter;
+    if (lote) search.set("lote", lote);
     if (next.item) search.set("item", next.item);
     return `${basePath}?${search.toString()}`;
   }
@@ -221,6 +226,34 @@ export function InventoryScreen({
 
   function chooseFilter(next: InventoryListFilter) {
     router.replace(inventoryHref({ estado: next }));
+  }
+
+  useEffect(() => {
+    if (!clientId) return;
+    void storeRequest(`/api/markets/guatemala/lots?clientId=${encodeURIComponent(clientId)}`)
+      .then((response) => response.json())
+      .then((body: { ok?: boolean; lots?: { id: string; lotNumber: number; name: string; status: string }[] }) => {
+        if (!body.ok) return;
+        setLotChoices((body.lots ?? []).filter((lot) => lot.status === "activo"));
+      })
+      .catch(() => setLotChoices([]));
+  }, [clientId, staffMode]);
+
+  async function assignLot() {
+    if (!detail || !assignLotId) return;
+    const response = await storeRequest("/api/markets/guatemala/lots", {
+      action: "asignar",
+      clientId,
+      itemId: detail.id,
+      lotId: assignLotId,
+    });
+    const body = (await response.json()) as { ok?: boolean; error?: string; sku?: string; message?: string };
+    if (!response.ok || !body.ok) {
+      setError(body.error || "No se pudo asignar el lote.");
+      return;
+    }
+    setError("");
+    setPublicationNotice(body.sku === detail.sku ? body.message || "La prenda quedó en el lote. El SKU no cambió." : body.message || "");
   }
 
   const chargedPrice = quetzalPriceText(chargedDraft);
@@ -465,6 +498,26 @@ export function InventoryScreen({
               </div>
               <h2 id="inventory-detail-heading">{detail.title || "Prenda sin título"}</h2>
               <p className="gt-inventory-sku">SKU {detail.sku}</p>
+              <form
+                className="gt-sale-box"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void assignLot();
+                }}
+              >
+                <label htmlFor="assign-lot">
+                  Lote
+                  <select id="assign-lot" value={assignLotId} onChange={(event) => setAssignLotId(event.target.value)}>
+                    <option value="">Sin cambiar</option>
+                    {lotChoices.map((lot) => (
+                      <option key={lot.id} value={lot.id}>Lote {lot.lotNumber} · {lot.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <button type="button" className="btn btn-ghost" disabled={!assignLotId} onClick={() => void assignLot()}>
+                  Asignar lote
+                </button>
+              </form>
               <span className={`gt-inventory-status${statusClass(detail.status)}`}>
                 {guatemalaInventoryStatusLabel(detail.status)}
               </span>
@@ -925,6 +978,15 @@ export function InventoryScreen({
               {availableGarmentLabel(available)}
             </h2>
             <div className="gt-inventory-filters" role="group" aria-label="Filtrar prendas">
+              <label>
+                Lote
+                <select value={lotFilter} onChange={(event) => router.replace(inventoryHref({ lote: event.target.value }))}>
+                  <option value="">Todos</option>
+                  {lotChoices.map((lot) => (
+                    <option key={lot.id} value={lot.id}>Lote {lot.lotNumber}</option>
+                  ))}
+                </select>
+              </label>
               {(["disponibles", "retiradas", "vendidas", "todas"] as InventoryListFilter[]).map((option) => (
                 <button
                   key={option}

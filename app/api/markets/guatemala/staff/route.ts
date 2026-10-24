@@ -6,6 +6,7 @@ import {
   inviteGuatemalaStaff,
   listGuatemalaStaff,
   reactivateGuatemalaStaff,
+  setGuatemalaStaffLotPermissions,
 } from "@/lib/markets/guatemala-staff-store";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +27,14 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const access = await authorizeGuatemalaRequest(request, "", "manage");
   if (!access.ok) return access.response;
-  let body: { action?: unknown; username?: unknown; password?: unknown; accountId?: unknown };
+  let body: {
+    action?: unknown;
+    username?: unknown;
+    password?: unknown;
+    accountId?: unknown;
+    canCorrectLots?: unknown;
+    canVoidLots?: unknown;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -57,6 +65,15 @@ export async function POST(request: NextRequest) {
       const result = await reactivateGuatemalaStaff(body.accountId);
       if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
       return NextResponse.json({ ok: true, username: result.username });
+    }
+    if (body.action === "permisos") {
+      const result = await setGuatemalaStaffLotPermissions({
+        accountId: body.accountId,
+        canCorrectLots: body.canCorrectLots,
+        canVoidLots: body.canVoidLots,
+      });
+      if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+      return NextResponse.json({ ok: true });
     }
     return NextResponse.json({ ok: false, error: "Elige crear, invitar, desactivar o reactivar." }, { status: 400 });
   } catch (error) {

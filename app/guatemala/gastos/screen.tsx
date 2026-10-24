@@ -433,7 +433,9 @@ export function ExpensesScreen({
                   {expense.recordedByRole === "encargado" && expense.recordedByUsername ? (
                     <p className="gt-inventory-meta">Registrado por {expense.recordedByUsername}</p>
                   ) : null}
-                  {pendingDeleteId === expense.id ? (
+                  {expense.lotExpenseId ? (
+                    <p className="gt-expense-note">Este gasto pertenece a un lote. Corrígelo o anúlalo en Lotes de compra para no contarlo dos veces.</p>
+                  ) : pendingDeleteId === expense.id ? (
                     <div className="gt-sale-box">
                       <p>
                         ¿Eliminar este gasto de {formatStoredQuetzales(expense.amountGtq)} ({expense.description})?

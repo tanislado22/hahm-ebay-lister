@@ -1,4 +1,5 @@
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
+import { lotExpenseCategoryLabel } from "@/lib/markets/guatemala-lots";
 import { formatStoredQuetzales, quetzalPriceText } from "@/lib/markets/guatemala-inventory";
 import {
   civilDateKey,
@@ -29,6 +30,7 @@ export const GUATEMALA_EXPENSE_MESSAGES = {
   saved: "Gasto registrado.",
   updated: "Gasto actualizado.",
   deleted: "Gasto eliminado.",
+  linkedToLot: "Este gasto pertenece a un lote. Corrígelo o anúlalo en Lotes de compra para no contarlo dos veces.",
   retry: "No se pudo guardar el gasto. Inténtalo de nuevo.",
   loadFailed: "No se pudieron cargar los gastos.",
 } as const;
@@ -50,12 +52,16 @@ export interface StoredExpense extends PreparedExpense {
   clientId: string;
   recordedByRole: "propietario" | "encargado" | null;
   recordedByUsername: string | null;
+  lotExpenseId: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export function expenseCategoryLabel(category: string): string {
-  return GUATEMALA_EXPENSE_CATEGORIES.find((entry) => entry.id === category)?.label ?? category;
+  return (
+    GUATEMALA_EXPENSE_CATEGORIES.find((entry) => entry.id === category)?.label ??
+    lotExpenseCategoryLabel(category)
+  );
 }
 
 export function isExpenseCategory(value: unknown): value is ExpenseCategory {
@@ -124,6 +130,7 @@ export function buildExpenseRecord(
     ...prepared,
     id: meta.id,
     clientId: meta.clientId,
+    lotExpenseId: null,
     recordedByRole: meta.recordedByRole,
     recordedByUsername: meta.recordedByUsername,
     createdAt: stamp,
@@ -218,6 +225,7 @@ export interface ProfitExpense {
   category: ExpenseCategory;
   amountGtq: string;
   includedInGarmentCost: boolean;
+  lotExpenseId?: string | null;
 }
 
 export interface ProfitSummary {
@@ -245,6 +253,7 @@ export function photographyExpenseHeldOut(
   expense: ProfitExpense,
   state: { absorbedBySoldCost: boolean }
 ): boolean {
+  if (expense.lotExpenseId) return false;
   if (expense.category !== "fotografias") return false;
   if (expense.includedInGarmentCost) return true;
   return state.absorbedBySoldCost;

@@ -61,6 +61,7 @@ export interface PreparedInventoryItem {
   condition: string;
   priceGtq: string;
   photos: InventoryPhoto[];
+  lotId?: string | null;
   createdBy?: SaleActor | null;
 }
 
@@ -184,6 +185,7 @@ export function prepareInventorySave(input: {
   condition?: unknown;
   price?: unknown;
   photos?: unknown;
+  lotId?: unknown;
 }): PrepareResult {
   const clientId = typeof input.clientId === "string" ? input.clientId.trim() : "";
   const sourceGroupId = typeof input.sourceGroupId === "string" ? input.sourceGroupId.trim() : "";
@@ -215,6 +217,7 @@ export function prepareInventorySave(input: {
       condition: textField(input.condition),
       priceGtq,
       photos,
+      lotId: typeof input.lotId === "string" && input.lotId.trim() ? input.lotId.trim() : null,
     },
   };
 }
