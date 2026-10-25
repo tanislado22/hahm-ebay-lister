@@ -5,6 +5,14 @@ import { accessHeaders } from "@/lib/api-client";
 import { isOwnerAccessFailure, ownerAccessMessage } from "@/lib/owner-access-messages";
 import { OwnerAccess, useOwnerAccessLost } from "@/app/OwnerAccess";
 
+interface MissingItem {
+  id: string;
+  title: string;
+  sku: string;
+  previousItemId: string;
+  source: "platform" | "vinted" | "";
+}
+
 interface RelinkResponse {
   ok?: boolean;
   code?: string;
@@ -12,6 +20,12 @@ interface RelinkResponse {
   updated?: number;
   missing?: number;
   review?: number;
+  skipped?: number;
+  lookupIncomplete?: boolean;
+  unchecked?: number;
+  activeCount?: number;
+  pagesRead?: number;
+  missingItems?: MissingItem[];
 }
 
 export default function EbayLinksPage() {
@@ -132,7 +146,30 @@ function RelinkPanel() {
           <p>Actualizados: {result.updated ?? 0}</p>
           <p>Sin coincidencia: {result.missing ?? 0}</p>
           <p>Requieren revisión: {result.review ?? 0}</p>
-          <p>Puedes volver a intentar los que todavía no tengan una publicación nueva.</p>
+          <p>
+            Publicaciones activas leídas: {result.activeCount ?? 0}. Páginas leídas: {result.pagesRead ?? 0}. Se usó la
+            cuenta de eBay conectada en esta tienda.
+          </p>
+          {result.lookupIncomplete ? (
+            <p>
+              Quedaron {result.unchecked ?? 0} anuncios anteriores sin comprobar. No se modificó su Item ID.
+            </p>
+          ) : null}
+          {result.missingItems && result.missingItems.length > 0 ? (
+            <div>
+              <p>Artículos sin coincidencia. El SKU se comparó exactamente y no se vinculó por título.</p>
+              <ul>
+                {result.missingItems.map((item) => (
+                  <li key={item.id}>
+                    <p>{item.title || "Sin título guardado"}</p>
+                    <p>SKU {item.sku || "sin SKU"}</p>
+                    <p>Item ID anterior {item.previousItemId}</p>
+                    <p>{item.source === "vinted" ? "Registro de Inventario Vinted" : "Registro de publicaciones"}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <p>

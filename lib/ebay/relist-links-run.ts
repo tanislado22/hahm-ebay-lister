@@ -3,8 +3,8 @@ import { normalizeListingStatus, type ListingSnapshot } from "@/lib/ebay/ended-l
 import {
   ebayItemIdText,
   planEbayRelinks,
+  resolveOldListingStates,
   type EbayRelinkSummary,
-  type OldListingState,
   type StoredEbayArticle,
 } from "@/lib/ebay/relist-link";
 import { ensureInventoryTables, getSql } from "@/lib/db";
@@ -12,6 +12,8 @@ import { ensureInventoryTables, getSql } from "@/lib/db";
 export interface EbayRelinkResult extends EbayRelinkSummary {
   ok: boolean;
   error: string;
+  lookupIncomplete: boolean;
+  unchecked: number;
 }
 
 type ArticleSource = "platform" | "vinted";
@@ -28,6 +30,7 @@ function mapArticle(row: Record<string, unknown>, source: ArticleSource): Linked
     recordId,
     source,
     sku: String(row.sku ?? ""),
+    title: String(row.title ?? ""),
     itemId: String(row.ebay_item_id ?? ""),
   };
 }
@@ -36,12 +39,12 @@ async function storedArticles(): Promise<LinkedArticle[]> {
   const sql = getSql();
   await ensureInventoryTables();
   const listings = await sql`
-    SELECT id, sku, ebay_item_id
+    SELECT id, sku, ebay_title AS title, ebay_item_id
     FROM platform_listings
     WHERE ebay_item_id IS NOT NULL AND btrim(ebay_item_id) <> ''
   `;
   const vinted = await sql`
-    SELECT id, sku, ebay_item_id
+    SELECT id, sku, title, ebay_item_id
     FROM vinted_inventory_links
     WHERE ebay_item_id IS NOT NULL AND btrim(ebay_item_id) <> ''
   `;
@@ -74,6 +77,7 @@ async function replaceItemId(article: LinkedArticle, nextItemId: string): Promis
 
 const LOOKUP_BUDGET_MS = 20000;
 const LOOKUP_TIMEOUT_MS = 8000;
+const LOOKUP_CONCURRENCY = 4;
 
 export async function acquireRelinkLock(): Promise<boolean> {
   const sql = getSql();
@@ -106,26 +110,29 @@ export async function refreshEbayLinksFromListings(
 ): Promise<EbayRelinkResult> {
   const articles = await storedArticles();
   const activeIds = new Set(listings.filter((listing) => listing.status === "active").map((listing) => ebayItemIdText(listing.itemId)));
-  const states = new Map<string, OldListingState>();
-  const lookupStarted = Date.now();
-  for (const article of articles) {
-    const itemId = ebayItemIdText(article.itemId);
-    if (!itemId || states.has(itemId) || activeIds.has(itemId)) continue;
-    if (Date.now() - lookupStarted > LOOKUP_BUDGET_MS) {
-      states.set(itemId, "unknown");
-      continue;
-    }
-    const listing = await Promise.race([
-      fetchSellerItem(accessToken, itemId),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), LOOKUP_TIMEOUT_MS)),
-    ]);
-    if (!listing) {
-      states.set(itemId, "unknown");
-      continue;
-    }
-    const status = normalizeListingStatus(listing.status);
-    states.set(itemId, status === "ended" ? "ended" : status === "active" ? "active" : "unknown");
-  }
+  const pendingIds = articles
+    .map((article) => ebayItemIdText(article.itemId))
+    .filter((itemId) => itemId && !activeIds.has(itemId));
+  const lookedUp = await resolveOldListingStates({
+    itemIds: pendingIds,
+    budgetMs: LOOKUP_BUDGET_MS,
+    concurrency: LOOKUP_CONCURRENCY,
+    lookup: async (itemId) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const listing = await Promise.race([
+        fetchSellerItem(accessToken, itemId),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), LOOKUP_TIMEOUT_MS);
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
+      if (!listing) return "unknown";
+      const status = normalizeListingStatus(listing.status);
+      if (status === "ended" || status === "active") return status;
+      return "unknown";
+    },
+  });
+  const states = lookedUp.states;
   const summary = planEbayRelinks({
     articles,
     active: listings,
@@ -138,5 +145,12 @@ export async function refreshEbayLinksFromListings(
     if (!article || plan.outcome !== "updated" || !plan.nextItemId) continue;
     await replaceItemId(article, plan.nextItemId);
   }
-  return { ...summary, ok: true, error: "" };
+  const pendingUnique = new Set(pendingIds);
+  return {
+    ...summary,
+    ok: true,
+    error: "",
+    lookupIncomplete: lookedUp.incomplete,
+    unchecked: Math.max(0, pendingUnique.size - states.size),
+  };
 }

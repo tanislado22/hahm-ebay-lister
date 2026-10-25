@@ -68,6 +68,19 @@ export async function POST(req: NextRequest) {
       review: result.review,
       unchanged: result.unchanged,
       skipped: result.skipped,
+      lookupIncomplete: result.lookupIncomplete,
+      unchecked: result.unchecked,
+      activeCount: active.listings.length,
+      pagesRead: active.pages,
+      missingItems: result.plans
+        .filter((plan) => plan.outcome === "missing")
+        .map((plan) => ({
+          id: plan.id,
+          title: plan.title,
+          sku: plan.sku,
+          previousItemId: plan.previousItemId,
+          source: plan.source,
+        })),
     });
   } catch (error) {
     console.error("[ebay/relink]", error instanceof Error ? error.name : "Error");

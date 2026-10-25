@@ -2,6 +2,8 @@ export interface StoredEbayArticle {
   id: string;
   sku: string;
   itemId: string;
+  title?: string;
+  source?: "platform" | "vinted";
 }
 
 export interface ActiveEbayListing {
@@ -16,6 +18,8 @@ export type RelinkOutcome = "updated" | "unchanged" | "missing" | "review" | "sk
 export interface EbayRelinkPlan {
   id: string;
   sku: string;
+  title: string;
+  source: "platform" | "vinted" | "";
   previousItemId: string;
   nextItemId: string | null;
   outcome: RelinkOutcome;
@@ -39,6 +43,37 @@ export function ebayItemIdText(value: string): string {
   return value.replace(/\D/g, "");
 }
 
+/** Old Item IDs that are not in the active catalog still need a status lookup. */
+export async function resolveOldListingStates(input: {
+  itemIds: readonly string[];
+  lookup: (itemId: string) => Promise<OldListingState>;
+  budgetMs: number;
+  now?: () => number;
+  concurrency?: number;
+}): Promise<{ states: Map<string, OldListingState>; incomplete: boolean }> {
+  const states = new Map<string, OldListingState>();
+  const now = input.now ?? Date.now;
+  const started = now();
+  const unique = [...new Set(input.itemIds.filter(Boolean))];
+  let cursor = 0;
+  let incomplete = false;
+  const workers = Array.from({ length: Math.max(1, input.concurrency ?? 4) }, async () => {
+    while (cursor < unique.length) {
+      if (now() - started >= input.budgetMs) {
+        incomplete = true;
+        return;
+      }
+      const itemId = unique[cursor];
+      cursor += 1;
+      if (!itemId || states.has(itemId)) continue;
+      states.set(itemId, await input.lookup(itemId));
+    }
+  });
+  await Promise.all(workers);
+  if ([...states.keys()].length < unique.length) incomplete = true;
+  return { states, incomplete };
+}
+
 export function planEbayRelinks(input: {
   articles: readonly StoredEbayArticle[];
   active: readonly ActiveEbayListing[];
@@ -56,6 +91,8 @@ export function planEbayRelinks(input: {
       plans: input.articles.map((article) => ({
         id: article.id,
         sku: exactEbaySku(article.sku),
+        title: article.title?.trim() ?? "",
+        source: article.source ?? "",
         previousItemId: ebayItemIdText(article.itemId),
         nextItemId: null,
         outcome: "skipped",
@@ -80,18 +117,20 @@ export function planEbayRelinks(input: {
   const plans: EbayRelinkPlan[] = [];
   for (const article of input.articles) {
     const sku = exactEbaySku(article.sku);
+    const title = article.title?.trim() ?? "";
+    const source = article.source ?? "";
     const previousItemId = ebayItemIdText(article.itemId);
     const state = previousItemId ? input.oldState(previousItemId) : "unknown";
     if (state === "active") {
-      plans.push({ id: article.id, sku, previousItemId, nextItemId: null, outcome: "unchanged" });
+      plans.push({ id: article.id, sku, title, source, previousItemId, nextItemId: null, outcome: "unchanged" });
       continue;
     }
     if (state !== "ended") {
-      plans.push({ id: article.id, sku, previousItemId, nextItemId: null, outcome: "skipped" });
+      plans.push({ id: article.id, sku, title, source, previousItemId, nextItemId: null, outcome: "skipped" });
       continue;
     }
     if (!sku) {
-      plans.push({ id: article.id, sku, previousItemId, nextItemId: null, outcome: "review" });
+      plans.push({ id: article.id, sku, title, source, previousItemId, nextItemId: null, outcome: "review" });
       continue;
     }
     const matches = (activeBySku.get(sku) ?? []).filter((listing) => listing.itemId !== previousItemId);
@@ -99,6 +138,8 @@ export function planEbayRelinks(input: {
       plans.push({
         id: article.id,
         sku,
+        title,
+        source,
         previousItemId,
         nextItemId: matches[0].itemId,
         outcome: "updated",
@@ -108,6 +149,8 @@ export function planEbayRelinks(input: {
     plans.push({
       id: article.id,
       sku,
+      title,
+      source,
       previousItemId,
       nextItemId: null,
       outcome: matches.length === 0 ? "missing" : "review",

@@ -39,7 +39,7 @@ export function activePageCount(xml: string, itemCount: number): number | null {
 
 export async function fetchAllActiveSellerListings(
   accessToken: string
-): Promise<{ ok: true; listings: ListingSnapshot[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; listings: ListingSnapshot[]; pages: number } | { ok: false; error: string }> {
   const listings: ListingSnapshot[] = [];
   let reported = 1;
   try {
@@ -82,5 +82,5 @@ export async function fetchAllActiveSellerListings(
       error: "No se pudo leer el inventario activo de eBay. No se marcó ninguna publicación como finalizada.",
     };
   }
-  return { ok: true, listings };
+  return { ok: true, listings, pages: reported };
 }

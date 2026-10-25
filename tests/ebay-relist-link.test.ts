@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { activePageCount, fetchAllActiveSellerListings } from "@/lib/ebay/active-inventory";
-import { planEbayRelinks, type ActiveEbayListing, type StoredEbayArticle } from "@/lib/ebay/relist-link";
+import { planEbayRelinks, resolveOldListingStates, type ActiveEbayListing, type StoredEbayArticle } from "@/lib/ebay/relist-link";
 
 const stored: StoredEbayArticle = { id: "articulo-1", sku: "0123-AB", itemId: "111111111111" };
 const replacement: ActiveEbayListing = { itemId: "222222222222", sku: "0123-AB" };
@@ -49,13 +49,20 @@ describe("vínculos de eBay republicados", () => {
     expect(missingSku.updated).toBe(0);
 
     const titleOnly = planEbayRelinks({
-      articles: [stored],
+      articles: [{ ...stored, title: "Shorts anteriores", source: "vinted" }],
       active: [{ itemId: "555555555555", sku: "OTRO" }],
       oldState: endedState,
       catalogComplete: true,
     });
     expect(titleOnly.missing).toBe(1);
     expect(titleOnly.updated).toBe(0);
+    expect(titleOnly.plans[0]).toMatchObject({
+      sku: "0123-AB",
+      title: "Shorts anteriores",
+      previousItemId: "111111111111",
+      source: "vinted",
+      outcome: "missing",
+    });
   });
 
   it("no trata un error o un inventario incompleto como publicación finalizada", () => {
@@ -84,6 +91,31 @@ describe("vínculos de eBay republicados", () => {
     expect(activePageCount("<TotalNumberOfPages>0</TotalNumberOfPages>", 200)).toBeNull();
     expect(activePageCount("<Item></Item>", 200)).toBeNull();
     expect(activePageCount("<TotalNumberOfPages>3</TotalNumberOfPages>", 200)).toBe(3);
+  });
+
+  it("deja de consultar anuncios anteriores cuando se acaba el tiempo y no los cuenta como sin coincidencia", async () => {
+    let calls = 0;
+    const lookedUp = await resolveOldListingStates({
+      itemIds: ["111", "222", "333"],
+      budgetMs: 0,
+      now: () => 1000,
+      lookup: async () => {
+        calls += 1;
+        return "ended";
+      },
+    });
+    expect(calls).toBe(0);
+    expect(lookedUp.incomplete).toBe(true);
+    expect(lookedUp.states.size).toBe(0);
+
+    const finished = await resolveOldListingStates({
+      itemIds: ["111", "222", "333"],
+      budgetMs: 1000,
+      now: () => 0,
+      lookup: async () => "ended",
+    });
+    expect(finished.incomplete).toBe(false);
+    expect([...finished.states.values()]).toEqual(["ended", "ended", "ended"]);
   });
 
   it("lee todas las páginas y un fallo de eBay no devuelve un inventario parcial", async () => {
