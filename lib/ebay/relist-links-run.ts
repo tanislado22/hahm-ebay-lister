@@ -72,6 +72,34 @@ async function replaceItemId(article: LinkedArticle, nextItemId: string): Promis
   `;
 }
 
+const LOOKUP_BUDGET_MS = 20000;
+const LOOKUP_TIMEOUT_MS = 8000;
+
+export async function acquireRelinkLock(): Promise<boolean> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  await sql`
+    CREATE TABLE IF NOT EXISTS ebay_relink_lock (
+      id TEXT PRIMARY KEY,
+      started_at TIMESTAMPTZ NOT NULL
+    )
+  `;
+  const rows = await sql`
+    INSERT INTO ebay_relink_lock (id, started_at)
+    VALUES ('store', NOW())
+    ON CONFLICT (id) DO UPDATE
+    SET started_at = EXCLUDED.started_at
+    WHERE ebay_relink_lock.started_at < NOW() - INTERVAL '2 minutes'
+    RETURNING id
+  `;
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+export async function releaseRelinkLock(): Promise<void> {
+  const sql = getSql();
+  await sql`DELETE FROM ebay_relink_lock WHERE id = 'store'`;
+}
+
 export async function refreshEbayLinksFromListings(
   accessToken: string,
   listings: readonly ListingSnapshot[]
@@ -79,10 +107,18 @@ export async function refreshEbayLinksFromListings(
   const articles = await storedArticles();
   const activeIds = new Set(listings.filter((listing) => listing.status === "active").map((listing) => ebayItemIdText(listing.itemId)));
   const states = new Map<string, OldListingState>();
+  const lookupStarted = Date.now();
   for (const article of articles) {
     const itemId = ebayItemIdText(article.itemId);
     if (!itemId || states.has(itemId) || activeIds.has(itemId)) continue;
-    const listing = await fetchSellerItem(accessToken, itemId);
+    if (Date.now() - lookupStarted > LOOKUP_BUDGET_MS) {
+      states.set(itemId, "unknown");
+      continue;
+    }
+    const listing = await Promise.race([
+      fetchSellerItem(accessToken, itemId),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), LOOKUP_TIMEOUT_MS)),
+    ]);
     if (!listing) {
       states.set(itemId, "unknown");
       continue;

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import { fetchAllActiveSellerListings } from "@/lib/ebay/active-inventory";
-import { refreshEbayLinksFromListings } from "@/lib/ebay/relist-links-run";
+import { acquireRelinkLock, refreshEbayLinksFromListings, releaseRelinkLock } from "@/lib/ebay/relist-links-run";
 import { requireEbayAccessToken } from "@/lib/ebay/route-access";
 
 export const dynamic = "force-dynamic";
@@ -19,14 +19,42 @@ export async function POST(req: NextRequest) {
       { status: 409 }
     );
   }
-  const active = await fetchAllActiveSellerListings(token);
-  if (!active.ok) {
+  let locked = false;
+  try {
+    locked = await acquireRelinkLock();
+  } catch (error) {
+    console.error("[ebay/relink] lock", error instanceof Error ? error.name : "Error");
     return NextResponse.json(
-      { ok: false, error: active.error, updated: 0, missing: 0, review: 0 },
-      { status: 502 }
+      {
+        ok: false,
+        error: "No se pudo iniciar la actualización. No se marcó ninguna publicación como finalizada.",
+        updated: 0,
+        missing: 0,
+        review: 0,
+      },
+      { status: 500 }
+    );
+  }
+  if (!locked) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Ya hay una actualización en curso. Espera a que termine antes de volver a intentar.",
+        updated: 0,
+        missing: 0,
+        review: 0,
+      },
+      { status: 409 }
     );
   }
   try {
+    const active = await fetchAllActiveSellerListings(token);
+    if (!active.ok) {
+      return NextResponse.json(
+        { ok: false, error: active.error, updated: 0, missing: 0, review: 0 },
+        { status: 502 }
+      );
+    }
     const result = await refreshEbayLinksFromListings(token, active.listings);
     return NextResponse.json({
       ok: true,
@@ -48,5 +76,9 @@ export async function POST(req: NextRequest) {
       },
       { status: 500 }
     );
+  } finally {
+    await releaseRelinkLock().catch((error) => {
+      console.error("[ebay/relink] unlock", error instanceof Error ? error.name : "Error");
+    });
   }
 }

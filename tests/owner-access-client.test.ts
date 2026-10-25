@@ -27,6 +27,26 @@ describe("acceso del propietario", () => {
     expect(headers.get("x-app-secret")).toBe("guardado");
   });
 
+  it("varias peticiones a la vez abren un solo aviso", async () => {
+    const prompt = vi.fn(() => "codigo-del-propietario");
+    stubBrowser(prompt, null);
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls <= 2) {
+          return new Response(JSON.stringify({ ok: false, code: "ACCESS_CODE_REQUIRED" }), { status: 401 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      })
+    );
+    const [first, second] = await Promise.all([apiPost("/api/a", {}), apiPost("/api/b", {})]);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+  });
+
   it("la página principal pide el código cuando el servidor lo exige", async () => {
     const prompt = vi.fn(() => "codigo-del-propietario");
     stubBrowser(prompt, null);

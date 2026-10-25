@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { accessHeaders, isAccessCodeChallenge } from "@/lib/api-client";
 
 interface RelinkResponse {
@@ -16,22 +16,33 @@ export default function EbayLinksPage() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<RelinkResponse | null>(null);
+  const runningRef = useRef(false);
 
   async function updateLinks() {
+    if (runningRef.current) return;
+    runningRef.current = true;
     setRunning(true);
     setError("");
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 50000);
+    const headers = accessHeaders();
     try {
       const response = await fetch("/api/ebay/relink", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...accessHeaders() },
+        headers: { "Content-Type": "application/json", ...headers },
         body: "{}",
         cache: "no-store",
         credentials: "same-origin",
+        signal: controller.signal,
       });
       const body = (await response.json()) as RelinkResponse;
       if (isAccessCodeChallenge(response.status, body.code)) {
         setResult(null);
-        setError("Esta herramienta usa el acceso del propietario que ya guardó la página principal en este navegador.");
+        setError(
+          headers["x-app-secret"]
+            ? "El acceso guardado no autorizó esta acción. La pantalla sigue disponible."
+            : "Abre la página principal en este navegador para preparar el acceso del propietario. La pantalla sigue disponible."
+        );
         return;
       }
       if (!response.ok || !body.ok) {
@@ -40,10 +51,16 @@ export default function EbayLinksPage() {
         return;
       }
       setResult(body);
-    } catch {
+    } catch (error) {
       setResult(null);
-      setError("No se pudieron actualizar los vínculos de eBay.");
+      setError(
+        error instanceof DOMException && error.name === "AbortError"
+          ? "La actualización no terminó a tiempo. La pantalla sigue disponible y puedes volver a intentar."
+          : "No se pudieron actualizar los vínculos de eBay."
+      );
     } finally {
+      window.clearTimeout(timer);
+      runningRef.current = false;
       setRunning(false);
     }
   }

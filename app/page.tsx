@@ -135,6 +135,20 @@ const saveClient = () => {
 
 };
 
+  useEffect(() => {
+    const headers = accessHeaders();
+    if (!headers["x-app-secret"]) return;
+    const controller = new AbortController();
+    void fetch("/api/owner-session", {
+      method: "POST",
+      headers,
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: controller.signal,
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+
   const clientsLoadedRef = useRef(false);
   const [clientsHydrated, setClientsHydrated] = useState(false);
   const skipClientSaveRef = useRef(false);

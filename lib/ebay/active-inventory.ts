@@ -17,6 +17,7 @@ async function tradingCall(accessToken: string, body: string): Promise<string> {
       "X-EBAY-API-COMPATIBILITY-LEVEL": COMPATIBILITY_LEVEL,
     },
     body,
+    signal: AbortSignal.timeout(15000),
   });
   const text = await resp.text();
   if (!resp.ok || !/<Ack>(Success|Warning)<\/Ack>/i.test(text)) {

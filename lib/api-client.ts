@@ -43,6 +43,26 @@ async function responseChallengesAccess(res: Response): Promise<boolean> {
   return isAccessCodeChallenge(res.status, payload?.code);
 }
 
+let promptTask: Promise<string | null> | null = null;
+
+/** One dialog at a time. Stacked prompts freeze Chrome with "Page Unresponsive". */
+function askAccessCode(message: string): Promise<string | null> {
+  if (promptTask) return promptTask;
+  promptTask = new Promise((resolve) => {
+    setTimeout(() => {
+      try {
+        const entered = window.prompt(message);
+        resolve(entered && entered.trim() ? entered.trim() : null);
+      } catch {
+        resolve(null);
+      } finally {
+        promptTask = null;
+      }
+    }, 0);
+  });
+  return promptTask;
+}
+
 export function clearAccessCode(): void {
   try {
     window.localStorage.removeItem(STORAGE_KEY);
@@ -60,13 +80,13 @@ export async function apiGet(path: string): Promise<Response> {
   };
   let res = await run(code);
   for (let attempt = 0; attempt < 2 && (await responseChallengesAccess(res)); attempt++) {
-    const entered = window.prompt(
+    const entered = await askAccessCode(
       attempt === 0
         ? "Enter your access code. This is the APP_SECRET you set in Vercel (Settings → Environment Variables) — not your Anthropic API key."
         : "That didn't match the APP_SECRET set in Vercel — try again:"
     );
-    if (!entered || !entered.trim()) return res;
-    code = entered.trim();
+    if (!entered) return res;
+    code = entered;
     res = await run(code);
     if (res.status !== 401) saveCode(code);
   }
@@ -89,13 +109,13 @@ export async function apiPost(path: string, body: unknown): Promise<Response> {
 
   // Up to two prompt attempts: covers both "no code yet" and "wrong code".
   for (let attempt = 0; attempt < 2 && (await responseChallengesAccess(res)); attempt++) {
-    const entered = window.prompt(
+    const entered = await askAccessCode(
       attempt === 0
         ? "Enter your access code. This is the APP_SECRET you set in Vercel (Settings → Environment Variables) — not your Anthropic API key."
         : "That didn't match the APP_SECRET set in Vercel — try again:"
     );
-    if (!entered || !entered.trim()) return res; // user cancelled — surface the 401
-    code = entered.trim();
+    if (!entered) return res;
+    code = entered;
     res = await doFetch(path, body, code);
     if (res.status !== 401) saveCode(code);
   }

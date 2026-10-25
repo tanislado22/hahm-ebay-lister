@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
+import { OWNER_COOKIE, ownerSessionValid } from "@/lib/owner-session";
 
 /**
  * Access guard for the AI-powered API routes.
@@ -30,6 +31,7 @@ export function ownerAccessGranted(req: NextRequest): boolean {
   if (!secret) {
     return process.env.NODE_ENV !== "production" && process.env.VERCEL_ENV !== "production";
   }
+  if (ownerSessionValid(req.cookies.get(OWNER_COOKIE)?.value)) return true;
   const provided = req.headers.get("x-app-secret") ?? "";
   return Boolean(provided) && timingSafeEqual(provided, secret);
 }
@@ -95,8 +97,7 @@ export function guardApiRequest(req: NextRequest): NextResponse | null {
     return null; // local development only
   }
 
-  const provided = req.headers.get("x-app-secret") ?? "";
-  if (!provided || !timingSafeEqual(provided, secret)) {
+  if (!ownerAccessGranted(req)) {
     return NextResponse.json(
       { ok: false, code: "ACCESS_CODE_REQUIRED", error: "Access code required." },
       { status: 401 }
