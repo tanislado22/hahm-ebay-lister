@@ -123,6 +123,14 @@ export function syncKeepsDiscardedVinted(stored: { vintedUnlinkedAt?: string | n
   return Boolean(stored?.vintedUnlinkedAt);
 }
 
+export function urlAfterSync(
+  stored: { url: string; manualVintedUrlAt?: string | null },
+  incomingUrl: string
+): string {
+  if (stored.manualVintedUrlAt) return stored.url;
+  return incomingUrl;
+}
+
 export function photoAfterSync(
   stored: { photoUrl: string; manualPhotoAt?: string | null },
   incomingPhoto: string,

@@ -4,6 +4,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { apiGet, apiPost } from "@/lib/api-client";
 import { ebayItemUrl } from "@/lib/vinted/card-text";
 import { rejectOneCandidate } from "@/lib/vinted/candidate-rejection";
+import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
+import { buildStoredZip, vintedPhotoFileName, vintedPhotoZipName } from "@/lib/vinted/photo-zip";
+import { confirmedVintedHref } from "@/lib/vinted/prepare-listing";
 import { duplicateGroupsWithoutArchived } from "@/lib/vinted/inventory-archive";
 import { parseInventoryImport, VINTED_SYNC_PILOT_LIMIT } from "@/lib/vinted/inventory-match";
 import { anchorElementId, keepWorkingOrder, listScrollHold, readDocumentScroll, writeDocumentScroll, type ListScrollHold } from "@/lib/vinted/list-scroll";
@@ -29,6 +32,31 @@ interface InventoryItem {
   archivedAt: string;
   vintedPresence: "" | "active" | "removed" | "unverified";
   vintedUnlinkedAt: string;
+  discardedVintedUrl: string;
+}
+
+interface PrepareDraftView {
+  sku: string;
+  title: string;
+  description: string;
+  price: string;
+  currency: string;
+  photoUrls: string[];
+  ebayItemId: string;
+}
+
+interface PreparePanel {
+  loading: boolean;
+  draft: PrepareDraftView | null;
+  title: string;
+  description: string;
+  price: string;
+  error: string;
+  readySku: string;
+  photoCount: number;
+  missingPhotos: number;
+  linkUrl: string;
+  linkArmed: boolean;
 }
 
 interface EbayCandidate {
@@ -100,6 +128,30 @@ const VIEWS: Array<{ id: View; label: string }> = [
   { id: "archived", label: "Archivados" },
 ];
 
+function openVintedHref(item: Pick<InventoryItem, "url" | "vintedUnlinkedAt" | "discardedVintedUrl">): string {
+  return confirmedVintedHref({
+    url: item.url,
+    vintedUnlinkedAt: item.vintedUnlinkedAt,
+    discardedVintedUrl: item.discardedVintedUrl,
+  });
+}
+
+function emptyPreparePanel(): PreparePanel {
+  return {
+    loading: false,
+    draft: null,
+    title: "",
+    description: "",
+    price: "",
+    error: "",
+    readySku: "",
+    photoCount: 0,
+    missingPhotos: 0,
+    linkUrl: "",
+    linkArmed: false,
+  };
+}
+
 function platformLabel(platform: string): string {
   if (platform === "ebay") return "eBay";
   if (platform === "depop") return "Depop";
@@ -136,6 +188,10 @@ export default function VintedInventoryPage() {
   const [savingPhoto, setSavingPhoto] = useState(false);
   const [pendingUnlinkId, setPendingUnlinkId] = useState<string | null>(null);
   const [unlinking, setUnlinking] = useState(false);
+  const [prepareWarningId, setPrepareWarningId] = useState<string | null>(null);
+  const [preparePanels, setPreparePanels] = useState<Record<string, PreparePanel>>({});
+  const [preparing, setPreparing] = useState(false);
+  const [savingLink, setSavingLink] = useState(false);
   const [syncingDuplicates, setSyncingDuplicates] = useState(false);
   const identifyRun = useRef(false);
   const pendingAnchor = useRef<ListScrollHold | null>(null);
@@ -598,6 +654,311 @@ export default function VintedInventoryPage() {
     }
   }
 
+  function beginPrepare(item: InventoryItem) {
+    if (item.archivedAt || preparing) return;
+    if (openVintedHref(item)) {
+      setPrepareWarningId(item.vintedItemId);
+      return;
+    }
+    void lookupPrepare(item);
+  }
+
+  async function lookupPrepare(item: InventoryItem) {
+    setPrepareWarningId(null);
+    setPreparing(true);
+    setError("");
+    setPreparePanels((current) => ({
+      ...current,
+      [item.vintedItemId]: { ...emptyPreparePanel(), loading: true },
+    }));
+    try {
+      const response = await apiPost("/api/vinted/inventory/prepare", { vintedItemId: item.vintedItemId });
+      const body = (await response.json()) as { ok?: boolean; error?: string; draft?: PrepareDraftView };
+      if (!response.ok || !body.ok || !body.draft) {
+        setPreparePanels((current) => ({
+          ...current,
+          [item.vintedItemId]: { ...emptyPreparePanel(), error: body.error || "No se preparó ningún artículo." },
+        }));
+        return;
+      }
+      const draft = body.draft;
+      setPreparePanels((current) => ({
+        ...current,
+        [item.vintedItemId]: {
+          ...emptyPreparePanel(),
+          draft,
+          title: draft.title,
+          description: draft.description,
+          price: draft.price,
+        },
+      }));
+    } catch {
+      setPreparePanels((current) => ({
+        ...current,
+        [item.vintedItemId]: { ...emptyPreparePanel(), error: "No se pudo consultar tu cuenta de eBay. No se preparó ningún artículo." },
+      }));
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  async function commitPrepare(item: InventoryItem) {
+    const panel = preparePanels[item.vintedItemId];
+    if (!panel?.draft || preparing) return;
+    setPreparing(true);
+    setError("");
+    try {
+      const response = await apiPost("/api/vinted/inventory/prepare", {
+        vintedItemId: item.vintedItemId,
+        confirm: true,
+        sku: panel.draft.sku,
+        ebayItemId: panel.draft.ebayItemId,
+        title: panel.title,
+        description: panel.description,
+        price: panel.price,
+      });
+      const body = (await response.json()) as { ok?: boolean; error?: string; sku?: string; photoCount?: number; missingPhotos?: number };
+      if (!response.ok || !body.ok || !body.sku) {
+        setPreparePanels((current) => ({
+          ...current,
+          [item.vintedItemId]: { ...panel, error: body.error || "No se preparó ningún artículo." },
+        }));
+        return;
+      }
+      setPreparePanels((current) => ({
+        ...current,
+        [item.vintedItemId]: {
+          ...panel,
+          error: "",
+          readySku: body.sku || panel.draft?.sku || "",
+          photoCount: body.photoCount || 0,
+          missingPhotos: body.missingPhotos || 0,
+        },
+      }));
+    } catch {
+      setPreparePanels((current) => ({
+        ...current,
+        [item.vintedItemId]: { ...panel, error: "No se pudo preparar el artículo. No se publicó nada." },
+      }));
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  async function downloadPreparedPhotos(sku: string) {
+    setError("");
+    try {
+      const listed = await apiGet(`/api/vinted/assist?sku=${encodeURIComponent(sku)}`);
+      const info = (await listed.json()) as { ok?: boolean; error?: string; photoCount?: number };
+      if (!listed.ok || !info.ok || !info.photoCount) {
+        setError(info.error || "No hay fotos preparadas para descargar.");
+        return;
+      }
+      const files: { name: string; data: Uint8Array }[] = [];
+      for (let index = 0; index < info.photoCount; index += 1) {
+        const response = await apiGet(`/api/vinted/assist?sku=${encodeURIComponent(sku)}&photo=${index}`);
+        const body = (await response.json()) as { ok?: boolean; photo?: { mediaType?: string; data?: string } };
+        if (!response.ok || !body.ok || !body.photo?.data) continue;
+        const copy = await optimizePhotoCopy(body.photo.data, body.photo.mediaType || "image/jpeg");
+        files.push({ name: vintedPhotoFileName(sku, index), data: copy });
+      }
+      if (!files.length) {
+        setError("No hay fotos preparadas para descargar.");
+        return;
+      }
+      const zip = buildStoredZip(files);
+      const zipBuffer = new ArrayBuffer(zip.byteLength);
+      new Uint8Array(zipBuffer).set(zip);
+      const blob = new Blob([zipBuffer], { type: "application/zip" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = vintedPhotoZipName(sku);
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch {
+      setError("No se pudieron descargar las fotos.");
+    }
+  }
+
+  function openLinkForm(item: InventoryItem) {
+    setPreparePanels((current) => ({
+      ...current,
+      [item.vintedItemId]: current[item.vintedItemId] || emptyPreparePanel(),
+    }));
+  }
+
+  async function savePreparedLink(item: InventoryItem) {
+    const panel = preparePanels[item.vintedItemId];
+    if (!panel || savingLink) return;
+    setSavingLink(true);
+    setError("");
+    rememberPlace(item.vintedItemId);
+    try {
+      const response = await apiPost("/api/vinted/inventory/vinted-link", {
+        vintedItemId: item.vintedItemId,
+        url: panel.linkUrl,
+        confirm: true,
+      });
+      const body = (await response.json()) as { ok?: boolean; error?: string; url?: string };
+      if (!response.ok || !body.ok) {
+        pendingAnchor.current = null;
+        setPreparePanels((current) => ({
+          ...current,
+          [item.vintedItemId]: { ...panel, error: body.error || "No se guardó el enlace.", linkArmed: false },
+        }));
+        return;
+      }
+      setPreparePanels((current) => {
+        const next = { ...current };
+        delete next[item.vintedItemId];
+        return next;
+      });
+      await load(query, "quiet");
+    } catch {
+      pendingAnchor.current = null;
+      setError("No se pudo guardar el enlace. No se modificó el registro.");
+    } finally {
+      setSavingLink(false);
+    }
+  }
+
+  function preparePanel(item: InventoryItem) {
+    const panel = preparePanels[item.vintedItemId];
+    const warning = prepareWarningId === item.vintedItemId;
+    if (!panel && !warning) return null;
+    return (
+      <>
+        {warning ? (
+          <div className="vinted-associate-confirm" role="alertdialog" aria-label="Revisar el vínculo de Vinted">
+            <p>
+              Este registro ya tiene un vínculo de Vinted. Revisa esa publicación antes de preparar otra. Preparar no publica el artículo ni cambia este registro.
+            </p>
+            <div className="vinted-card-actions">
+              <button className="btn btn-ghost" type="button" onClick={() => setPrepareWarningId(null)} disabled={preparing}>
+                Cancelar
+              </button>
+              <button className="btn btn-ghost" type="button" onClick={() => void lookupPrepare(item)} disabled={preparing}>
+                Continuar de todos modos
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {panel?.error ? <p role="alert">{panel.error}</p> : null}
+        {panel?.loading ? <p>Buscando la publicación activa…</p> : null}
+        {panel?.draft ? (
+          <form
+            className="vinted-prepare"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void commitPrepare(item);
+            }}
+          >
+            <p className="vinted-sku-confirmed">SKU {panel.draft.sku}</p>
+            {panel.draft.photoUrls.length ? (
+              <div className="vinted-prepare-photos">
+                {panel.draft.photoUrls.map((url) => (
+                  <img key={url} src={url} alt="" />
+                ))}
+              </div>
+            ) : (
+              <p>Esta publicación activa no tiene fotos.</p>
+            )}
+            <label>
+              Título
+              <input value={panel.title} onChange={(event) => {
+                const title = event.target.value;
+                setPreparePanels((current) => {
+                  const existing = current[item.vintedItemId];
+                  return existing ? { ...current, [item.vintedItemId]: { ...existing, title } } : current;
+                });
+              }} />
+            </label>
+            <label>
+              Descripción
+              <textarea value={panel.description} onChange={(event) => {
+                const description = event.target.value;
+                setPreparePanels((current) => {
+                  const existing = current[item.vintedItemId];
+                  return existing ? { ...current, [item.vintedItemId]: { ...existing, description } } : current;
+                });
+              }} />
+            </label>
+            <label>
+              Precio
+              <input value={panel.price} inputMode="decimal" onChange={(event) => {
+                const price = event.target.value;
+                setPreparePanels((current) => {
+                  const existing = current[item.vintedItemId];
+                  return existing ? { ...current, [item.vintedItemId]: { ...existing, price } } : current;
+                });
+              }} />
+            </label>
+            <div className="vinted-card-tools">
+              <button className="btn btn-ghost" type="submit" disabled={preparing}>
+                {preparing ? "Preparando…" : "Continuar"}
+              </button>
+              <button className="btn btn-ghost" type="button" onClick={() => setPreparePanels((current) => {
+                const next = { ...current };
+                delete next[item.vintedItemId];
+                return next;
+              })}>
+                Cerrar
+              </button>
+            </div>
+          </form>
+        ) : null}
+        {panel?.readySku ? (
+          <div className="vinted-prepare-ready">
+            <p>
+              El artículo {panel.readySku} quedó preparado para la extensión. Abre https://www.vinted.com/items/new y pulsa «Fill Ready Vinted item». La extensión rellena el formulario y sube las fotos. No pulsa Sell y este registro no queda publicado, identificado ni revisado.
+            </p>
+            {panel.missingPhotos ? <p>No se pudieron incluir {panel.missingPhotos} fotos.</p> : null}
+            {panel.photoCount > 0 ? (
+              <button className="btn btn-ghost" type="button" onClick={() => void downloadPreparedPhotos(panel.readySku)}>
+                Descargar fotos
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {panel ? (
+          <form
+            className="vinted-prepare"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!panel.linkArmed) {
+                setPreparePanels((current) => ({
+                  ...current,
+                  [item.vintedItemId]: { ...panel, linkArmed: true, error: "" },
+                }));
+                return;
+              }
+              void savePreparedLink(item);
+            }}
+          >
+            <label>
+              Enlace de Vinted
+              <input
+                value={panel.linkUrl}
+                placeholder="https://www.vinted.com/items/…"
+                onChange={(event) => {
+                  const linkUrl = event.target.value;
+                  setPreparePanels((current) => {
+                    const existing = current[item.vintedItemId];
+                    return existing ? { ...current, [item.vintedItemId]: { ...existing, linkUrl, linkArmed: false } } : current;
+                  });
+                }}
+              />
+            </label>
+            {panel.linkArmed ? <p>¿Guardar este enlace en este mismo registro? No cambia el SKU ni lo marca como publicado.</p> : null}
+            <button className="btn btn-ghost" type="submit" disabled={savingLink || !panel.linkUrl.trim()}>
+              {savingLink ? "Guardando…" : panel.linkArmed ? "Sí, guardar enlace" : "Guardar enlace de Vinted"}
+            </button>
+          </form>
+        ) : null}
+      </>
+    );
+  }
+
   function correctionPanels(item: InventoryItem) {
     if (item.archivedAt) return null;
     const lookup = photoLookup[item.vintedItemId];
@@ -668,7 +1029,7 @@ export default function VintedInventoryPage() {
           <div className="vinted-card-body">
             <h3>{item.title || "Sin título"}</h3>
             <p className="vinted-sku-confirmed">{item.sku ? `SKU ${item.sku}` : "SKU sin confirmar"}</p>
-            {item.vintedUnlinkedAt ? <p>Pendiente de vincular</p> : null}
+            {item.vintedUnlinkedAt && !openVintedHref(item) ? <p>Pendiente de vincular</p> : null}
             {suggestedSku ? <p className="vinted-sku-suggested">SKU sugerido: {suggestedSku}</p> : null}
             <p className="vinted-card-status">{matchLabel(item)}</p>
             {item.soldStatus === "pending_removal" ? <p>Vendido en {platformLabel(item.soldPlatform)} — {saleDate(item.soldAt)}</p> : null}
@@ -676,27 +1037,43 @@ export default function VintedInventoryPage() {
             <p>{item.reviewedAt ? "Revisado" : "Pendiente de revisión"}</p>
             {item.detail ? <p className="vinted-card-detail">{item.detail}</p> : null}
             {savedEbay ? <p className="vinted-item-id">Item ID {item.ebayItemId}</p> : null}
-            <div className="vinted-card-actions">
-              {item.url && !item.vintedUnlinkedAt ? (
-                <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
+            <div className="vinted-open-row">
+              {openVintedHref(item) ? (
+                <a className="btn btn-ghost" href={openVintedHref(item)} target="_blank" rel="noopener noreferrer">
                   Abrir en Vinted
                 </a>
-              ) : null}
-              {item.archivedAt ? null : (
-                <button className="btn btn-ghost" type="button" onClick={() => void lookupEbayPhoto(item)} disabled={Boolean(photoLookup[item.vintedItemId]?.loading) || savingPhoto}>
-                  {photoLookup[item.vintedItemId]?.loading ? "Buscando…" : "Actualizar foto desde eBay"}
-                </button>
-              )}
-              {item.archivedAt || item.vintedUnlinkedAt ? null : (
-                <button className="btn btn-ghost" type="button" onClick={() => setPendingUnlinkId(item.vintedItemId)}>
-                  Desvincular Vinted
+              ) : (
+                <button className="btn btn-ghost" type="button" disabled>
+                  Abrir en Vinted
                 </button>
               )}
               {savedEbay ? (
                 <a className="btn btn-ghost" href={savedEbay} target="_blank" rel="noopener noreferrer">
                   Abrir en eBay
                 </a>
-              ) : null}
+              ) : (
+                <button className="btn btn-ghost" type="button" disabled>
+                  Abrir en eBay
+                </button>
+              )}
+            </div>
+            {openVintedHref(item) ? null : <p className="vinted-link-caption">Sin vínculo confirmado</p>}
+            <div className="vinted-card-tools">
+              {item.archivedAt ? null : (
+                <button className="btn btn-ghost" type="button" onClick={() => beginPrepare(item)} disabled={preparing}>
+                  Preparar para Vinted
+                </button>
+              )}
+              {item.archivedAt ? null : (
+                <button className="btn btn-ghost" type="button" onClick={() => void lookupEbayPhoto(item)} disabled={Boolean(photoLookup[item.vintedItemId]?.loading) || savingPhoto}>
+                  {photoLookup[item.vintedItemId]?.loading ? "Buscando…" : "Actualizar foto desde eBay"}
+                </button>
+              )}
+              {item.archivedAt || !item.url || (item.vintedUnlinkedAt && !openVintedHref(item)) ? null : (
+                <button className="btn btn-ghost" type="button" onClick={() => setPendingUnlinkId(item.vintedItemId)}>
+                  Desvincular Vinted
+                </button>
+              )}
               {item.reviewedAt ? null : (
                 <button className="btn btn-ghost" type="button" onClick={() => void review(item, "mark_reviewed", [])}>
                   Marcar como revisado
@@ -730,9 +1107,17 @@ export default function VintedInventoryPage() {
                   </button>
                 </>
               ) : null}
+              {item.archivedAt ? null : (
+                <button className="btn btn-ghost" type="button" onClick={() => openLinkForm(item)}>
+                  Guardar enlace de Vinted
+                </button>
+              )}
+            </div>
+            {preparePanel(item)}
+            {correctionPanels(item)}
+            <div className="vinted-card-delete">
               {deleteActions(item)}
             </div>
-            {correctionPanels(item)}
           </div>
         </div>
         {item.status !== "verified" ? (
@@ -918,17 +1303,34 @@ export default function VintedInventoryPage() {
                         <p className="vinted-candidate-title">{item.title || "Sin título"}</p>
                         <p className="vinted-sku-confirmed">SKU {skuText(item)}</p>
                         <p>ID {item.vintedItemId}</p>
-                        {item.url && !item.vintedUnlinkedAt ? <p className="vinted-card-detail">{item.url}</p> : null}
+                        {openVintedHref(item) ? <p className="vinted-card-detail">{openVintedHref(item)}</p> : <p className="vinted-link-caption">Sin vínculo confirmado</p>}
                         <p>{presenceLabel(item)}</p>
+                        {item.vintedUnlinkedAt && !openVintedHref(item) ? <p>Pendiente de vincular</p> : null}
                         {item.duplicateStatus === "confirmed" ? <p>🔵 Duplicado confirmado</p> : null}
-                        <div className="vinted-card-actions">
-                          {item.url && !item.vintedUnlinkedAt ? (
-                            <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
+                        <div className="vinted-open-row">
+                          {openVintedHref(item) ? (
+                            <a className="btn btn-ghost" href={openVintedHref(item)} target="_blank" rel="noopener noreferrer">
                               Abrir en Vinted
                             </a>
-                          ) : item.vintedUnlinkedAt ? (
-                            <span>Pendiente de vincular</span>
-                          ) : null}
+                          ) : (
+                            <button className="btn btn-ghost" type="button" disabled>
+                              Abrir en Vinted
+                            </button>
+                          )}
+                          {(() => {
+                            const ebay = ebayItemUrl(item.ebayItemId);
+                            return ebay ? (
+                            <a className="btn btn-ghost" href={ebay} target="_blank" rel="noopener noreferrer">
+                              Abrir en eBay
+                            </a>
+                          ) : (
+                            <button className="btn btn-ghost" type="button" disabled>
+                              Abrir en eBay
+                            </button>
+                          );
+                          })()}
+                        </div>
+                        <div className="vinted-card-actions">
                           {group.reason === "same-listing" ? null : (
                             <>
                               <button className="btn btn-ghost" type="button" onClick={() => void review(item, "confirm_duplicate", group.itemIds)}>

@@ -29,7 +29,8 @@ import {
   withoutRejectedCandidates,
 } from "@/lib/vinted/candidate-rejection";
 import { planInventoryImport, readVintedListingPresence, type VintedPresence } from "@/lib/vinted/duplicate-presence";
-import { keptAfterDiscardedSync, photoAfterSync, planVintedUnlink } from "@/lib/vinted/listing-correction";
+import { keptAfterDiscardedSync, photoAfterSync, planVintedUnlink, urlAfterSync } from "@/lib/vinted/listing-correction";
+import { confirmedVintedHref } from "@/lib/vinted/prepare-listing";
 
 export interface VintedInventoryRow {
   vintedItemId: string;
@@ -58,6 +59,7 @@ export interface VintedInventoryRow {
   vintedPresence: VintedPresence;
   vintedPresenceAt: string;
   vintedUnlinkedAt: string;
+  discardedVintedUrl: string;
 }
 
 export interface VintedInventoryCounts {
@@ -141,6 +143,7 @@ function mapRow(row: Record<string, unknown>): VintedInventoryRow {
     vintedPresence: asPresence(text(row.vinted_presence)),
     vintedPresenceAt: timeText(row.vinted_presence_at),
     vintedUnlinkedAt: timeText(row.vinted_unlinked_at),
+    discardedVintedUrl: text(row.discarded_vinted_url),
   };
 }
 
@@ -260,7 +263,7 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
   await ensureInventoryTables();
   const prepared = prepareCollectedItem(item);
   const existing = await sql`
-    SELECT archived_at, vinted_unlinked_at, manual_photo_at, photo_url
+    SELECT archived_at, vinted_unlinked_at, manual_photo_at, photo_url, url, manual_vinted_url_at
     FROM vinted_inventory_links
     WHERE vinted_item_id = ${prepared.vintedItemId}
     LIMIT 1
@@ -270,6 +273,8 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
     vinted_unlinked_at?: unknown;
     manual_photo_at?: unknown;
     photo_url?: unknown;
+    url?: unknown;
+    manual_vinted_url_at?: unknown;
   } | undefined;
   const plan = planInventoryImport(stored ? { archivedAt: timeText(stored.archived_at) || null } : null);
   if (plan === "skip-archived") return "skipped";
@@ -288,6 +293,10 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
     { photoUrl: text(stored?.photo_url), manualPhotoAt: timeText(stored?.manual_photo_at) },
     prepared.photoUrl,
     false
+  );
+  const nextUrl = urlAfterSync(
+    { url: text(stored?.url), manualVintedUrlAt: timeText(stored?.manual_vinted_url_at) },
+    prepared.url
   );
   const id = crypto.randomUUID();
   const verifiedAt = match.status === "verified" ? new Date().toISOString() : null;
@@ -325,7 +334,7 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
     UPDATE vinted_inventory_links
     SET
       title = CASE WHEN ${title} <> '' THEN ${title} ELSE title END,
-      url = ${prepared.url},
+      url = ${nextUrl},
       photo_url = ${nextVerifiedPhoto},
       brand = CASE WHEN ${prepared.brand} <> '' THEN ${prepared.brand} ELSE brand END,
       size = CASE WHEN ${prepared.size} <> '' THEN ${prepared.size} ELSE size END,
@@ -349,7 +358,7 @@ async function saveMatch(item: VintedCollectedItem, match: VintedInventoryMatch)
     UPDATE vinted_inventory_links
     SET
       title = CASE WHEN ${title} <> '' THEN ${title} ELSE title END,
-      url = ${prepared.url},
+      url = ${nextUrl},
       photo_url = ${nextOpenPhoto},
       brand = CASE WHEN ${prepared.brand} <> '' THEN ${prepared.brand} ELSE brand END,
       size = CASE WHEN ${prepared.size} <> '' THEN ${prepared.size} ELSE size END,
@@ -792,13 +801,17 @@ export async function getVintedLinkForCorrection(vintedItemId: string): Promise<
   ebayItemId: string;
   archivedAt: string;
   vintedUnlinkedAt: string;
+  discardedVintedUrl: string;
+  matchStatus: string;
+  reviewedAt: string;
 } | null> {
   const id = vintedItemId.trim();
   if (!id) return null;
   const sql = getSql();
   await ensureInventoryTables();
   const rows = await sql`
-    SELECT vinted_item_id, sku, photo_url, url, title, ebay_item_id, archived_at, vinted_unlinked_at
+    SELECT vinted_item_id, sku, photo_url, url, title, ebay_item_id, archived_at, vinted_unlinked_at,
+      discarded_vinted_url, match_status, reviewed_at
     FROM vinted_inventory_links
     WHERE vinted_item_id = ${id}
     LIMIT 1
@@ -814,7 +827,55 @@ export async function getVintedLinkForCorrection(vintedItemId: string): Promise<
     ebayItemId: text(record.ebay_item_id),
     archivedAt: timeText(record.archived_at),
     vintedUnlinkedAt: timeText(record.vinted_unlinked_at),
+    discardedVintedUrl: text(record.discarded_vinted_url),
+    matchStatus: text(record.match_status),
+    reviewedAt: timeText(record.reviewed_at),
   };
+}
+
+export async function listVintedLinkTargets(): Promise<{ vintedItemId: string; url: string }[]> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const rows = await sql`
+    SELECT vinted_item_id, url
+    FROM vinted_inventory_links
+    WHERE archived_at IS NULL
+  `;
+  return rows.map((row) => {
+    const record = row as Record<string, unknown>;
+    return { vintedItemId: text(record.vinted_item_id), url: text(record.url) };
+  });
+}
+
+export async function saveConfirmedVintedLink(
+  vintedItemId: string,
+  link: { url: string; linkedItemId: string }
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const id = vintedItemId.trim();
+  const sql = getSql();
+  await ensureInventoryTables();
+  const updated = await sql`
+    UPDATE vinted_inventory_links
+    SET
+      url = ${link.url},
+      manual_vinted_url_at = NOW(),
+      discarded_vinted_url = CASE
+        WHEN btrim(url) <> '' AND url <> ${link.url} THEN url
+        ELSE discarded_vinted_url
+      END,
+      vinted_unlinked_at = CASE
+        WHEN vinted_item_id <> ${link.linkedItemId} THEN COALESCE(vinted_unlinked_at, NOW())
+        ELSE vinted_unlinked_at
+      END,
+      updated_at = NOW()
+    WHERE vinted_item_id = ${id}
+      AND archived_at IS NULL
+    RETURNING vinted_item_id, sku, match_status, reviewed_at
+  `;
+  const saved = updated[0] as Record<string, unknown> | undefined;
+  if (!saved) return { ok: false, error: "No existe ese registro. No se guardó el enlace." };
+  await recordEvent(id, "save_vinted_link", link.linkedItemId);
+  return { ok: true };
 }
 
 export async function saveVintedLocalPhoto(
@@ -846,7 +907,7 @@ export async function unlinkDiscardedVintedListing(
   const sql = getSql();
   await ensureInventoryTables();
   const current = await sql`
-    SELECT sku, url, photo_url, ebay_item_id, title, vinted_unlinked_at, archived_at
+    SELECT sku, url, photo_url, ebay_item_id, title, vinted_unlinked_at, archived_at, discarded_vinted_url
     FROM vinted_inventory_links
     WHERE vinted_item_id = ${id}
     LIMIT 1
@@ -854,6 +915,23 @@ export async function unlinkDiscardedVintedListing(
   const record = current[0] as Record<string, unknown> | undefined;
   if (!record) return { ok: false, error: "No existe ese registro. No se modificó." };
   if (timeText(record.archived_at)) return { ok: false, error: "Ese registro está archivado. No se modificó." };
+  const confirmed = confirmedVintedHref({
+    url: text(record.url),
+    vintedUnlinkedAt: timeText(record.vinted_unlinked_at),
+    discardedVintedUrl: text(record.discarded_vinted_url),
+  });
+  if (timeText(record.vinted_unlinked_at) && confirmed) {
+    const cleared = await sql`
+      UPDATE vinted_inventory_links
+      SET url = '', manual_vinted_url_at = NOW(), updated_at = NOW()
+      WHERE vinted_item_id = ${id}
+        AND archived_at IS NULL
+      RETURNING sku
+    `;
+    if (!cleared.length) return { ok: false, error: "No se pudo desvincular. No se modificó el registro." };
+    await recordEvent(id, "unlink_vinted", confirmed);
+    return { ok: true };
+  }
   const plan = planVintedUnlink({
     sku: text(record.sku),
     url: text(record.url),
