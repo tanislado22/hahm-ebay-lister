@@ -32,6 +32,17 @@ export function accessHeaders(): Record<string, string> {
   return code ? { "x-app-secret": code } : {};
 }
 
+/** Only the access-code challenge may ask for the owner code. Other 401s stay as-is. */
+export function isAccessCodeChallenge(status: number, code: unknown): boolean {
+  return status === 401 && code === "ACCESS_CODE_REQUIRED";
+}
+
+async function responseChallengesAccess(res: Response): Promise<boolean> {
+  if (res.status !== 401) return false;
+  const payload = (await res.clone().json().catch(() => null)) as { code?: unknown } | null;
+  return isAccessCodeChallenge(res.status, payload?.code);
+}
+
 export function clearAccessCode(): void {
   try {
     window.localStorage.removeItem(STORAGE_KEY);
@@ -48,7 +59,7 @@ export async function apiGet(path: string): Promise<Response> {
     return fetch(path, { method: "GET", headers, cache: "no-store" });
   };
   let res = await run(code);
-  for (let attempt = 0; attempt < 2 && res.status === 401; attempt++) {
+  for (let attempt = 0; attempt < 2 && (await responseChallengesAccess(res)); attempt++) {
     const entered = window.prompt(
       attempt === 0
         ? "Enter your access code. This is the APP_SECRET you set in Vercel (Settings → Environment Variables) — not your Anthropic API key."
@@ -77,7 +88,7 @@ export async function apiPost(path: string, body: unknown): Promise<Response> {
   let res = await doFetch(path, body, code);
 
   // Up to two prompt attempts: covers both "no code yet" and "wrong code".
-  for (let attempt = 0; attempt < 2 && res.status === 401; attempt++) {
+  for (let attempt = 0; attempt < 2 && (await responseChallengesAccess(res)); attempt++) {
     const entered = window.prompt(
       attempt === 0
         ? "Enter your access code. This is the APP_SECRET you set in Vercel (Settings → Environment Variables) — not your Anthropic API key."

@@ -11,7 +11,14 @@ export async function POST(req: NextRequest) {
   const denied = guardApiRequest(req);
   if (denied) return denied;
   const token = await requireEbayAccessToken(req, { workMode: "store" });
-  if (token instanceof NextResponse) return token;
+  if (token instanceof NextResponse) {
+    if (token.status !== 401) return token;
+    const body = (await token.json()) as { ok?: boolean; error?: string };
+    return NextResponse.json(
+      { ok: false, error: body.error || "eBay no está conectado. Conecta la cuenta y vuelve a intentar." },
+      { status: 409 }
+    );
+  }
   const active = await fetchAllActiveSellerListings(token);
   if (!active.ok) {
     return NextResponse.json(

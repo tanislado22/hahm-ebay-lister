@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { apiPost } from "@/lib/api-client";
+import { accessHeaders, isAccessCodeChallenge } from "@/lib/api-client";
 
 interface RelinkResponse {
   ok?: boolean;
+  code?: string;
   error?: string;
   updated?: number;
   missing?: number;
@@ -20,8 +21,19 @@ export default function EbayLinksPage() {
     setRunning(true);
     setError("");
     try {
-      const response = await apiPost("/api/ebay/relink", {});
+      const response = await fetch("/api/ebay/relink", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...accessHeaders() },
+        body: "{}",
+        cache: "no-store",
+        credentials: "same-origin",
+      });
       const body = (await response.json()) as RelinkResponse;
+      if (isAccessCodeChallenge(response.status, body.code)) {
+        setResult(null);
+        setError("Esta herramienta usa el acceso del propietario que ya guardó la página principal en este navegador.");
+        return;
+      }
       if (!response.ok || !body.ok) {
         setResult(null);
         setError(body.error || "No se pudieron actualizar los vínculos de eBay.");
