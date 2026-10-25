@@ -3,6 +3,8 @@ import { listEbayConnections } from "@/lib/ebay/client-connections";
 import { decideEndedListing, type ListingSnapshot, type ListingWatch } from "@/lib/ebay/ended-listing";
 import { fetchRecentOrderLines } from "@/lib/ebay/orders";
 import { accessTokenFromCookie } from "@/lib/ebay/session";
+import { fetchAllActiveSellerListings } from "@/lib/ebay/active-inventory";
+import { refreshEbayLinksFromListings } from "@/lib/ebay/relist-links-run";
 import {
   fetchActiveSellerListings,
   fetchRecentlyEndedSellerListings,
@@ -23,6 +25,9 @@ export interface EndedCheckResult {
   ebaySales: number;
   duplicates: number;
   skipped: number;
+  relinked: number;
+  relinkMissing: number;
+  relinkReview: number;
   errors: string[];
   planned: { itemId: string; sku: string; title: string; eventId: string }[];
 }
@@ -178,6 +183,9 @@ export async function runEbayEndedCheck(options: { send: boolean }): Promise<End
     ebaySales: 0,
     duplicates: 0,
     skipped: 0,
+    relinked: 0,
+    relinkMissing: 0,
+    relinkReview: 0,
     errors: [],
     planned: [],
   };
@@ -203,8 +211,21 @@ export async function runEbayEndedCheck(options: { send: boolean }): Promise<End
 
     const byItem = new Map<string, ListingSnapshot>();
     try {
-      for (const listing of await fetchActiveSellerListings(accessToken)) {
-        byItem.set(listing.itemId, listing);
+      if (connection.connectionKey === "store") {
+        const active = await fetchAllActiveSellerListings(accessToken);
+        if (!active.ok) {
+          result.errors.push(`${connection.connectionKey}: ${active.error}`);
+          continue;
+        }
+        const relink = await refreshEbayLinksFromListings(accessToken, active.listings);
+        result.relinked += relink.updated;
+        result.relinkMissing += relink.missing;
+        result.relinkReview += relink.review;
+        for (const listing of active.listings) byItem.set(listing.itemId, listing);
+      } else {
+        for (const listing of await fetchActiveSellerListings(accessToken)) {
+          byItem.set(listing.itemId, listing);
+        }
       }
       for (const listing of await fetchRecentlyEndedSellerListings(accessToken, endedFrom, endedTo)) {
         byItem.set(listing.itemId, listing);

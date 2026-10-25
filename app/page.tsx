@@ -1544,6 +1544,8 @@ const draftAll = async () => {
           <p>
             Upload a pile of photos · auto-sort into items · write every listing.{" "}
             <a href="/vinted/inventory">Inventario Vinted</a>
+            {" · "}
+            <a href="/ebay/vinculos">Actualizar vínculos de eBay</a>
           </p>
         </div>
       </header>
