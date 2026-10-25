@@ -15,7 +15,11 @@ export async function POST(req: NextRequest) {
     if (token.status !== 401) return token;
     const body = (await token.json()) as { ok?: boolean; error?: string };
     return NextResponse.json(
-      { ok: false, error: body.error || "eBay no está conectado. Conecta la cuenta y vuelve a intentar." },
+      {
+        ok: false,
+        code: "EBAY_DISCONNECTED",
+        error: body.error || "eBay no está conectado. Conecta la cuenta y vuelve a intentar.",
+      },
       { status: 409 }
     );
   }
@@ -39,6 +43,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
+        code: "RELINK_IN_PROGRESS",
         error: "Ya hay una actualización en curso. Espera a que termine antes de volver a intentar.",
         updated: 0,
         missing: 0,

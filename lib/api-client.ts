@@ -1,19 +1,23 @@
 "use client";
 
 /**
- * Client-side fetch wrapper for the AI API routes.
+ * Client-side fetch wrapper for the API routes.
  *
- * When the deployment has APP_SECRET set, the server answers 401 with
- * code ACCESS_CODE_REQUIRED until the request carries the matching
- * `x-app-secret` header. We ask the user once, remember the code in
- * localStorage, and retry — so each device prompts a single time.
+ * A valid owner session cookie authorizes the request. When this browser
+ * already saved the owner code, it is sent in `x-app-secret` as well.
+ * A 401 stays a 401: the sign-in form asks once, and this module does not
+ * open a dialog or retry.
  */
+
+import { REJECTED_OWNER_CODE } from "@/lib/owner-code";
 
 const STORAGE_KEY = "listing-writer:access-code";
 
 function storedCode(): string | null {
   try {
-    return window.localStorage.getItem(STORAGE_KEY);
+    const value = window.localStorage.getItem(STORAGE_KEY)?.trim() ?? "";
+    if (!value || value === REJECTED_OWNER_CODE) return null;
+    return value;
   } catch {
     return null;
   }
@@ -27,6 +31,16 @@ function saveCode(code: string): void {
   }
 }
 
+export function readAccessCode(): string | null {
+  return storedCode();
+}
+
+export function rememberAccessCode(code: string): void {
+  const trimmed = code.trim();
+  if (!trimmed || trimmed === REJECTED_OWNER_CODE) return;
+  saveCode(trimmed);
+}
+
 export function accessHeaders(): Record<string, string> {
   const code = storedCode();
   return code ? { "x-app-secret": code } : {};
@@ -35,32 +49,6 @@ export function accessHeaders(): Record<string, string> {
 /** Only the access-code challenge may ask for the owner code. Other 401s stay as-is. */
 export function isAccessCodeChallenge(status: number, code: unknown): boolean {
   return status === 401 && code === "ACCESS_CODE_REQUIRED";
-}
-
-async function responseChallengesAccess(res: Response): Promise<boolean> {
-  if (res.status !== 401) return false;
-  const payload = (await res.clone().json().catch(() => null)) as { code?: unknown } | null;
-  return isAccessCodeChallenge(res.status, payload?.code);
-}
-
-let promptTask: Promise<string | null> | null = null;
-
-/** One dialog at a time. Stacked prompts freeze Chrome with "Page Unresponsive". */
-function askAccessCode(message: string): Promise<string | null> {
-  if (promptTask) return promptTask;
-  promptTask = new Promise((resolve) => {
-    setTimeout(() => {
-      try {
-        const entered = window.prompt(message);
-        resolve(entered && entered.trim() ? entered.trim() : null);
-      } catch {
-        resolve(null);
-      } finally {
-        promptTask = null;
-      }
-    }, 0);
-  });
-  return promptTask;
 }
 
 export function clearAccessCode(): void {
@@ -72,52 +60,15 @@ export function clearAccessCode(): void {
 }
 
 export async function apiGet(path: string): Promise<Response> {
-  let code = storedCode();
-  const run = (current: string | null) => {
-    const headers: Record<string, string> = {};
-    if (current) headers["x-app-secret"] = current;
-    return fetch(path, { method: "GET", headers, cache: "no-store" });
-  };
-  let res = await run(code);
-  for (let attempt = 0; attempt < 2 && (await responseChallengesAccess(res)); attempt++) {
-    const entered = await askAccessCode(
-      attempt === 0
-        ? "Enter your access code. This is the APP_SECRET you set in Vercel (Settings → Environment Variables) — not your Anthropic API key."
-        : "That didn't match the APP_SECRET set in Vercel — try again:"
-    );
-    if (!entered) return res;
-    code = entered;
-    res = await run(code);
-    if (res.status !== 401) saveCode(code);
-  }
-  return res;
+  const headers: Record<string, string> = {};
+  const code = storedCode();
+  if (code) headers["x-app-secret"] = code;
+  return fetch(path, { method: "GET", headers, cache: "no-store" });
 }
 
-async function doFetch(path: string, body: unknown, code: string | null): Promise<Response> {
+export async function apiPost(path: string, body: unknown): Promise<Response> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const code = storedCode();
   if (code) headers["x-app-secret"] = code;
   return fetch(path, { method: "POST", headers, body: JSON.stringify(body) });
-}
-
-/**
- * POST to an API route, handling the access-code handshake. Prompts the user
- * for the code when the server requires one (or when a saved code went stale).
- */
-export async function apiPost(path: string, body: unknown): Promise<Response> {
-  let code = storedCode();
-  let res = await doFetch(path, body, code);
-
-  // Up to two prompt attempts: covers both "no code yet" and "wrong code".
-  for (let attempt = 0; attempt < 2 && (await responseChallengesAccess(res)); attempt++) {
-    const entered = await askAccessCode(
-      attempt === 0
-        ? "Enter your access code. This is the APP_SECRET you set in Vercel (Settings → Environment Variables) — not your Anthropic API key."
-        : "That didn't match the APP_SECRET set in Vercel — try again:"
-    );
-    if (!entered) return res;
-    code = entered;
-    res = await doFetch(path, body, code);
-    if (res.status !== 401) saveCode(code);
-  }
-  return res;
 }

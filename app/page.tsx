@@ -9,6 +9,7 @@ import { guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/mar
 import { buildSku, skuForVintedPrepare } from "@/lib/sku";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
+import { OwnerAccess } from "./OwnerAccess";
 import { ModelSelector } from "./ModelSelector";
 import { ReviewBoard } from "./ReviewBoard";
 import { ListingsView } from "./ListingsView";
@@ -1563,6 +1564,8 @@ const draftAll = async () => {
           </p>
         </div>
       </header>
+
+      <OwnerAccess nextHref="/ebay/vinculos" />
 
       <EbayConnect
 
