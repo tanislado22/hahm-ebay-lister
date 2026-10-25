@@ -28,6 +28,7 @@ interface InventoryItem {
   candidates: EbayCandidate[];
   archivedAt: string;
   vintedPresence: "" | "active" | "removed" | "unverified";
+  vintedUnlinkedAt: string;
 }
 
 interface EbayCandidate {
@@ -35,6 +36,19 @@ interface EbayCandidate {
   title: string;
   ebayItemId: string;
   photoUrl: string;
+}
+
+interface PhotoMatch {
+  sku: string;
+  title: string;
+  photoUrl: string;
+  ebayItemId: string;
+}
+
+interface PhotoLookup {
+  loading: boolean;
+  match: PhotoMatch | null;
+  error: string;
 }
 
 interface DuplicateGroup {
@@ -118,6 +132,10 @@ export default function VintedInventoryPage() {
   const [identifying, setIdentifying] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [pendingDrop, setPendingDrop] = useState<string | null>(null);
+  const [photoLookup, setPhotoLookup] = useState<Record<string, PhotoLookup>>({});
+  const [savingPhoto, setSavingPhoto] = useState(false);
+  const [pendingUnlinkId, setPendingUnlinkId] = useState<string | null>(null);
+  const [unlinking, setUnlinking] = useState(false);
   const [syncingDuplicates, setSyncingDuplicates] = useState(false);
   const identifyRun = useRef(false);
   const pendingAnchor = useRef<ListScrollHold | null>(null);
@@ -489,8 +507,157 @@ export default function VintedInventoryPage() {
     return <img className={className} src={src} alt="" />;
   }
 
+  async function lookupEbayPhoto(item: InventoryItem) {
+    setError("");
+    setPendingUnlinkId((current) => (current === item.vintedItemId ? null : current));
+    setPhotoLookup((current) => ({
+      ...current,
+      [item.vintedItemId]: { loading: true, match: null, error: "" },
+    }));
+    try {
+      const response = await apiPost("/api/vinted/inventory/photo", { vintedItemId: item.vintedItemId });
+      const body = (await response.json()) as { ok?: boolean; error?: string; match?: PhotoMatch };
+      if (!response.ok || !body.ok || !body.match) {
+        setPhotoLookup((current) => ({
+          ...current,
+          [item.vintedItemId]: { loading: false, match: null, error: body.error || "No se cambió la foto." },
+        }));
+        return;
+      }
+      setPhotoLookup((current) => ({
+        ...current,
+        [item.vintedItemId]: { loading: false, match: body.match || null, error: "" },
+      }));
+    } catch {
+      setPhotoLookup((current) => ({
+        ...current,
+        [item.vintedItemId]: { loading: false, match: null, error: "No se pudo consultar tu cuenta de eBay. No se cambió la foto." },
+      }));
+    }
+  }
+
+  async function confirmEbayPhoto(item: InventoryItem, match: PhotoMatch) {
+    setSavingPhoto(true);
+    setError("");
+    rememberPlace(item.vintedItemId);
+    try {
+      const response = await apiPost("/api/vinted/inventory/photo", {
+        vintedItemId: item.vintedItemId,
+        confirm: true,
+        sku: match.sku,
+        ebayItemId: match.ebayItemId,
+      });
+      const body = (await response.json()) as { ok?: boolean; error?: string };
+      if (!response.ok || !body.ok) {
+        pendingAnchor.current = null;
+        setPhotoLookup((current) => ({
+          ...current,
+          [item.vintedItemId]: { loading: false, match, error: body.error || "No se cambió la foto." },
+        }));
+        return;
+      }
+      setPhotoLookup((current) => {
+        const next = { ...current };
+        delete next[item.vintedItemId];
+        return next;
+      });
+      await load(query, "quiet");
+    } catch {
+      pendingAnchor.current = null;
+      setPhotoLookup((current) => ({
+        ...current,
+        [item.vintedItemId]: { loading: false, match, error: "No se cambió la foto." },
+      }));
+    } finally {
+      setSavingPhoto(false);
+    }
+  }
+
+  async function unlinkVinted(item: InventoryItem) {
+    setUnlinking(true);
+    setError("");
+    rememberPlace(item.vintedItemId);
+    try {
+      const response = await apiPost("/api/vinted/inventory/unlink", {
+        vintedItemId: item.vintedItemId,
+        confirm: true,
+      });
+      const body = (await response.json()) as { ok?: boolean; error?: string };
+      if (!response.ok || !body.ok) {
+        pendingAnchor.current = null;
+        setError(body.error || "No se modificó el registro.");
+        return;
+      }
+      setPendingUnlinkId(null);
+      await load(query, "quiet");
+    } catch {
+      pendingAnchor.current = null;
+      setError("No se pudo desvincular la publicación. No se modificó el registro.");
+    } finally {
+      setUnlinking(false);
+    }
+  }
+
+  function correctionPanels(item: InventoryItem) {
+    if (item.archivedAt) return null;
+    const lookup = photoLookup[item.vintedItemId];
+    const match = lookup?.match;
+    return (
+      <>
+        {lookup?.error ? <p role="alert">{lookup.error}</p> : null}
+        {match ? (
+          <div className="vinted-candidate">
+            {photoFrame(match.photoUrl, "vinted-candidate-photo")}
+            <div>
+              <p className="vinted-candidate-title">{match.title || "Sin título"}</p>
+              <p className="vinted-sku-confirmed">SKU {match.sku}</p>
+              <div className="vinted-associate-confirm" role="alertdialog" aria-label="Confirmar foto de eBay">
+                <p>
+                  ¿Actualizar la foto de este registro con la de la publicación activa SKU {match.sku}? Solo cambia la imagen guardada aquí. No se modifican los anuncios de eBay ni de Vinted.
+                </p>
+                <div className="vinted-card-actions">
+                  <button
+                    className="btn btn-ghost"
+                    type="button"
+                    onClick={() =>
+                      setPhotoLookup((current) => {
+                        const next = { ...current };
+                        delete next[item.vintedItemId];
+                        return next;
+                      })
+                    }
+                    disabled={savingPhoto}
+                  >
+                    Cancelar
+                  </button>
+                  <button className="btn btn-primary" type="button" onClick={() => void confirmEbayPhoto(item, match)} disabled={savingPhoto}>
+                    {savingPhoto ? "Actualizando…" : "Sí, actualizar foto"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {pendingUnlinkId === item.vintedItemId ? (
+          <div className="vinted-associate-confirm" role="alertdialog" aria-label="Confirmar desvinculación de Vinted">
+            <p>
+              ¿Desvincular la publicación de Vinted de este registro? Se quita ese vínculo y queda pendiente de vincular. El SKU se conserva. No se marca como identificado ni revisado, no se elimina el registro y no se cambian otros artículos.
+            </p>
+            <div className="vinted-card-actions">
+              <button className="btn btn-ghost" type="button" onClick={() => setPendingUnlinkId(null)} disabled={unlinking}>
+                Cancelar
+              </button>
+              <button className="btn btn-primary" type="button" onClick={() => void unlinkVinted(item)} disabled={unlinking}>
+                {unlinking ? "Desvinculando…" : "Sí, desvincular"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
   function itemCard(item: InventoryItem) {
-    const confirmedSku = item.status === "verified" && item.sku ? item.sku : "";
     const suggestedSku = item.status === "verified" ? "" : item.suggestedSku;
     const savedEbay = ebayItemUrl(item.ebayItemId);
     const candidates = item.status === "verified" ? [] : item.candidates || [];
@@ -500,7 +667,8 @@ export default function VintedInventoryPage() {
           {photoFrame(item.photoUrl, "vinted-card-photo")}
           <div className="vinted-card-body">
             <h3>{item.title || "Sin título"}</h3>
-            <p className="vinted-sku-confirmed">{confirmedSku ? `SKU ${confirmedSku}` : "SKU sin confirmar"}</p>
+            <p className="vinted-sku-confirmed">{item.sku ? `SKU ${item.sku}` : "SKU sin confirmar"}</p>
+            {item.vintedUnlinkedAt ? <p>Pendiente de vincular</p> : null}
             {suggestedSku ? <p className="vinted-sku-suggested">SKU sugerido: {suggestedSku}</p> : null}
             <p className="vinted-card-status">{matchLabel(item)}</p>
             {item.soldStatus === "pending_removal" ? <p>Vendido en {platformLabel(item.soldPlatform)} — {saleDate(item.soldAt)}</p> : null}
@@ -509,9 +677,21 @@ export default function VintedInventoryPage() {
             {item.detail ? <p className="vinted-card-detail">{item.detail}</p> : null}
             {savedEbay ? <p className="vinted-item-id">Item ID {item.ebayItemId}</p> : null}
             <div className="vinted-card-actions">
-              <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
-                Abrir en Vinted
-              </a>
+              {item.url && !item.vintedUnlinkedAt ? (
+                <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
+                  Abrir en Vinted
+                </a>
+              ) : null}
+              {item.archivedAt ? null : (
+                <button className="btn btn-ghost" type="button" onClick={() => void lookupEbayPhoto(item)} disabled={Boolean(photoLookup[item.vintedItemId]?.loading) || savingPhoto}>
+                  {photoLookup[item.vintedItemId]?.loading ? "Buscando…" : "Actualizar foto desde eBay"}
+                </button>
+              )}
+              {item.archivedAt || item.vintedUnlinkedAt ? null : (
+                <button className="btn btn-ghost" type="button" onClick={() => setPendingUnlinkId(item.vintedItemId)}>
+                  Desvincular Vinted
+                </button>
+              )}
               {savedEbay ? (
                 <a className="btn btn-ghost" href={savedEbay} target="_blank" rel="noopener noreferrer">
                   Abrir en eBay
@@ -552,6 +732,7 @@ export default function VintedInventoryPage() {
               ) : null}
               {deleteActions(item)}
             </div>
+            {correctionPanels(item)}
           </div>
         </div>
         {item.status !== "verified" ? (
@@ -737,13 +918,17 @@ export default function VintedInventoryPage() {
                         <p className="vinted-candidate-title">{item.title || "Sin título"}</p>
                         <p className="vinted-sku-confirmed">SKU {skuText(item)}</p>
                         <p>ID {item.vintedItemId}</p>
-                        <p className="vinted-card-detail">{item.url}</p>
+                        {item.url && !item.vintedUnlinkedAt ? <p className="vinted-card-detail">{item.url}</p> : null}
                         <p>{presenceLabel(item)}</p>
                         {item.duplicateStatus === "confirmed" ? <p>🔵 Duplicado confirmado</p> : null}
                         <div className="vinted-card-actions">
-                          <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
-                            Abrir en Vinted
-                          </a>
+                          {item.url && !item.vintedUnlinkedAt ? (
+                            <a className="btn btn-ghost" href={item.url} target="_blank" rel="noopener noreferrer">
+                              Abrir en Vinted
+                            </a>
+                          ) : item.vintedUnlinkedAt ? (
+                            <span>Pendiente de vincular</span>
+                          ) : null}
                           {group.reason === "same-listing" ? null : (
                             <>
                               <button className="btn btn-ghost" type="button" onClick={() => void review(item, "confirm_duplicate", group.itemIds)}>

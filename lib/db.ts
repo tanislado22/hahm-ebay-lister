@@ -161,6 +161,9 @@ async function migrate(): Promise<void> {
   await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS vinted_presence TEXT NOT NULL DEFAULT ''`;
   await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS vinted_presence_at TIMESTAMPTZ`;
   await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS vinted_presence_detail TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS manual_photo_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS vinted_unlinked_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE vinted_inventory_links ADD COLUMN IF NOT EXISTS discarded_vinted_url TEXT NOT NULL DEFAULT ''`;
   await sql`
     CREATE TABLE IF NOT EXISTS vinted_inventory_events (
       id TEXT PRIMARY KEY,
