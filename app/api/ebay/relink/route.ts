@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
-import { fetchAllActiveSellerListings } from "@/lib/ebay/active-inventory";
+import { fetchAllActiveSellerListings, fetchEbaySellerUser } from "@/lib/ebay/active-inventory";
 import { acquireRelinkLock, refreshEbayLinksFromListings, releaseRelinkLock } from "@/lib/ebay/relist-links-run";
 import { requireEbayAccessToken } from "@/lib/ebay/route-access";
 
@@ -53,10 +53,20 @@ export async function POST(req: NextRequest) {
     );
   }
   try {
-    const active = await fetchAllActiveSellerListings(token);
+    const [active, ebayUser] = await Promise.all([
+      fetchAllActiveSellerListings(token),
+      fetchEbaySellerUser(token),
+    ]);
     if (!active.ok) {
       return NextResponse.json(
-        { ok: false, error: active.error, updated: 0, missing: 0, review: 0 },
+        {
+          ok: false,
+          error: ebayUser ? `Cuenta ${ebayUser}: ${active.error}` : active.error,
+          ebayUser,
+          updated: 0,
+          missing: 0,
+          review: 0,
+        },
         { status: 502 }
       );
     }
@@ -71,7 +81,10 @@ export async function POST(req: NextRequest) {
       lookupIncomplete: result.lookupIncomplete,
       unchecked: result.unchecked,
       activeCount: active.listings.length,
+      receivedCount: active.received,
+      withSkuCount: active.withSku,
       pagesRead: active.pages,
+      ebayUser,
       missingItems: result.plans
         .filter((plan) => plan.outcome === "missing")
         .map((plan) => ({

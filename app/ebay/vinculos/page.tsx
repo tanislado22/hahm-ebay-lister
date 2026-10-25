@@ -24,7 +24,10 @@ interface RelinkResponse {
   lookupIncomplete?: boolean;
   unchecked?: number;
   activeCount?: number;
+  receivedCount?: number;
+  withSkuCount?: number;
   pagesRead?: number;
+  ebayUser?: string | null;
   missingItems?: MissingItem[];
 }
 
@@ -146,10 +149,14 @@ function RelinkPanel() {
           <p>Actualizados: {result.updated ?? 0}</p>
           <p>Sin coincidencia: {result.missing ?? 0}</p>
           <p>Requieren revisión: {result.review ?? 0}</p>
-          <p>
-            Publicaciones activas leídas: {result.activeCount ?? 0}. Páginas leídas: {result.pagesRead ?? 0}. Se usó la
-            cuenta de eBay conectada en esta tienda.
-          </p>
+          <p>Cuenta de eBay: {result.ebayUser || "No se pudo leer el usuario de eBay."}</p>
+          <p>Anuncios recibidos: {result.receivedCount ?? 0}</p>
+          <p>Anuncios activos usados para comparar: {result.activeCount ?? 0}</p>
+          <p>Anuncios activos con SKU: {result.withSkuCount ?? 0}</p>
+          <p>Páginas leídas: {result.pagesRead ?? 0}</p>
+          {(result.withSkuCount ?? 0) < (result.activeCount ?? 0) ? (
+            <p>Hay anuncios activos sin SKU. Entraron en el catálogo, pero no se usaron para vincular.</p>
+          ) : null}
           {result.lookupIncomplete ? (
             <p>
               Quedaron {result.unchecked ?? 0} anuncios anteriores sin comprobar. No se modificó su Item ID.
