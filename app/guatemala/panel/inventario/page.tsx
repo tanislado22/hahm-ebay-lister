@@ -24,6 +24,7 @@ export default async function StaffInventoryPage() {
         basePath="/guatemala/panel/inventario"
         reportsPath="/guatemala/panel/reportes"
         expensesPath="/guatemala/panel/gastos"
+        canManageExpenses={session.canManageExpenses}
       />
     </Suspense>
   );

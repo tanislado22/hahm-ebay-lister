@@ -4,13 +4,21 @@ import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import {
   buildExpenseRecord,
   deleteExpenseRecord,
+  expensesCountedTowardRecovery,
   expensesInRange,
   GUATEMALA_EXPENSE_MESSAGES,
   prepareExpense,
+  recoveryBalance,
   sumExpenseAmounts,
   updateExpenseRecord,
+  type RecoveryBalance,
   type StoredExpense,
 } from "@/lib/markets/guatemala-expenses";
+import {
+  GUATEMALA_RECOVERY_MESSAGES,
+  prepareRecovery,
+  type StoredRecovery,
+} from "@/lib/markets/guatemala-recoveries";
 import { GUATEMALA_INVENTORY_MESSAGES, type SaleActor } from "@/lib/markets/guatemala-inventory";
 import {
   guatemalaSalesRange,
@@ -66,6 +74,22 @@ async function createGuatemalaExpenseTables(): Promise<void> {
     CREATE UNIQUE INDEX IF NOT EXISTS guatemala_expenses_lot_expense_key
     ON guatemala_expenses (lot_expense_id)
     WHERE lot_expense_id IS NOT NULL
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_expense_recoveries (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      recovered_on DATE NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      amount_gtq NUMERIC(12, 2) NOT NULL CHECK (amount_gtq > 0),
+      recorded_by_role TEXT,
+      recorded_by_username TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS guatemala_expense_recoveries_client_idx
+    ON guatemala_expense_recoveries (client_id, recovered_on)
   `;
 }
 
@@ -328,4 +352,111 @@ export async function deleteGuatemalaExpense(input: {
   `;
   if (!rows[0]) return { ok: false, status: 404, error: GUATEMALA_EXPENSE_MESSAGES.notFound };
   return { ok: true, message: GUATEMALA_EXPENSE_MESSAGES.deleted };
+}
+
+function rowToRecovery(row: Record<string, unknown>): StoredRecovery {
+  return {
+    id: String(row.id),
+    clientId: String(row.client_id),
+    recoveredOn: civilDateFromDb(row.recovered_on),
+    description: String(row.description ?? ""),
+    amountGtq: amountText(row.amount_gtq),
+    recordedByRole: roleOf(row.recorded_by_role),
+    recordedByUsername: row.recorded_by_username ? String(row.recorded_by_username) : null,
+    createdAt: isoTimestamp(row.created_at),
+  };
+}
+
+// Totals use guatemala_expenses only. Lot expenses are already mirrored there
+// with lot_expense_id, and voided mirrors are left out, so a lot is not counted twice.
+export async function queryGuatemalaRecovery(input: { clientId: string }): Promise<
+  | ({ ok: true; recoveries: StoredRecovery[] } & RecoveryBalance)
+  | { ok: false; status: 403; error: string }
+> {
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  await ensureGuatemalaExpenseTables();
+  const sql = getSql();
+  const expenseRows = await sql`
+    SELECT amount_gtq::text AS amount_gtq, voided_at
+    FROM guatemala_expenses
+    WHERE client_id = ${input.clientId}
+      AND voided_at IS NULL
+  `;
+  const recoveryRows = await sql`
+    SELECT id, client_id, recovered_on, description, amount_gtq::text AS amount_gtq,
+      recorded_by_role, recorded_by_username, created_at
+    FROM guatemala_expense_recoveries
+    WHERE client_id = ${input.clientId}
+    ORDER BY recovered_on DESC, created_at DESC
+  `;
+  const recoveries = recoveryRows.map((row) => rowToRecovery(row));
+  const balance = recoveryBalance(
+    expensesCountedTowardRecovery(
+      expenseRows.map((row) => ({
+        amountGtq: amountText(row.amount_gtq),
+        voidedAt: row.voided_at ? isoTimestamp(row.voided_at) : null,
+      }))
+    ),
+    recoveries
+  );
+  return { ok: true, ...balance, recoveries };
+}
+
+export async function createGuatemalaRecovery(input: {
+  clientId: string;
+  actor: SaleActor;
+  recoveredOn?: unknown;
+  description?: unknown;
+  amount?: unknown;
+  now?: Date;
+}): Promise<
+  | { ok: true; recovery: StoredRecovery; balance: RecoveryBalance; message: string }
+  | { ok: false; status: 400 | 403; error: string }
+> {
+  const prepared = prepareRecovery(input);
+  if (!prepared.ok) return prepared;
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  await ensureGuatemalaExpenseTables();
+  const now = input.now ?? new Date();
+  const recovery: StoredRecovery = {
+    ...prepared.recovery,
+    id: crypto.randomUUID(),
+    clientId: input.clientId,
+    recordedByRole: input.actor.role,
+    recordedByUsername: input.actor.username,
+    createdAt: now.toISOString(),
+  };
+  const sql = getSql();
+  await sql`
+    INSERT INTO guatemala_expense_recoveries (
+      id, client_id, recovered_on, description, amount_gtq,
+      recorded_by_role, recorded_by_username, created_at
+    )
+    VALUES (
+      ${recovery.id},
+      ${recovery.clientId},
+      ${recovery.recoveredOn}::date,
+      ${recovery.description},
+      ${recovery.amountGtq}::numeric,
+      ${recovery.recordedByRole},
+      ${recovery.recordedByUsername},
+      ${recovery.createdAt}::timestamptz
+    )
+  `;
+  const current = await queryGuatemalaRecovery({ clientId: input.clientId });
+  if (!current.ok) return current;
+  return {
+    ok: true,
+    recovery,
+    balance: {
+      expensesGtq: current.expensesGtq,
+      recoveredGtq: current.recoveredGtq,
+      pendingGtq: current.pendingGtq,
+    },
+    message: GUATEMALA_RECOVERY_MESSAGES.saved,
+  };
 }

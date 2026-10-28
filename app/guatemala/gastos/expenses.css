@@ -76,6 +76,17 @@
   font-weight: 600;
 }
 
+.gt-recovery-totals {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.gt-recovery-totals p {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
 @media (max-width: 640px) {
   .gt-expense-actions .btn,
   .gt-expense-form .gt-inventory-actions .btn {

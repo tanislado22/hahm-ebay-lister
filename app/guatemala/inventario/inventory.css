@@ -132,6 +132,11 @@
   color: #5c5348;
 }
 
+.gt-inventory-status.is-unpublished {
+  background: #efe6d8;
+  color: #5c5348;
+}
+
 .gt-inventory-filters {
   display: flex;
   flex-wrap: wrap;

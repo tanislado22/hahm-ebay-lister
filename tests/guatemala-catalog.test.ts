@@ -36,6 +36,24 @@ function item(partial: Partial<CatalogSourceItem> = {}): CatalogSourceItem {
 }
 
 describe("catálogo público de Tienda Guatemala", () => {
+  it("oculta una prenda sin publicar, disponible o vendida", () => {
+    expect(catalogItemVisible(item({ published: false }), TIENDA)).toBe(false);
+    expect(
+      catalogItemVisible(
+        item({
+          published: false,
+          status: "vendida",
+          sales: [{ isTest: false, voidedAt: null }],
+        }),
+        TIENDA
+      )
+    ).toBe(false);
+    expect(catalogItemVisible(item({ published: true }), TIENDA)).toBe(true);
+    expect(publicCatalogCards([item({ published: false }), item({ id: "publicada", sku: "4101" })], TIENDA).map((card) => card.sku)).toEqual([
+      "4101",
+    ]);
+  });
+
   const shirt3001 = item({
     id: "prenda-3001",
     sku: "3001",

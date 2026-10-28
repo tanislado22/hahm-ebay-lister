@@ -205,6 +205,35 @@ export function sumExpenseAmounts(expenses: readonly { amountGtq: string }[]): s
   return centsToQuetzales(cents);
 }
 
+// A voided lot expense stays in history but no longer counts. The general ledger
+// already contains each lot expense once, so this list must not be added again.
+export function expensesCountedTowardRecovery<T extends { voidedAt?: string | null }>(
+  expenses: readonly T[]
+): T[] {
+  return expenses.filter((expense) => !expense.voidedAt);
+}
+
+export interface RecoveryBalance {
+  expensesGtq: string;
+  recoveredGtq: string;
+  pendingGtq: string;
+}
+
+// Recovered money is a separate ledger. It is not an expense and is not subtracted
+// again when profit is calculated.
+export function recoveryBalance(
+  expenses: readonly { amountGtq: string }[],
+  recoveries: readonly { amountGtq: string }[]
+): RecoveryBalance {
+  const expensesGtq = sumExpenseAmounts(expenses);
+  const recoveredGtq = sumExpenseAmounts(recoveries);
+  return {
+    expensesGtq,
+    recoveredGtq,
+    pendingGtq: centsToQuetzales(quetzalCents(expensesGtq) - quetzalCents(recoveredGtq)),
+  };
+}
+
 function centsToQuetzales(cents: number): string {
   const sign = cents < 0 ? "-" : "";
   const absolute = Math.abs(cents);

@@ -8,7 +8,7 @@ import {
   type SaleActor,
 } from "@/lib/markets/guatemala-inventory";
 
-export type PublicationAction = "retirar" | "corregir" | "republicar";
+export type PublicationAction = "retirar" | "corregir" | "republicar" | "publicar";
 
 export interface PublicationEvent {
   action: PublicationAction;
@@ -79,6 +79,9 @@ export function changePublication(
       event: { action, actor, at: now.toISOString() },
       item: { ...item, status: GUATEMALA_WITHDRAWN_STATUS },
     };
+  }
+  if (action === "publicar") {
+    return { ok: false, status: 400, error: PUBLICATION_MESSAGES.retry };
   }
   if (action === "republicar") {
     if (item.status === GUATEMALA_INVENTORY_STATUS) {

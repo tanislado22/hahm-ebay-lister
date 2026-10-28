@@ -19,7 +19,7 @@ export async function POST(
   const access = await authorizeGuatemalaRequest(
     request,
     typeof body.clientId === "string" ? body.clientId : "",
-    "sell"
+    "finance"
   );
   if (!access.ok) return access.response;
   try {

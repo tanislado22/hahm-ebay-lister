@@ -23,12 +23,14 @@ export interface StaffAccountView {
   deactivatedAt: string | null;
   canCorrectLots: boolean;
   canVoidLots: boolean;
+  canManageExpenses: boolean;
 }
 
 export interface StaffSessionView {
   accountId: string;
   clientId: string;
   username: string;
+  canManageExpenses: boolean;
 }
 
 interface LoadedAuth {
@@ -91,6 +93,10 @@ async function createTables(): Promise<void> {
     ALTER TABLE guatemala_staff_accounts
     ADD COLUMN IF NOT EXISTS can_void_lots BOOLEAN NOT NULL DEFAULT FALSE
   `;
+  await sql`
+    ALTER TABLE guatemala_staff_accounts
+    ADD COLUMN IF NOT EXISTS can_manage_expenses BOOLEAN NOT NULL DEFAULT FALSE
+  `;
 }
 
 function iso(value: unknown): string {
@@ -124,7 +130,7 @@ export async function listGuatemalaStaff(): Promise<
   const sql = getSql();
   const rows = await sql`
     SELECT id, username, active, password_hash, created_at, deactivated_at,
-      can_correct_lots, can_void_lots
+      can_correct_lots, can_void_lots, can_manage_expenses
     FROM guatemala_staff_accounts
     WHERE client_id = ${bound.clientId}
     ORDER BY created_at DESC
@@ -139,6 +145,7 @@ export async function listGuatemalaStaff(): Promise<
       deactivatedAt: row.deactivated_at ? iso(row.deactivated_at) : null,
       canCorrectLots: flag(row.can_correct_lots),
       canVoidLots: flag(row.can_void_lots),
+      canManageExpenses: flag(row.can_manage_expenses),
     })),
   };
 }
@@ -177,6 +184,7 @@ export async function createGuatemalaStaff(input: {
       deactivatedAt: null,
       canCorrectLots: false,
       canVoidLots: false,
+      canManageExpenses: false,
     },
   };
 }
@@ -329,7 +337,8 @@ export async function loginGuatemalaStaff(input: {
   await ensureGuatemalaStaffTables();
   const sql = getSql();
   const rows = await sql`
-    SELECT id, client_id, username, password_hash, active, deactivated_at, session_generation
+    SELECT id, client_id, username, password_hash, active, deactivated_at, session_generation,
+      can_manage_expenses
     FROM guatemala_staff_accounts
     WHERE username = ${username}
     LIMIT 1
@@ -367,6 +376,7 @@ async function openSession(row: Record<string, unknown>): Promise<{
       accountId: String(row.id),
       clientId: String(row.client_id),
       username: String(row.username),
+      canManageExpenses: flag(row.can_manage_expenses),
     },
   };
 }
@@ -377,7 +387,7 @@ export async function loadStaffAuth(token: string | null | undefined): Promise<L
   const sql = getSql();
   const rows = await sql`
     SELECT staff.id, staff.client_id, staff.username, staff.active, staff.session_generation,
-      staff.deactivated_at, staff.can_correct_lots, staff.can_void_lots,
+      staff.deactivated_at, staff.can_correct_lots, staff.can_void_lots, staff.can_manage_expenses,
       session.session_generation AS session_generation_at_login, session.expires_at
     FROM guatemala_staff_sessions AS session
     INNER JOIN guatemala_staff_accounts AS staff ON staff.id = session.account_id
@@ -396,6 +406,7 @@ export async function loadStaffAuth(token: string | null | undefined): Promise<L
       deactivatedAt: row.deactivated_at ? iso(row.deactivated_at) : null,
       canCorrectLots: flag(row.can_correct_lots),
       canVoidLots: flag(row.can_void_lots),
+      canManageExpenses: flag(row.can_manage_expenses),
     },
     session: {
       accountId: String(row.id),
@@ -415,6 +426,7 @@ export async function staffSessionFromToken(token: string | null | undefined): P
     accountId: loaded.account.id,
     clientId: loaded.account.clientId,
     username: loaded.account.username,
+    canManageExpenses: loaded.account.canManageExpenses === true,
   };
 }
 
@@ -422,6 +434,7 @@ export async function setGuatemalaStaffLotPermissions(input: {
   accountId: unknown;
   canCorrectLots: unknown;
   canVoidLots: unknown;
+  canManageExpenses: unknown;
 }): Promise<{ ok: true } | { ok: false; status: 404; error: string }> {
   const accountId = typeof input.accountId === "string" ? input.accountId : "";
   if (!accountId) return { ok: false, status: 404, error: GUATEMALA_STAFF_MESSAGES.notFound };
@@ -432,7 +445,8 @@ export async function setGuatemalaStaffLotPermissions(input: {
   const rows = await sql`
     UPDATE guatemala_staff_accounts
     SET can_correct_lots = ${input.canCorrectLots === true},
-        can_void_lots = ${input.canVoidLots === true}
+        can_void_lots = ${input.canVoidLots === true},
+        can_manage_expenses = ${input.canManageExpenses === true}
     WHERE id = ${accountId} AND client_id = ${bound.clientId}
     RETURNING id
   `;

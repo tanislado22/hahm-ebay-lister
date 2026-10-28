@@ -16,6 +16,7 @@ import {
   type InventoryPhoto,
 } from "@/lib/markets/guatemala-inventory";
 import { publishReviewBlockers } from "@/lib/markets/guatemala-publish";
+import { QuickAddForm, UnpublishedEditor } from "./draft";
 import "./inventory.css";
 import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
 import { PurgePanel } from "./purge";
@@ -56,6 +57,7 @@ interface ListItem {
   chargedPriceGtq?: string | null;
   publishedPriceGtq?: string | null;
   saleIsTest?: boolean;
+  published?: boolean;
 }
 
 interface DetailItem extends ListItem {
@@ -68,7 +70,7 @@ interface DetailItem extends ListItem {
   costIncludesPhotography?: boolean;
   createdBy?: { role: "propietario" | "encargado"; username: string | null } | null;
   publicationEvents?: {
-    action: "retirar" | "corregir" | "republicar";
+    action: "retirar" | "corregir" | "republicar" | "publicar";
     actorRole: "propietario" | "encargado";
     actorUsername: string | null;
     createdAt: string;
@@ -84,11 +86,13 @@ export function InventoryScreen({
   basePath = "/guatemala/inventario",
   reportsPath = "/guatemala/reportes",
   expensesPath = "/guatemala/gastos",
+  canManageExpenses = false,
 }: {
   lockedClientId?: string;
   basePath?: string;
   reportsPath?: string;
   expensesPath?: string;
+  canManageExpenses?: boolean;
 } = {}) {
   const params = useSearchParams();
   const router = useRouter();
@@ -132,6 +136,8 @@ export function InventoryScreen({
   const [savingPublication, setSavingPublication] = useState(false);
   const [lotChoices, setLotChoices] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
   const [assignLotId, setAssignLotId] = useState("");
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [listVersion, setListVersion] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -192,7 +198,7 @@ export function InventoryScreen({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [clientId, itemId, query, filter, lotFilter]);
+  }, [clientId, itemId, query, filter, lotFilter, listVersion]);
 
   useEffect(() => {
     setSaleStep(null);
@@ -518,13 +524,13 @@ export function InventoryScreen({
                   Asignar lote
                 </button>
               </form>
-              <span className={`gt-inventory-status${statusClass(detail.status)}`}>
-                {guatemalaInventoryStatusLabel(detail.status)}
+              <span className={`gt-inventory-status${statusClass(detail.status, detail.published)}`}>
+                {guatemalaInventoryStatusLabel(detail.status, detail.published)}
               </span>
               {detail.sale?.isTest ? <span className="gt-test-badge">Prueba</span> : null}
               <dl className="gt-inventory-facts">
                 <div>
-                  <dt>Precio publicado</dt>
+                  <dt>{detail.published === false ? "Precio" : "Precio publicado"}</dt>
                   <dd>{formatStoredQuetzales(detail.sale?.publishedPriceGtq || detail.priceGtq)}</dd>
                 </div>
                 {detail.sale ? (
@@ -565,12 +571,12 @@ export function InventoryScreen({
                 ) : null}
                 {detail.createdBy?.role === "encargado" && detail.createdBy.username ? (
                   <div>
-                    <dt>Publicada por</dt>
+                    <dt>{detail.published === false ? "Registrada por" : "Publicada por"}</dt>
                     <dd>{detail.createdBy.username}</dd>
                   </div>
                 ) : detail.createdBy?.role === "propietario" ? (
                   <div>
-                    <dt>Publicada por</dt>
+                    <dt>{detail.published === false ? "Registrada por" : "Publicada por"}</dt>
                     <dd>Propietario</dd>
                   </div>
                 ) : null}
@@ -616,7 +622,16 @@ export function InventoryScreen({
                 </div>
               ) : null}
               {detail.description ? <p>{detail.description}</p> : null}
-              {staffMode && !publicationLocked && publicationStep === null ? (
+              {detail.published === false && detail.status === "disponible" ? (
+                <UnpublishedEditor
+                  key={`${detail.id}:${listVersion}`}
+                  clientId={clientId}
+                  item={detail}
+                  request={storeRequest}
+                  onSaved={() => setListVersion((current) => current + 1)}
+                />
+              ) : null}
+              {staffMode && detail.published !== false && !publicationLocked && publicationStep === null ? (
                 <div className="gt-inventory-actions">
                   {detail.status === "disponible" ? (
                     <button type="button" className="btn btn-ghost" onClick={() => { setPublicationError(""); setPublicationStep("retirar"); }}>
@@ -706,7 +721,7 @@ export function InventoryScreen({
                 >
                   <h3>Registrar venta</h3>
                   <p>SKU {detail.sku}</p>
-                  <p>Precio publicado {formatStoredQuetzales(detail.priceGtq)}</p>
+                  <p>{detail.published === false ? "Precio" : "Precio publicado"} {formatStoredQuetzales(detail.priceGtq)}</p>
                   <label htmlFor="charged-price">Precio cobrado</label>
                   <div className="gt-sale-price">
                     <span aria-hidden="true">Q</span>
@@ -735,7 +750,7 @@ export function InventoryScreen({
                 <div className="gt-sale-box">
                   <h3>Resumen de la venta</h3>
                   <p>SKU {detail.sku}</p>
-                  <p>Precio publicado {formatStoredQuetzales(detail.priceGtq)}</p>
+                  <p>{detail.published === false ? "Precio" : "Precio publicado"} {formatStoredQuetzales(detail.priceGtq)}</p>
                   <p>Precio cobrado {formatStoredQuetzales(chargedPrice)}</p>
                   {saleError ? <p className="note note-error" role="alert">{saleError}</p> : null}
                   <div className="gt-inventory-actions">
@@ -977,6 +992,29 @@ export function InventoryScreen({
             <h2 id="inventory-list-heading" className="gt-inventory-count">
               {availableGarmentLabel(available)}
             </h2>
+            <div className="gt-inventory-actions">
+              <button type="button" className="btn btn-primary" onClick={() => setQuickAddOpen((open) => !open)}>
+                Agregar sin fotos
+              </button>
+            </div>
+            {quickAddOpen ? (
+              <QuickAddForm
+                clientId={clientId}
+                lots={lotChoices}
+                request={storeRequest}
+                onCreated={(sku) => {
+                  setQuickAddOpen(false);
+                  setQuery(sku);
+                  setListVersion((current) => current + 1);
+                  router.replace(inventoryHref({ estado: "pendientes" }));
+                }}
+                onSearchExisting={(sku) => {
+                  setQuickAddOpen(false);
+                  setQuery(sku);
+                  router.replace(inventoryHref({ estado: "todas" }));
+                }}
+              />
+            ) : null}
             <div className="gt-inventory-filters" role="group" aria-label="Filtrar prendas">
               <label>
                 Lote
@@ -987,7 +1025,7 @@ export function InventoryScreen({
                   ))}
                 </select>
               </label>
-              {(["disponibles", "retiradas", "vendidas", "todas"] as InventoryListFilter[]).map((option) => (
+              {(["disponibles", "pendientes", "retiradas", "vendidas", "todas"] as InventoryListFilter[]).map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -997,11 +1035,13 @@ export function InventoryScreen({
                 >
                   {option === "disponibles"
                     ? "Disponibles"
-                    : option === "retiradas"
-                      ? "Retiradas"
-                      : option === "vendidas"
-                        ? "Vendidas"
-                        : "Todas"}
+                    : option === "pendientes"
+                      ? "Pendientes de publicar"
+                      : option === "retiradas"
+                        ? "Retiradas"
+                        : option === "vendidas"
+                          ? "Vendidas"
+                          : "Todas"}
                 </button>
               ))}
             </div>
@@ -1030,7 +1070,9 @@ export function InventoryScreen({
                     ? "No hay prendas retiradas."
                     : filter === "disponibles"
                       ? "No hay prendas disponibles."
-                      : "Todavía no hay prendas en el inventario."}
+                      : filter === "pendientes"
+                        ? "No hay prendas pendientes de publicar."
+                        : "Todavía no hay prendas en el inventario."}
             </p>
           ) : null}
           <div className="gt-inventory-list">
@@ -1054,7 +1096,8 @@ export function InventoryScreen({
                       {item.saleIsTest ? <span className="gt-test-badge">Prueba</span> : null}
                       <p className="gt-sold-for">Vendido por {formatStoredQuetzales(item.chargedPriceGtq)}</p>
                       <p className="gt-inventory-meta">
-                        Precio publicado {formatStoredQuetzales(item.publishedPriceGtq || item.priceGtq)}
+                        {item.published === false ? "Precio" : "Precio publicado"}{" "}
+                        {formatStoredQuetzales(item.publishedPriceGtq || item.priceGtq)}
                       </p>
                     </>
                   ) : (
@@ -1063,8 +1106,8 @@ export function InventoryScreen({
                       {formatStoredQuetzales(item.priceGtq)}
                     </p>
                   )}
-                  <span className={`gt-inventory-status${statusClass(item.status)}`}>
-                    {guatemalaInventoryStatusLabel(item.status)}
+                  <span className={`gt-inventory-status${statusClass(item.status, item.published)}`}>
+                    {guatemalaInventoryStatusLabel(item.status, item.published)}
                   </span>
                 </span>
               </button>
@@ -1074,9 +1117,11 @@ export function InventoryScreen({
             <a className="btn btn-primary" href={staffMode ? reportsPath : `${reportsPath}?clientId=${encodeURIComponent(clientId)}`}>
               Reportes de ventas
             </a>
-            <a className="btn btn-primary" href={staffMode ? expensesPath : `${expensesPath}?clientId=${encodeURIComponent(clientId)}`}>
-              Gastos
-            </a>
+            {!staffMode || canManageExpenses ? (
+              <a className="btn btn-primary" href={staffMode ? expensesPath : `${expensesPath}?clientId=${encodeURIComponent(clientId)}`}>
+                Gastos
+              </a>
+            ) : null}
             {staffMode ? null : (
               <a className="btn btn-ghost" href="/">
                 Volver a las prendas
@@ -1090,9 +1135,11 @@ export function InventoryScreen({
   );
 }
 
-function statusClass(status: string): string {
+function statusClass(status: string, published?: boolean): string {
+  if (status === "vendida" && published === false) return " is-sold is-unpublished";
   if (status === "vendida") return " is-sold";
   if (status === "retirada") return " is-withdrawn";
+  if (published === false) return " is-unpublished";
   return "";
 }
 
@@ -1100,5 +1147,6 @@ function publicationActionLabel(action: string): string {
   if (action === "retirar") return "Retiró la publicación";
   if (action === "corregir") return "Corrigió el artículo";
   if (action === "republicar") return "Volvió a publicar";
+  if (action === "publicar") return "Publicó el artículo";
   return action;
 }

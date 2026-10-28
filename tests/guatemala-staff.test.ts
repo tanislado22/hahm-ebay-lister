@@ -217,6 +217,103 @@ describe("acceso del encargado", () => {
       now: NOW,
     });
     expect(owner.ok && owner.actor.role).toBe("propietario");
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: account(),
+        session: session(),
+        requestedClientId: GUATEMALA_ID,
+        action: "finance",
+        now: NOW,
+      })
+    ).toMatchObject({ ok: false, status: 403 });
+    expect(
+      decideGuatemalaAccess({
+        owner: true,
+        staffPanel: true,
+        account: account(),
+        session: session(),
+        requestedClientId: GUATEMALA_ID,
+        action: "finance",
+        now: NOW,
+      }).ok
+    ).toBe(false);
+    const ownerFinance = decideGuatemalaAccess({
+      owner: true,
+      account: null,
+      session: null,
+      requestedClientId: GUATEMALA_ID,
+      action: "finance",
+      now: NOW,
+    });
+    expect(ownerFinance.ok && ownerFinance.actor.role).toBe("propietario");
+  });
+
+  it("permite gastos y recuperaciones solo a la cuenta con ese permiso", () => {
+    const maria = account({
+      id: "a3dc5b71-21a3-4f36-a187-2b62b1c8bfee",
+      username: "mariapacheco",
+      canManageExpenses: true,
+      canCorrectLots: false,
+      canVoidLots: false,
+    });
+    const allowed = decideGuatemalaAccess({
+      owner: false,
+      account: maria,
+      session: session({ accountId: maria.id }),
+      requestedClientId: GUATEMALA_ID,
+      action: "finance",
+      now: NOW,
+    });
+    expect(allowed.ok && allowed.actor).toMatchObject({
+      role: "encargado",
+      accountId: maria.id,
+      username: "mariapacheco",
+    });
+    const fromPanel = decideGuatemalaAccess({
+      owner: true,
+      staffPanel: true,
+      account: maria,
+      session: session({ accountId: maria.id }),
+      requestedClientId: GUATEMALA_ID,
+      action: "finance",
+      now: NOW,
+    });
+    expect(fromPanel.ok && fromPanel.actor.role).toBe("encargado");
+    for (const action of ["write", "manage", "correct", "purge", "lotDelete", "lotCorrect", "lotVoid"] as const) {
+      expect(
+        decideGuatemalaAccess({
+          owner: false,
+          account: maria,
+          session: session({ accountId: maria.id }),
+          requestedClientId: GUATEMALA_ID,
+          action,
+          now: NOW,
+        }).ok
+      ).toBe(false);
+    }
+    for (const action of ["sell", "publish", "read", "lotWrite"] as const) {
+      expect(
+        decideGuatemalaAccess({
+          owner: false,
+          account: maria,
+          session: session({ accountId: maria.id }),
+          requestedClientId: GUATEMALA_ID,
+          action,
+          now: NOW,
+        }).ok
+      ).toBe(true);
+    }
+    expect(
+      decideGuatemalaAccess({
+        owner: false,
+        account: account({ username: "oseaspacheco", canManageExpenses: false }),
+        session: session(),
+        requestedClientId: GUATEMALA_ID,
+        action: "finance",
+        now: NOW,
+      })
+    ).toMatchObject({ ok: false, status: 403 });
   });
 
   it("reactiva la misma cuenta y mantiene rechazada la sesión anterior", () => {

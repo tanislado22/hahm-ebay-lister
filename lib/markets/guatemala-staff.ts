@@ -34,6 +34,7 @@ export const GUATEMALA_STAFF_MESSAGES = {
   cannotCorrectLots: "No puedes corregir lotes ni gastos. El propietario puede darte ese permiso.",
   cannotVoidLots: "No puedes anular lotes ni gastos. El propietario puede darte ese permiso.",
   cannotDeleteLots: "Solo el propietario puede eliminar un lote vacío.",
+  cannotSeeRecovery: "No puedes ver ni registrar gastos o recuperaciones.",
   signInRequired: "Se requiere iniciar sesión.",
   usernameInvalid:
     "El usuario debe tener entre 3 y 32 caracteres: letras, números, punto, guion o guion bajo.",
@@ -57,7 +58,8 @@ export type GuatemalaAction =
   | "lotWrite"
   | "lotCorrect"
   | "lotVoid"
-  | "lotDelete";
+  | "lotDelete"
+  | "finance";
 
 export interface AccessAccount {
   id: string;
@@ -68,6 +70,7 @@ export interface AccessAccount {
   deactivatedAt: string | null;
   canCorrectLots?: boolean;
   canVoidLots?: boolean;
+  canManageExpenses?: boolean;
 }
 
 export interface AccessSession {
@@ -277,6 +280,33 @@ export function decideGuatemalaAccess(input: {
     }
     if (input.action === "lotVoid" && input.account.canVoidLots !== true) {
       return { ok: false, status: 403, code: "FORBIDDEN", error: GUATEMALA_STAFF_MESSAGES.cannotVoidLots };
+    }
+    return {
+      ok: true,
+      actor: { role: "encargado", accountId: input.account.id, username: input.account.username },
+      clientId: input.account.clientId,
+    };
+  }
+
+  if (input.action === "finance") {
+    if (owner) {
+      return { ok: true, actor: ownerActor, clientId: input.requestedClientId };
+    }
+    if (!staffValid || !input.account) {
+      return {
+        ok: false,
+        status: 401,
+        code: input.account || input.session ? "STAFF_SESSION_ENDED" : "ACCESS_CODE_REQUIRED",
+        error: input.account || input.session
+          ? GUATEMALA_STAFF_MESSAGES.sessionEnded
+          : GUATEMALA_STAFF_MESSAGES.signInRequired,
+      };
+    }
+    if (input.requestedClientId.trim() && input.account.clientId !== input.requestedClientId.trim()) {
+      return { ok: false, status: 403, code: "FORBIDDEN", error: GUATEMALA_STAFF_MESSAGES.otherClient };
+    }
+    if (input.account.canManageExpenses !== true) {
+      return { ok: false, status: 403, code: "FORBIDDEN", error: GUATEMALA_STAFF_MESSAGES.cannotSeeRecovery };
     }
     return {
       ok: true,

@@ -37,7 +37,7 @@ interface ReportPayload {
   count: number;
   totalChargedGtq: string;
   sales: ReportSale[];
-  profit: ProfitSummary;
+  profit?: ProfitSummary;
 }
 
 const PERIODS: { id: SalesReportPeriod; label: string }[] = [
@@ -56,11 +56,13 @@ export function SalesReportScreen({
   basePath = "/guatemala/reportes",
   inventoryPath = "/guatemala/inventario",
   expensesPath = "/guatemala/gastos",
+  canManageExpenses = true,
 }: {
   lockedClientId?: string;
   basePath?: string;
   inventoryPath?: string;
   expensesPath?: string;
+  canManageExpenses?: boolean;
 } = {}) {
   const params = useSearchParams();
   const router = useRouter();
@@ -148,7 +150,11 @@ export function SalesReportScreen({
       {staffMode ? null : <ReturnHomeBar role="propietario" />}
       <header>
         <h1>Reportes de ventas</h1>
-        <p>Ventas, costo de las prendas vendidas y gastos de Tienda Guatemala.</p>
+        <p>
+          {canManageExpenses
+            ? "Ventas, costo de las prendas vendidas y gastos de Tienda Guatemala."
+            : "Ventas de Tienda Guatemala."}
+        </p>
       </header>
       <section className="panel">
         <div className="gt-inventory-filters" role="group" aria-label="Período">
@@ -216,9 +222,11 @@ export function SalesReportScreen({
                 {report.profit.photographyNote ? <p className="gt-report-note">{report.profit.photographyNote}</p> : null}
               </>
             ) : null}
-            <p className="gt-report-note">
-              La ganancia resta el costo de las prendas vendidas en este período y los gastos del negocio. No usa la compra de todo el inventario.
-            </p>
+            {report.profit ? (
+              <p className="gt-report-note">
+                La ganancia resta el costo de las prendas vendidas en este período y los gastos del negocio. No usa la compra de todo el inventario.
+              </p>
+            ) : null}
             {report.sales.length === 0 ? <p>No hay ventas en este período.</p> : null}
             <div className="gt-inventory-list">
               {report.sales.map((sale) => (
@@ -263,12 +271,14 @@ export function SalesReportScreen({
           >
             Volver al inventario
           </a>
-          <a
-            className="btn btn-primary"
-            href={staffMode ? expensesPath : `${expensesPath}?clientId=${encodeURIComponent(clientId)}`}
-          >
-            Gastos
-          </a>
+          {!staffMode || canManageExpenses ? (
+            <a
+              className="btn btn-primary"
+              href={staffMode ? expensesPath : `${expensesPath}?clientId=${encodeURIComponent(clientId)}`}
+            >
+              Gastos
+            </a>
+          ) : null}
         </div>
       </section>
     </main>

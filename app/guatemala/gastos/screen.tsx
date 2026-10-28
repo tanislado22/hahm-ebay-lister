@@ -9,12 +9,18 @@ import {
   GUATEMALA_EXPENSE_CATEGORIES,
   GUATEMALA_EXPENSE_MESSAGES,
   expenseCategoryLabel,
+  formatSignedQuetzales,
   guatemalaTodayKey,
   prepareExpense,
   sumExpenseAmounts,
   type ExpenseCategory,
   type StoredExpense,
 } from "@/lib/markets/guatemala-expenses";
+import {
+  GUATEMALA_RECOVERY_MESSAGES,
+  prepareRecovery,
+  type StoredRecovery,
+} from "@/lib/markets/guatemala-recoveries";
 import { formatGuatemalaCivilDate, parseCivilDate, parseSalesReportPeriod, type SalesReportPeriod } from "@/lib/markets/guatemala-sales-report";
 import "../inventario/inventory.css";
 import "../reportes/report.css";
@@ -26,6 +32,13 @@ interface ExpensePayload {
   toLabel: string;
   totalGtq: string;
   expenses: StoredExpense[];
+}
+
+interface RecoveryPayload {
+  expensesGtq: string;
+  recoveredGtq: string;
+  pendingGtq: string;
+  recoveries: StoredRecovery[];
 }
 
 const PERIODS: { id: SalesReportPeriod; label: string }[] = [
@@ -49,15 +62,18 @@ export function ExpensesScreen({
   basePath = "/guatemala/gastos",
   inventoryPath = "/guatemala/inventario",
   reportsPath = "/guatemala/reportes",
+  allowFinances = false,
 }: {
   lockedClientId?: string;
   basePath?: string;
   inventoryPath?: string;
   reportsPath?: string;
+  allowFinances?: boolean;
 } = {}) {
   const params = useSearchParams();
   const router = useRouter();
   const staffMode = Boolean(lockedClientId);
+  const showFinances = !staffMode || allowFinances;
   const clientId = lockedClientId || params.get("clientId") || "";
   function storeRequest(path: string, body?: unknown) {
     return guatemalaRequest(path, body, staffMode ? { actor: "encargado" } : undefined);
@@ -77,6 +93,11 @@ export function ExpensesScreen({
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [recovery, setRecovery] = useState<RecoveryPayload | null>(null);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryForm, setRecoveryForm] = useState({ recoveredOn: "", description: "", amount: "" });
+  const [recoveryBaseline, setRecoveryBaseline] = useState("");
+  const [recoveryError, setRecoveryError] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -124,6 +145,34 @@ export function ExpensesScreen({
     }
   }, [clientId, period, from, to]);
 
+  useEffect(() => {
+    if (!showFinances || !clientId) {
+      setRecovery(null);
+      return;
+    }
+    const controller = new AbortController();
+    void loadRecovery(controller.signal);
+    return () => controller.abort();
+
+    async function loadRecovery(signal: AbortSignal) {
+      try {
+        const response = await storeRequest(
+          `/api/markets/guatemala/expenses/recoveries?clientId=${encodeURIComponent(clientId)}`
+        );
+        const body = (await response.json()) as RecoveryPayload & { ok?: boolean; error?: string };
+        if (signal.aborted) return;
+        if (!response.ok || !body.ok) {
+          setRecovery(null);
+          setError(body.error || GUATEMALA_RECOVERY_MESSAGES.loadFailed);
+          return;
+        }
+        setRecovery(body);
+      } catch {
+        if (!signal.aborted) setError(GUATEMALA_RECOVERY_MESSAGES.loadFailed);
+      }
+    }
+  }, [clientId, showFinances]);
+
   function updatePeriod(next: { periodo?: SalesReportPeriod; desde?: string; hasta?: string }) {
     const search = new URLSearchParams({ periodo: next.periodo ?? period });
     if (!staffMode) search.set("clientId", clientId);
@@ -144,7 +193,22 @@ export function ExpensesScreen({
     rememberForm({ ...EMPTY_FORM, spentOn: guatemalaTodayKey() });
     setFormError("");
     setPendingDeleteId(null);
+    setRecoveryOpen(false);
     setFormOpen(true);
+  }
+
+  function openRecovery() {
+    const next = { recoveredOn: guatemalaTodayKey(), description: "", amount: "" };
+    setRecoveryForm(next);
+    setRecoveryBaseline(JSON.stringify(next));
+    setRecoveryError("");
+    setFormOpen(false);
+    setRecoveryOpen(true);
+  }
+
+  function closeRecovery() {
+    setRecoveryOpen(false);
+    setRecoveryError("");
   }
 
   function openEdit(expense: StoredExpense) {
@@ -228,6 +292,52 @@ export function ExpensesScreen({
     }
     setPayload(body);
     setError("");
+    if (showFinances) await refreshRecovery();
+  }
+
+  async function refreshRecovery() {
+    const response = await storeRequest(
+      `/api/markets/guatemala/expenses/recoveries?clientId=${encodeURIComponent(clientId)}`
+    );
+    const body = (await response.json()) as RecoveryPayload & { ok?: boolean; error?: string };
+    if (!response.ok || !body.ok) {
+      setError(body.error || GUATEMALA_RECOVERY_MESSAGES.loadFailed);
+      return;
+    }
+    setRecovery(body);
+  }
+
+  async function saveRecovery() {
+    if (savingRef.current) return;
+    const prepared = prepareRecovery(recoveryForm);
+    if (!prepared.ok) {
+      setRecoveryError(prepared.error);
+      return;
+    }
+    savingRef.current = true;
+    setSaving(true);
+    setRecoveryError("");
+    try {
+      const response = await storeRequest("/api/markets/guatemala/expenses/recoveries", {
+        clientId,
+        recoveredOn: prepared.recovery.recoveredOn,
+        description: prepared.recovery.description,
+        amount: prepared.recovery.amountGtq,
+      });
+      const body = (await response.json()) as { ok?: boolean; error?: string; message?: string };
+      if (!response.ok || !body.ok) {
+        setRecoveryError(body.error || GUATEMALA_RECOVERY_MESSAGES.retry);
+        return;
+      }
+      await refreshRecovery();
+      setNotice(body.message || GUATEMALA_RECOVERY_MESSAGES.saved);
+      closeRecovery();
+    } catch {
+      setRecoveryError(GUATEMALA_RECOVERY_MESSAGES.retry);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   }
 
   async function confirmDelete(expense: StoredExpense) {
@@ -263,7 +373,10 @@ export function ExpensesScreen({
 
   const listedTotal = payload ? sumExpenseAmounts(payload.expenses) : null;
   const withClient = (path: string) => (staffMode ? path : `${path}?clientId=${encodeURIComponent(clientId)}`);
-  useUnsavedChanges(formOpen && JSON.stringify(form) !== formBaseline);
+  useUnsavedChanges(
+    (formOpen && JSON.stringify(form) !== formBaseline) ||
+      (recoveryOpen && JSON.stringify(recoveryForm) !== recoveryBaseline)
+  );
 
   return (
     <main className="wrap gt-inventory gt-report gt-expenses">
@@ -272,6 +385,99 @@ export function ExpensesScreen({
         <h1>Gastos</h1>
         <p>Gastos de Tienda Guatemala. Quedan guardados para este cliente y no se mezclan con otras tiendas.</p>
       </header>
+      {showFinances ? (
+        <section className="panel" aria-labelledby="recovery-heading">
+          <h2 id="recovery-heading">Recuperación de gastos</h2>
+          <p className="gt-expense-note">
+            Estos totales suman todos los gastos guardados. Los gastos de cada lote ya están incluidos una sola vez.
+            La recuperación se anota cuando apartas el dinero: no se descuenta de las ventas, no se guarda como otro gasto
+            y no se resta otra vez en la ganancia.
+          </p>
+          {recovery ? (
+            <div className="gt-recovery-totals">
+              <p>Total de gastos {formatStoredQuetzales(recovery.expensesGtq)}</p>
+              <p>Total recuperado {formatStoredQuetzales(recovery.recoveredGtq)}</p>
+              <p>Pendiente de recuperar {formatSignedQuetzales(recovery.pendingGtq)}</p>
+            </div>
+          ) : null}
+          {!recoveryOpen ? (
+            <div className="gt-inventory-actions">
+              <button type="button" className="btn btn-primary" onClick={openRecovery}>
+                Registrar recuperación
+              </button>
+            </div>
+          ) : (
+            <form
+              className="gt-sale-box gt-expense-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void saveRecovery();
+              }}
+            >
+              <h3>Registrar recuperación</h3>
+              <label>
+                Fecha
+                <input
+                  type="date"
+                  required
+                  value={recoveryForm.recoveredOn}
+                  onChange={(event) => setRecoveryForm((current) => ({ ...current, recoveredOn: event.target.value }))}
+                />
+              </label>
+              <label>
+                Descripción
+                <input
+                  type="text"
+                  value={recoveryForm.description}
+                  placeholder="Opcional"
+                  onChange={(event) => setRecoveryForm((current) => ({ ...current, description: event.target.value }))}
+                />
+              </label>
+              <p className="gt-expense-note">Opcional. Por ejemplo, apartado de caja.</p>
+              <label>
+                Monto
+                <div className="gt-sale-price">
+                  <span aria-hidden="true">Q</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    placeholder="0.00"
+                    required
+                    value={recoveryForm.amount}
+                    onChange={(event) => setRecoveryForm((current) => ({ ...current, amount: event.target.value }))}
+                  />
+                </div>
+              </label>
+              {recoveryError ? (
+                <p className="note note-error" role="alert">
+                  {recoveryError}
+                </p>
+              ) : null}
+              <div className="gt-inventory-actions">
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? "Guardando…" : "Guardar recuperación"}
+                </button>
+                <button type="button" className="btn btn-ghost" disabled={saving} onClick={closeRecovery}>
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          )}
+          {recovery && recovery.recoveries.length > 0 ? (
+            <div className="gt-expense-list">
+              <h3>Historial de recuperaciones</h3>
+              {recovery.recoveries.map((entry) => (
+                <article key={entry.id} className="gt-expense-card">
+                  <p className="gt-inventory-meta">{expenseDateLabel(entry.recoveredOn)}</p>
+                  {entry.description ? <p>{entry.description}</p> : null}
+                  <p className="gt-expense-amount">{formatStoredQuetzales(entry.amountGtq)}</p>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
       <section className="panel">
         <div className="gt-inventory-filters" role="group" aria-label="Período">
           {PERIODS.map((option) => (
@@ -417,7 +623,11 @@ export function ExpensesScreen({
             <p className="gt-report-dates">
               Consultado: {payload.fromLabel} al {payload.toLabel}. Zona horaria {payload.timezone}.
             </p>
-            {listedTotal ? <p className="gt-report-total">Total de gastos {formatStoredQuetzales(listedTotal)}</p> : null}
+            {listedTotal ? (
+              <p className="gt-report-total">
+                {showFinances ? "Gastos de este período" : "Total de gastos"} {formatStoredQuetzales(listedTotal)}
+              </p>
+            ) : null}
             {payload.expenses.length === 0 ? <p>No hay gastos en este período.</p> : null}
             <div className="gt-expense-list">
               {payload.expenses.map((expense) => (

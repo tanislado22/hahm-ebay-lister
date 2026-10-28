@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
     accountId?: unknown;
     canCorrectLots?: unknown;
     canVoidLots?: unknown;
+    canManageExpenses?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -71,6 +72,7 @@ export async function POST(request: NextRequest) {
         accountId: body.accountId,
         canCorrectLots: body.canCorrectLots,
         canVoidLots: body.canVoidLots,
+        canManageExpenses: body.canManageExpenses,
       });
       if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
       return NextResponse.json({ ok: true });

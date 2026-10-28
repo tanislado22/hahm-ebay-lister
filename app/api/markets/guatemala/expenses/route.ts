@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   const clientId = request.nextUrl.searchParams.get("clientId") ?? "";
-  const access = await authorizeGuatemalaRequest(request, clientId, "read");
+  const access = await authorizeGuatemalaRequest(request, clientId, "finance");
   if (!access.ok) return access.response;
   try {
     const result = await queryGuatemalaExpenses({
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
   const access = await authorizeGuatemalaRequest(
     request,
     typeof body.clientId === "string" ? body.clientId : "",
-    "sell"
+    "finance"
   );
   if (!access.ok) return access.response;
   try {

@@ -41,6 +41,7 @@ export interface CatalogSourceItem {
   status: "disponible" | "vendida" | "retirada";
   photos: CatalogPhoto[];
   sales: CatalogSaleMark[];
+  published?: boolean;
 }
 
 export type CatalogAvailability = "todos" | "disponibles" | "vendidos";
@@ -140,7 +141,7 @@ function catalogPriceBound(value: string): number | null {
 }
 
 export function catalogPublicState(item: CatalogSourceItem, clientId: string): CatalogPublicState {
-  if (item.clientId !== clientId || item.status === "retirada") return "oculto";
+  if (item.clientId !== clientId || item.status === "retirada" || item.published === false) return "oculto";
   const active = item.sales.filter((sale) => !sale.voidedAt);
   if (active.some((sale) => sale.isTest)) return "oculto";
   const realSale = active.some((sale) => !sale.isTest);

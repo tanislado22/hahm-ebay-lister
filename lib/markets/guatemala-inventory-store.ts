@@ -19,6 +19,7 @@ import {
   changePublication,
   isolatedPublicationSku,
   PUBLICATION_MESSAGES,
+  publishReviewBlockers,
   type PublicationAction,
   type PublicationEvent,
   type StaffPublicationItem,
@@ -57,7 +58,9 @@ import {
   inventoryListFilter,
   prepareGarmentCost,
   duplicateSkuReportMessage,
+  prepareDraftUpdate,
   prepareInventorySave,
+  prepareUnpublishedItem,
   preservedGuatemalaSku,
   reportDuplicateSkus,
   quetzalPriceText,
@@ -66,6 +69,7 @@ import {
   type InventoryItemStatus,
   type InventoryListFilter,
   type InventoryPhoto,
+  type PreparedDraftUpdate,
   type PreparedInventoryItem,
   type PublicationEventView,
   type SaleActor,
@@ -164,6 +168,10 @@ async function createGuatemalaInventoryTables(): Promise<void> {
   await sql`
     ALTER TABLE guatemala_inventory_items
     ADD COLUMN IF NOT EXISTS lot_id TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_items
+    ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT TRUE
   `;
   await ensureGuatemalaSkuUniqueIndex(sql);
   await sql`
@@ -338,9 +346,14 @@ interface ItemRow {
   status: string;
   cost_gtq?: string | null;
   cost_includes_photography?: boolean | string | null;
+  published?: boolean | string | null;
   created_by_role?: string | null;
   created_by_account_id?: string | null;
   created_by_username?: string | null;
+}
+
+function publishedFlag(value: unknown): boolean {
+  return !(value === false || value === "f" || value === "false" || value === 0);
 }
 
 function itemStatus(value: unknown): InventoryItemStatus {
@@ -371,6 +384,7 @@ function storedFromRow(
     costGtq: optionalCostText(row.cost_gtq),
     costIncludesPhotography: optionalCostText(row.cost_gtq) != null && flag(row.cost_includes_photography),
     createdBy: createdByFrom(row),
+    published: publishedFlag(row.published),
   };
 }
 
@@ -421,7 +435,7 @@ async function findRow(clientId: string, column: "source_group_id" | "sku", valu
     column === "sku"
       ? await sql`
           SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
-                 price_gtq::text AS price_gtq, status,
+                 price_gtq::text AS price_gtq, status, published,
                  created_by_role, created_by_account_id, created_by_username
           FROM guatemala_inventory_items
           WHERE client_id = ${clientId} AND sku = ${value}
@@ -429,7 +443,7 @@ async function findRow(clientId: string, column: "source_group_id" | "sku", valu
         `
       : await sql`
           SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
-                 price_gtq::text AS price_gtq, status,
+                 price_gtq::text AS price_gtq, status, published,
                  created_by_role, created_by_account_id, created_by_username
           FROM guatemala_inventory_items
           WHERE client_id = ${clientId} AND source_group_id = ${value}
@@ -553,6 +567,159 @@ export async function saveGuatemalaInventoryItem(
   return runInventorySave(postgresRepository(), input, clientIsGuatemala, createdBy);
 }
 
+export async function saveUnpublishedGuatemalaItem(input: {
+  clientId: string;
+  actor: SaleActor;
+  sku?: unknown;
+  itemType?: unknown;
+  size?: unknown;
+  price?: unknown;
+  lotId?: unknown;
+}): Promise<
+  | { ok: true; item: { id: string; sku: string; title: string; priceGtq: string; published: false; status: "disponible" }; message: string }
+  | { ok: false; status: 400 | 403 | 409; error: string; existing?: { id: string; sku: string; title: string } }
+> {
+  const prepared = prepareUnpublishedItem({ ...input, clientId: input.clientId });
+  if (!prepared.ok) return prepared;
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  await ensureGuatemalaInventoryTables();
+  if (!(await activeGuatemalaLot(input.clientId, prepared.item.lotId))) {
+    return { ok: false, status: 400, error: GUATEMALA_LOT_MESSAGES.notFound };
+  }
+  const sql = getSql();
+  const id = crypto.randomUUID();
+  const sourceGroupId = crypto.randomUUID();
+  const rows = await sql`
+    WITH locked AS (
+      SELECT pg_advisory_xact_lock(
+        hashtext('guatemala-sku'),
+        hashtext(${`${input.clientId}\u001f${prepared.item.sku}`})
+      ) AS sku_locked
+    )
+    INSERT INTO guatemala_inventory_items (
+      id, client_id, source_group_id, sku, title, description,
+      brand, size, condition, price_gtq, currency, status, lot_id, published,
+      created_by_role, created_by_account_id, created_by_username
+    )
+    SELECT
+      ${id},
+      ${input.clientId},
+      ${sourceGroupId},
+      ${prepared.item.sku},
+      ${prepared.item.title},
+      '',
+      '',
+      ${prepared.item.size},
+      '',
+      ${prepared.item.priceGtq}::numeric,
+      'GTQ',
+      ${GUATEMALA_INVENTORY_STATUS},
+      ${prepared.item.lotId},
+      FALSE,
+      ${input.actor.role},
+      ${input.actor.accountId},
+      ${input.actor.username}
+    FROM locked
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM guatemala_inventory_items AS taken
+      WHERE taken.client_id = ${input.clientId}
+        AND taken.sku = ${prepared.item.sku}
+    )
+    ON CONFLICT DO NOTHING
+    RETURNING id, sku, title, price_gtq::text AS price_gtq, status, published
+  `;
+  const row = rows[0];
+  if (!row) {
+    const existing = await sql`
+      SELECT id, sku, title
+      FROM guatemala_inventory_items
+      WHERE client_id = ${input.clientId} AND sku = ${prepared.item.sku}
+      LIMIT 1
+    `;
+    const found = existing[0];
+    return {
+      ok: false,
+      status: 409,
+      error: GUATEMALA_INVENTORY_MESSAGES.skuInUse,
+      existing: found
+        ? { id: String(found.id), sku: String(found.sku), title: String(found.title ?? "") }
+        : undefined,
+    };
+  }
+  return {
+    ok: true,
+    message: GUATEMALA_INVENTORY_MESSAGES.unpublishedSaved,
+    item: {
+      id: String(row.id),
+      sku: String(row.sku),
+      title: String(row.title ?? ""),
+      priceGtq: normalizePriceText(row.price_gtq),
+      published: false,
+      status: "disponible",
+    },
+  };
+}
+
+export async function completeUnpublishedGuatemalaItem(input: {
+  clientId: string;
+  itemId: string;
+  actor: SaleActor;
+  publish?: unknown;
+  title?: unknown;
+  description?: unknown;
+  brand?: unknown;
+  size?: unknown;
+  condition?: unknown;
+  price?: unknown;
+  photos?: unknown;
+}): Promise<
+  | { ok: true; published: boolean; message: string; item: { id: string; sku: string; status: InventoryItemStatus; priceGtq: string; published: boolean } }
+  | { ok: false; status: 400 | 403 | 404 | 409; error: string }
+> {
+  const prepared = prepareDraftUpdate(input);
+  if (!prepared.ok) return prepared;
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  await ensureGuatemalaInventoryTables();
+  const publish = input.publish === true;
+  const current = await readGuatemalaInventoryItem(input.clientId, input.itemId);
+  if ("ok" in current) return current;
+  if (current.published !== false) {
+    return { ok: false, status: 409, error: GUATEMALA_INVENTORY_MESSAGES.notPending };
+  }
+  if (current.status !== GUATEMALA_INVENTORY_STATUS || (current.sale && !current.sale.voidedAt)) {
+    return { ok: false, status: 409, error: PUBLICATION_MESSAGES.sold };
+  }
+  if (publish) {
+    const blockers = publishReviewBlockers({
+      sku: current.sku,
+      title: prepared.draft.title,
+      price: prepared.draft.priceGtq,
+      photoCount: prepared.draft.photos.length,
+    });
+    if (blockers.length) return { ok: false, status: 400, error: blockers[0] };
+  }
+  const saved = await writeUnpublishedDraft(input.clientId, input.itemId, current.sku, prepared.draft, publish);
+  if (!saved) return { ok: false, status: 409, error: GUATEMALA_INVENTORY_MESSAGES.notPending };
+  if (publish) {
+    await recordPublicationEvent(input.clientId, input.itemId, {
+      action: "publicar",
+      actor: input.actor,
+      at: new Date().toISOString(),
+    });
+  }
+  return {
+    ok: true,
+    published: publish,
+    message: publish ? GUATEMALA_INVENTORY_MESSAGES.draftPublished : GUATEMALA_INVENTORY_MESSAGES.draftSaved,
+    item: saved,
+  };
+}
+
 export async function guatemalaSkuTaken(clientId: string, sku: string): Promise<boolean> {
   await ensureGuatemalaInventoryTables();
   const stored = await findRow(clientId, "sku", sku);
@@ -608,6 +775,7 @@ export interface InventoryListItem {
   chargedPriceGtq: string | null;
   publishedPriceGtq: string | null;
   saleIsTest: boolean;
+  published: boolean;
 }
 
 export async function listGuatemalaInventory(
@@ -629,6 +797,7 @@ export async function listGuatemalaInventory(
   const pattern = inventoryLikePattern(query);
   const filter = inventoryListFilter(filterInput);
   const status = statusForFilter(filter);
+  const pendingOnly = filter === "pendientes";
   const counts = await sql`
     SELECT COUNT(*)::int AS available
     FROM guatemala_inventory_items
@@ -637,7 +806,7 @@ export async function listGuatemalaInventory(
   `;
   const rows = pattern
     ? await sql`
-        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq, item.status,
+        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq, item.status, item.published,
           photo.id AS photo_id, photo.media_type, photo.data,
           COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq)::text AS charged_price_gtq,
           sale.published_price_gtq::text AS published_price_gtq,
@@ -654,12 +823,13 @@ export async function listGuatemalaInventory(
         ) AS photo ON TRUE
         WHERE item.client_id = ${clientId}
           AND (${lotId}::text IS NULL OR item.lot_id = ${lotId})
+          AND (${pendingOnly}::boolean = FALSE OR item.published = FALSE)
           AND (${status}::text IS NULL OR item.status = ${status})
           AND (item.sku ILIKE ${pattern} ESCAPE '\\' OR item.title ILIKE ${pattern} ESCAPE '\\')
         ORDER BY item.created_at DESC
       `
     : await sql`
-        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq, item.status,
+        SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq, item.status, item.published,
           photo.id AS photo_id, photo.media_type, photo.data,
           COALESCE(sale.current_charged_price_gtq, sale.charged_price_gtq)::text AS charged_price_gtq,
           sale.published_price_gtq::text AS published_price_gtq,
@@ -676,6 +846,7 @@ export async function listGuatemalaInventory(
         ) AS photo ON TRUE
         WHERE item.client_id = ${clientId}
           AND (${lotId}::text IS NULL OR item.lot_id = ${lotId})
+          AND (${pendingOnly}::boolean = FALSE OR item.published = FALSE)
           AND (${status}::text IS NULL OR item.status = ${status})
         ORDER BY item.created_at DESC
       `;
@@ -704,6 +875,7 @@ export async function listGuatemalaInventory(
       chargedPriceGtq: row.charged_price_gtq ? normalizePriceText(row.charged_price_gtq) : null,
       publishedPriceGtq: row.published_price_gtq ? normalizePriceText(row.published_price_gtq) : null,
       saleIsTest: row.sale_is_test === true || row.sale_is_test === "t" || row.sale_is_test === "true",
+      published: publishedFlag(row.published),
       cover:
         row.photo_id && row.data
           ? { id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }
@@ -723,7 +895,7 @@ function aggregateIds(value: unknown): string[] {
 }
 
 function statusForFilter(filter: InventoryListFilter): string | null {
-  if (filter === "disponibles") return GUATEMALA_INVENTORY_STATUS;
+  if (filter === "disponibles" || filter === "pendientes") return GUATEMALA_INVENTORY_STATUS;
   if (filter === "vendidas") return GUATEMALA_SOLD_STATUS;
   if (filter === "retiradas") return GUATEMALA_WITHDRAWN_STATUS;
   return null;
@@ -740,7 +912,7 @@ export async function readGuatemalaInventoryItem(
   const sql = getSql();
   const rows = await sql`
     SELECT id, client_id, source_group_id, sku, title, description, brand, size, condition,
-      price_gtq::text AS price_gtq, status,
+      price_gtq::text AS price_gtq, status, published,
       cost_gtq::text AS cost_gtq, cost_includes_photography,
       created_by_role, created_by_account_id, created_by_username
     FROM guatemala_inventory_items
@@ -937,6 +1109,75 @@ async function updatePublicationStatus(
   };
 }
 
+async function writeUnpublishedDraft(
+  clientId: string,
+  itemId: string,
+  sku: string,
+  draft: PreparedDraftUpdate,
+  publish: boolean
+): Promise<{ id: string; sku: string; status: InventoryItemStatus; priceGtq: string; published: boolean } | null> {
+  const sql = getSql();
+  const photoJson = JSON.stringify(
+    draft.photos.map((photo, position) => ({
+      id: photo.id,
+      photo_position: position,
+      media_type: photo.mediaType,
+      data: photo.data,
+    }))
+  );
+  const rows = await sql`
+    WITH updated AS (
+      UPDATE guatemala_inventory_items AS item
+      SET title = ${draft.title},
+          description = ${draft.description},
+          brand = ${draft.brand},
+          size = ${draft.size},
+          condition = ${draft.condition},
+          price_gtq = ${draft.priceGtq}::numeric,
+          published = ${publish}
+      WHERE item.id = ${itemId}
+        AND item.client_id = ${clientId}
+        AND item.sku = ${sku}
+        AND item.published = FALSE
+        AND item.status = ${GUATEMALA_INVENTORY_STATUS}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM guatemala_inventory_sales AS sale
+          WHERE sale.item_id = item.id
+            AND sale.client_id = item.client_id
+            AND sale.voided_at IS NULL
+        )
+      RETURNING id, sku, status, price_gtq::text AS price_gtq, published
+    ),
+    removed AS (
+      DELETE FROM guatemala_inventory_photos
+      WHERE item_id IN (SELECT id FROM updated)
+      RETURNING item_id
+    ),
+    saved_photos AS (
+      INSERT INTO guatemala_inventory_photos (id, item_id, position, media_type, data)
+      SELECT photo.id, updated.id, photo.photo_position, photo.media_type, photo.data
+      FROM jsonb_to_recordset(${photoJson}::jsonb)
+        AS photo(id text, photo_position int, media_type text, data text)
+      CROSS JOIN updated
+      RETURNING item_id
+    )
+    SELECT updated.id, updated.sku, updated.status, updated.price_gtq, updated.published
+    FROM updated
+    WHERE (SELECT COUNT(*) FROM removed) >= 0
+      AND (SELECT COUNT(*) FROM saved_photos) >= 0
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    sku: String(row.sku),
+    status: itemStatus(row.status),
+    priceGtq: normalizePriceText(row.price_gtq),
+    published: publishedFlag(row.published),
+  };
+}
+
 async function updatePublicationContents(
   clientId: string,
   itemId: string,
@@ -1029,7 +1270,10 @@ async function publicationEventsFor(clientId: string, itemId: string): Promise<P
     ORDER BY created_at ASC
   `;
   return rows.flatMap((row) => {
-    const action = row.action === "retirar" || row.action === "corregir" || row.action === "republicar" ? row.action : null;
+    const action =
+      row.action === "retirar" || row.action === "corregir" || row.action === "republicar" || row.action === "publicar"
+        ? row.action
+        : null;
     const actorRole = row.actor_role === "encargado" || row.actor_role === "propietario" ? row.actor_role : null;
     if (!action || !actorRole) return [];
     return [
@@ -1598,7 +1842,7 @@ export async function listPublicGuatemalaCatalog(
   const sql = getSql();
   const rows = await sql`
     SELECT item.id, item.sku, item.title, item.brand, item.size, item.condition, item.price_gtq::text AS price_gtq,
-      item.status, photo.id AS photo_id, photo.media_type
+      item.status, item.published, photo.id AS photo_id, photo.media_type
     FROM guatemala_inventory_items AS item
     LEFT JOIN LATERAL (
       SELECT id, media_type
@@ -1609,6 +1853,7 @@ export async function listPublicGuatemalaCatalog(
       LIMIT 1
     ) AS photo ON TRUE
     WHERE item.client_id = ${clientId}
+      AND item.published = TRUE
       AND (
         (
           item.status = ${GUATEMALA_INVENTORY_STATUS}
@@ -1652,10 +1897,11 @@ export async function readPublicGuatemalaCatalogItem(
   const sql = getSql();
   const rows = await sql`
     SELECT item.id, item.sku, item.title, item.description, item.brand, item.size, item.condition,
-      item.price_gtq::text AS price_gtq, item.status
+      item.price_gtq::text AS price_gtq, item.status, item.published
     FROM guatemala_inventory_items AS item
     WHERE item.id = ${itemId}
       AND item.client_id = ${clientId}
+      AND item.published = TRUE
       AND (
         (
           item.status = ${GUATEMALA_INVENTORY_STATUS}
@@ -1701,6 +1947,7 @@ export async function readPublicCatalogPhoto(
     INNER JOIN guatemala_inventory_items AS item ON item.id = photo.item_id
     WHERE photo.id = ${photoId}
       AND item.client_id = ${clientId}
+      AND item.published = TRUE
       AND (
         (
           item.status = ${GUATEMALA_INVENTORY_STATUS}
@@ -1755,6 +2002,7 @@ function publicSource(
     condition: String(row.condition ?? ""),
     priceGtq: normalizePriceText(row.price_gtq),
     status: row.status === GUATEMALA_SOLD_STATUS ? GUATEMALA_SOLD_STATUS : row.status === GUATEMALA_WITHDRAWN_STATUS ? GUATEMALA_WITHDRAWN_STATUS : GUATEMALA_INVENTORY_STATUS,
+    published: publishedFlag(row.published),
     photos: cover.map((photo) => ({ ...photo, data: "" })),
     sales: row.status === GUATEMALA_SOLD_STATUS ? [{ isTest: false, voidedAt: null }] : [],
   };

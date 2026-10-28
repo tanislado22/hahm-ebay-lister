@@ -11,6 +11,14 @@ export default async function StaffExpensesPage() {
   const token = (await cookies()).get(STAFF_COOKIE)?.value;
   const session = await staffSessionFromToken(token);
   if (!session) redirect("/guatemala/entrada");
+  if (!session.canManageExpenses) {
+    return (
+      <main>
+        <h1>Gastos</h1>
+        <p>No puedes ver ni registrar gastos o recuperaciones.</p>
+      </main>
+    );
+  }
   return (
     <Suspense
       fallback={
@@ -24,6 +32,7 @@ export default async function StaffExpensesPage() {
         basePath="/guatemala/panel/gastos"
         inventoryPath="/guatemala/panel/inventario"
         reportsPath="/guatemala/panel/reportes"
+        allowFinances
       />
     </Suspense>
   );

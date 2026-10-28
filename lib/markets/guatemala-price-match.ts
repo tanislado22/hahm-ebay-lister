@@ -80,6 +80,7 @@ const GARMENT_KINDS: GarmentKind[] = [
   { key: "bota", search: "bota", query: "botas?|boots?" },
   { key: "zapato", search: "zapato", query: "zapatos?|shoes?" },
   { key: "bolso", search: "bolso", query: "bolso|bolsa|cartera" },
+  { key: "gorra", search: "gorra", query: "gorras?|cachucha" },
 ];
 
 export const GARMENT_KIND_CHOICES = GARMENT_KINDS.map((kind) => ({
@@ -106,6 +107,7 @@ const DETECTORS: { key: string; pattern: RegExp }[] = [
   { key: "bota", pattern: /\bbotas?\b|\bboots?\b/ },
   { key: "zapato", pattern: /\bzapatos?\b|\bshoes?\b/ },
   { key: "bolso", pattern: /\b(bolso|bolsa|cartera|handbag)\b/ },
+  { key: "gorra", pattern: /\bgorras?\b|\bcachucha\b/ },
 ];
 
 const SIZE_RULES: { pattern: RegExp; key: string }[] = [

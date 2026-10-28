@@ -13,6 +13,7 @@ interface StaffAccount {
   createdAt: string;
   canCorrectLots?: boolean;
   canVoidLots?: boolean;
+  canManageExpenses?: boolean;
 }
 
 const STATUS_LABEL = {
@@ -118,13 +119,19 @@ function OwnerStaffScreen() {
     await load();
   }
 
-  async function savePermissions(account: StaffAccount, canCorrectLots: boolean, canVoidLots: boolean) {
+  async function savePermissions(
+    account: StaffAccount,
+    canCorrectLots: boolean,
+    canVoidLots: boolean,
+    canManageExpenses: boolean
+  ) {
     setError("");
     const response = await guatemalaRequest("/api/markets/guatemala/staff", {
       action: "permisos",
       accountId: account.id,
       canCorrectLots,
       canVoidLots,
+      canManageExpenses,
     });
     const body = (await response.json()) as { ok?: boolean; error?: string };
     if (!response.ok || !body.ok) {
@@ -237,7 +244,14 @@ function OwnerStaffScreen() {
                     <input
                       type="checkbox"
                       checked={account.canCorrectLots === true}
-                      onChange={(event) => void savePermissions(account, event.target.checked, account.canVoidLots === true)}
+                      onChange={(event) =>
+                        void savePermissions(
+                          account,
+                          event.target.checked,
+                          account.canVoidLots === true,
+                          account.canManageExpenses === true
+                        )
+                      }
                     />
                     Corregir lotes
                   </label>
@@ -245,9 +259,31 @@ function OwnerStaffScreen() {
                     <input
                       type="checkbox"
                       checked={account.canVoidLots === true}
-                      onChange={(event) => void savePermissions(account, account.canCorrectLots === true, event.target.checked)}
+                      onChange={(event) =>
+                        void savePermissions(
+                          account,
+                          account.canCorrectLots === true,
+                          event.target.checked,
+                          account.canManageExpenses === true
+                        )
+                      }
                     />
                     Anular lotes
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={account.canManageExpenses === true}
+                      onChange={(event) =>
+                        void savePermissions(
+                          account,
+                          account.canCorrectLots === true,
+                          account.canVoidLots === true,
+                          event.target.checked
+                        )
+                      }
+                    />
+                    Gastos y recuperaciones
                   </label>
                 </span>
               ) : null}

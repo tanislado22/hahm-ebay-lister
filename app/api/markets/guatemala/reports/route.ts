@@ -23,7 +23,9 @@ export async function GET(request: NextRequest) {
     if (!result.ok) {
       return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
     }
-    return NextResponse.json(result);
+    if (access.canManageExpenses) return NextResponse.json(result);
+    const { profit: _profit, ...withoutExpenses } = result;
+    return NextResponse.json(withoutExpenses);
   } catch (error) {
     console.error("[guatemala/reports] failed", error instanceof Error ? error.name : "Error");
     return NextResponse.json(

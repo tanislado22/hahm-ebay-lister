@@ -1,4 +1,5 @@
 import { exactGuatemalaSku } from "@/lib/markets/guatemala";
+import { GARMENT_KIND_CHOICES } from "@/lib/markets/guatemala-price-match";
 
 export const GUATEMALA_INVENTORY_STATUS = "disponible" as const;
 export const GUATEMALA_SOLD_STATUS = "vendida" as const;
@@ -9,7 +10,7 @@ export type InventoryItemStatus =
   | typeof GUATEMALA_SOLD_STATUS
   | typeof GUATEMALA_WITHDRAWN_STATUS;
 
-export type InventoryListFilter = "disponibles" | "vendidas" | "retiradas" | "todas";
+export type InventoryListFilter = "disponibles" | "vendidas" | "retiradas" | "todas" | "pendientes";
 
 export const GUATEMALA_SALE_MESSAGES = {
   priceInvalid: "Escribe un precio cobrado mayor que cero.",
@@ -28,7 +29,48 @@ export const GUATEMALA_INVENTORY_MESSAGES = {
   saved: "Prenda guardada en el inventario.",
   already: "Esta prenda ya está en el inventario.",
   retry: "No se pudo guardar la prenda. Inténtalo de nuevo.",
+  typeRequired: "Elige el tipo de artículo.",
+  lotRequired: "Elige el lote correspondiente.",
+  sizeLong: "La talla es demasiado larga.",
+  titleRequired: "Escribe el nombre del artículo.",
+  titleLong: "El nombre del artículo es demasiado largo.",
+  descriptionLong: "La descripción es demasiado larga.",
+  brandLong: "La marca es demasiado larga.",
+  conditionInvalid: "Elige una condición de la lista.",
+  unpublishedSaved: "Artículo guardado. Quedó disponible y sin publicar.",
+  draftSaved: "Cambios guardados. El artículo sigue sin publicar.",
+  draftPublished: "El artículo quedó publicado.",
+  notPending: "Este artículo no está pendiente de publicar.",
 } as const;
+
+const UNPUBLISHED_TYPE_LABELS: Record<string, string> = {
+  blusa: "Blusa",
+  pantalon: "Pantalón",
+  zapato: "Zapatos",
+  gorra: "Gorra",
+  bolso: "Cartera",
+};
+
+const PREFERRED_UNPUBLISHED_TYPES = ["blusa", "pantalon", "zapato", "gorra", "bolso"];
+
+function unpublishedTypeLabel(id: string, fallback: string): string {
+  return UNPUBLISHED_TYPE_LABELS[id] ?? `${fallback.charAt(0).toLocaleUpperCase("es")}${fallback.slice(1)}`;
+}
+
+export const UNPUBLISHED_ITEM_TYPES = (() => {
+  const labels = new Map(
+    GARMENT_KIND_CHOICES.map((choice) => [choice.key, unpublishedTypeLabel(choice.key, choice.label)])
+  );
+  const preferred = PREFERRED_UNPUBLISHED_TYPES.filter((id) => labels.has(id));
+  const rest = [...labels.keys()].filter((id) => !preferred.includes(id));
+  return [...preferred, ...rest].map((id) => ({ id, label: labels.get(id) ?? id }));
+})();
+
+export function unpublishedItemType(value: unknown): { id: string; label: string } | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim().toLowerCase();
+  return UNPUBLISHED_ITEM_TYPES.find((entry) => entry.id === id) ?? null;
+}
 
 const CONDITION_LABELS: Record<string, string> = {
   NEW_WITH_TAGS: "Nueva con etiqueta",
@@ -65,6 +107,26 @@ export interface PreparedInventoryItem {
   createdBy?: SaleActor | null;
 }
 
+export interface PreparedUnpublishedItem {
+  clientId: string;
+  sku: string;
+  itemType: string;
+  title: string;
+  size: string;
+  priceGtq: string;
+  lotId: string;
+}
+
+export interface PreparedDraftUpdate {
+  title: string;
+  description: string;
+  brand: string;
+  size: string;
+  condition: string;
+  priceGtq: string;
+  photos: InventoryPhoto[];
+}
+
 export interface SaleCorrectionView {
   id: string;
   action: "corregir" | "anular";
@@ -91,7 +153,7 @@ export interface GuatemalaSaleSnapshot {
 }
 
 export interface PublicationEventView {
-  action: "retirar" | "corregir" | "republicar";
+  action: "retirar" | "corregir" | "republicar" | "publicar";
   actorRole: "propietario" | "encargado";
   actorUsername: string | null;
   createdAt: string;
@@ -104,6 +166,7 @@ export interface StoredInventoryItem extends PreparedInventoryItem {
   costGtq?: string | null;
   costIncludesPhotography?: boolean;
   publicationEvents?: PublicationEventView[];
+  published?: boolean;
 }
 
 export const GUATEMALA_COST_MESSAGES = {
@@ -240,6 +303,85 @@ function normalizePhotos(value: unknown): InventoryPhoto[] {
   return photos;
 }
 
+const SIZE_MAX = 40;
+const TITLE_MAX = 140;
+const DESCRIPTION_MAX = 4000;
+const BRAND_MAX = 80;
+
+export function prepareUnpublishedItem(input: {
+  clientId?: unknown;
+  sku?: unknown;
+  itemType?: unknown;
+  size?: unknown;
+  price?: unknown;
+  lotId?: unknown;
+}): { ok: true; item: PreparedUnpublishedItem } | { ok: false; status: 400; error: string } {
+  const clientId = typeof input.clientId === "string" ? input.clientId.trim() : "";
+  if (!clientId) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.missingItem };
+  const sku = exactGuatemalaSku(input.sku).trim();
+  if (!sku) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.skuRequired };
+  const itemType = unpublishedItemType(input.itemType);
+  if (!itemType) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.typeRequired };
+  const size = typeof input.size === "string" ? input.size.trim() : "";
+  if (size.length > SIZE_MAX) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.sizeLong };
+  const priceGtq = quetzalPriceText(input.price);
+  if (!priceGtq) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.priceInvalid };
+  const lotId = typeof input.lotId === "string" ? input.lotId.trim() : "";
+  if (!lotId) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.lotRequired };
+  return {
+    ok: true,
+    item: { clientId, sku, itemType: itemType.id, title: itemType.label, size, priceGtq, lotId },
+  };
+}
+
+export function prepareDraftUpdate(input: {
+  title?: unknown;
+  description?: unknown;
+  brand?: unknown;
+  size?: unknown;
+  condition?: unknown;
+  price?: unknown;
+  photos?: unknown;
+}): { ok: true; draft: PreparedDraftUpdate } | { ok: false; status: 400; error: string } {
+  const title = textField(input.title).trim();
+  if (!title) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.titleRequired };
+  if (title.length > TITLE_MAX) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.titleLong };
+  const description = textField(input.description).trim();
+  if (description.length > DESCRIPTION_MAX) {
+    return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.descriptionLong };
+  }
+  const brand = textField(input.brand).trim();
+  if (brand.length > BRAND_MAX) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.brandLong };
+  const size = textField(input.size).trim();
+  if (size.length > SIZE_MAX) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.sizeLong };
+  const condition = textField(input.condition).trim();
+  if (condition && !GUATEMALA_CONDITION_CHOICES.some((choice) => choice.value === condition)) {
+    return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.conditionInvalid };
+  }
+  const priceGtq = quetzalPriceText(input.price);
+  if (!priceGtq) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.priceInvalid };
+  return {
+    ok: true,
+    draft: {
+      title,
+      description,
+      brand,
+      size,
+      condition,
+      priceGtq,
+      photos: normalizePhotos(input.photos),
+    },
+  };
+}
+
+export function isPendingPublication(item: { status: string; published?: boolean }): boolean {
+  return item.status === GUATEMALA_INVENTORY_STATUS && item.published === false;
+}
+
+export function isSoldWithoutPublishing(item: { status: string; published?: boolean }): boolean {
+  return item.status === GUATEMALA_SOLD_STATUS && item.published === false;
+}
+
 export function skuBelongsToAnotherItem(_sku: string): string {
   return GUATEMALA_INVENTORY_MESSAGES.skuInUse;
 }
@@ -325,13 +467,23 @@ export function availableGarmentLabel(count: number): string {
 }
 
 export function inventoryListFilter(value: unknown): InventoryListFilter {
-  if (value === "vendidas" || value === "retiradas" || value === "todas" || value === "disponibles") return value;
+  if (
+    value === "vendidas" ||
+    value === "retiradas" ||
+    value === "todas" ||
+    value === "disponibles" ||
+    value === "pendientes"
+  ) {
+    return value;
+  }
   return "disponibles";
 }
 
-export function guatemalaInventoryStatusLabel(status: string): string {
+export function guatemalaInventoryStatusLabel(status: string, published: boolean | undefined = true): string {
+  if (status === GUATEMALA_SOLD_STATUS && published === false) return "Vendida · Sin publicar";
   if (status === GUATEMALA_SOLD_STATUS) return "Vendida";
   if (status === GUATEMALA_WITHDRAWN_STATUS) return "Retirada";
+  if (published === false) return "Disponible · Sin publicar";
   return "Disponible";
 }
 

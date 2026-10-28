@@ -11,7 +11,13 @@ export async function authorizeGuatemalaRequest(
   requestedClientId: string,
   action: GuatemalaAction
 ): Promise<
-  | { ok: true; actor: SaleActor; clientId: string; lotPermissions: { write: boolean; correct: boolean; void: boolean; remove: boolean } }
+  | {
+      ok: true;
+      actor: SaleActor;
+      clientId: string;
+      canManageExpenses: boolean;
+      lotPermissions: { write: boolean; correct: boolean; void: boolean; remove: boolean };
+    }
   | { ok: false; response: NextResponse }
 > {
   const limited = rateLimitRequest(request);
@@ -49,6 +55,7 @@ export async function authorizeGuatemalaRequest(
     ok: true,
     actor: decision.actor,
     clientId: decision.clientId,
+    canManageExpenses: decision.actor.role === "propietario" || loaded?.account.canManageExpenses === true,
     lotPermissions: {
       write: true,
       correct: decision.actor.role === "propietario" || loaded?.account.canCorrectLots === true,
