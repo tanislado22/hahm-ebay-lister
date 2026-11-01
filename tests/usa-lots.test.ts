@@ -5,7 +5,8 @@ import { EBAY_SCOPES } from "@/lib/ebay/config";
 import { feeFromTransactions } from "@/lib/usa-lots/finances";
 import { applyIncomingSale, lotForMatch, matchSaleToItem } from "@/lib/usa-lots/match";
 import { cronAuthorized } from "@/lib/ebay/cron-auth";
-import { describeEbayFailure, notificationCollectionUrl, notificationEndpoint } from "@/lib/usa-lots/notify-api";
+import { describeEbayFailure, emailFromXml, needsNotificationConfig, notificationCollectionUrl, notificationConfigUrl, notificationEndpoint, validAlertEmail } from "@/lib/usa-lots/notify-api";
+import { subscribeSaleNotifications } from "@/lib/usa-lots/subscribe";
 import { challengeResponse, topicsForSales, verifyEbayNotification } from "@/lib/usa-lots/notifications";
 import { isReadOnlyOrderRequest, parseFulfillmentOrders, saleLinesToStore } from "@/lib/usa-lots/parse-order";
 import { allocateSharedCents, applyAverageCosts, averageUnitCents, buildLotReport, saleProfit } from "@/lib/usa-lots/profit";
@@ -308,5 +309,69 @@ describe("USA purchase lots", () => {
     expect(cronAuthorized(null, null, "")).toBe(false);
     expect(cronAuthorized("Bearer cron-de-prueba", null, "cron-de-prueba")).toBe(true);
     expect(cronAuthorized("Bearer otro", null, "cron-de-prueba")).toBe(false);
+    const missingConfig = {
+      errors: [{ errorId: 195003, longMessage: "Please provide configurations required for notifications. Refer to /config" }],
+    };
+    expect(needsNotificationConfig(409, missingConfig)).toBe(true);
+    expect(needsNotificationConfig(409, { errors: [{ errorId: 195021, longMessage: "Destination exists for this endpoint" }] })).toBe(false);
+    expect(notificationConfigUrl()).toBe("https://api.ebay.com/commerce/notification/v1/config");
+    expect(validAlertEmail("alertas@ejemplo.com")).toBe("alertas@ejemplo.com");
+    expect(validAlertEmail("no es correo")).toBe("");
+    expect(emailFromXml("<User><Email>alertas@ejemplo.com</Email><UserID>tienda</UserID></User>")).toBe("alertas@ejemplo.com");
+  });
+
+  test("saves the eBay alert config before creating the destination and subscription", async () => {
+    const calls: string[] = [];
+    const original = global.fetch;
+    const previous = {
+      id: process.env.EBAY_CLIENT_ID,
+      secret: process.env.EBAY_CLIENT_SECRET,
+      ru: process.env.EBAY_RU_NAME,
+      email: process.env.EBAY_NOTIFICATION_ALERT_EMAIL,
+    };
+    process.env.EBAY_CLIENT_ID = "app-id-prueba";
+    process.env.EBAY_CLIENT_SECRET = "cert-prueba";
+    process.env.EBAY_RU_NAME = "ru-prueba";
+    delete process.env.EBAY_NOTIFICATION_ALERT_EMAIL;
+    global.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/identity/v1/oauth2/token")) return json({ access_token: "app-token-prueba", expires_in: 7200 });
+      if (url.includes("/topic")) return json({ topics: [{ topicId: "ORDER_CONFIRMATION", status: "ENABLED", supportedPayloads: [{ schemaVersion: "1.0" }] }] });
+      if (url.endsWith("/config") && method === "GET") return json({}, 404);
+      if (url.endsWith("/config") && method === "PUT") return new Response(null, { status: 204 });
+      if (url.includes("/ws/api.dll")) {
+        return new Response("<GetUserResponse><Ack>Success</Ack><User><Email>alertas@ejemplo.com</Email></User></GetUserResponse>", { status: 200 });
+      }
+      if (url.includes("/destination") && method === "GET") return json({ destinations: [] });
+      if (url.includes("/destination") && method === "POST") return json({ destinationId: "dest-1" }, 201);
+      if (url.includes("/subscription") && method === "GET") return json({ subscriptions: [] });
+      if (url.includes("/subscription") && method === "POST") return json({ subscriptionId: "sub-1" }, 201);
+      return json({ errors: [{ errorId: 1, message: "unexpected" }] }, 500);
+    };
+    try {
+      const result = await subscribeSaleNotifications({
+        token: "user-token-prueba",
+        endpoint: "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones",
+        verificationToken: "a".repeat(32),
+      });
+      expect(result.ok).toBe(true);
+      const configAt = calls.findIndex((call) => call.startsWith("PUT ") && call.includes("/config"));
+      const destinationAt = calls.findIndex((call) => call.startsWith("POST ") && call.includes("/destination"));
+      const subscriptionAt = calls.findIndex((call) => call.startsWith("POST ") && call.includes("/subscription"));
+      expect(configAt).toBeGreaterThanOrEqual(0);
+      expect(destinationAt).toBeGreaterThan(configAt);
+      expect(subscriptionAt).toBeGreaterThan(destinationAt);
+      if (result.ok) expect(result.lines.join(" ")).not.toContain("alertas@ejemplo.com");
+    } finally {
+      global.fetch = original;
+      process.env.EBAY_CLIENT_ID = previous.id;
+      process.env.EBAY_CLIENT_SECRET = previous.secret;
+      process.env.EBAY_RU_NAME = previous.ru;
+      if (previous.email == null) delete process.env.EBAY_NOTIFICATION_ALERT_EMAIL;
+      else process.env.EBAY_NOTIFICATION_ALERT_EMAIL = previous.email;
+    }
   });
 });

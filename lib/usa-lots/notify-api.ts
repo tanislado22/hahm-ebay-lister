@@ -1,6 +1,30 @@
 const NOTIFICATION_API = "https://api.ebay.com/commerce/notification/v1";
 const STORE_HOST = /(^|\.)variedadessanandres\.com$/i;
 
+export function notificationConfigUrl(): string {
+  return `${NOTIFICATION_API}/config`;
+}
+
+export function validAlertEmail(value: string): string {
+  const email = value.trim();
+  if (email.length < 6 || email.length > 120) return "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "";
+  return email;
+}
+
+export function emailFromXml(xml: string): string {
+  const tags = xml.match(/<Email>([^<]+)<\/Email>/gi) ?? [];
+  for (const tag of tags) {
+    const email = validAlertEmail(tag.replace(/<\/?Email>/gi, ""));
+    if (email) return email;
+  }
+  return "";
+}
+
+export function needsNotificationConfig(status: number, body: unknown): boolean {
+  return /\b195003\b/.test(describeEbayFailure(status, body, []));
+}
+
 export function notificationCollectionUrl(resource: "topic" | "destination" | "subscription", continuationToken = ""): string {
   const url = new URL(`${NOTIFICATION_API}/${resource}`);
   url.searchParams.set("limit", "100");

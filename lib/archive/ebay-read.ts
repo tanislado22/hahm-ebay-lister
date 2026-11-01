@@ -1,4 +1,5 @@
 import { EBAY_TRADING } from "@/lib/ebay/config";
+import { emailFromXml } from "@/lib/usa-lots/notify-api";
 import { parseActiveListPage, parseEbayItemXml, type ActiveListPage, type EbayItemDetail } from "@/lib/archive/parse-item";
 import { isReadOnlyTradingCall } from "@/lib/archive/link";
 import { classifyTradingProblem } from "@/lib/archive/trading-error";
@@ -77,6 +78,17 @@ export async function readEbayUserId(accessToken: string): Promise<TradingRead &
   if (!result.ok) return result;
   const userId = result.xml.match(/<UserID>([\s\S]*?)<\/UserID>/i)?.[1]?.trim() ?? "";
   return { ...result, userId };
+}
+
+export async function readEbayAccountEmail(accessToken: string): Promise<string> {
+  const result = await readOnlyTradingCall(
+    accessToken,
+    "GetUser",
+    `<?xml version="1.0" encoding="utf-8"?>
+<GetUserRequest xmlns="urn:ebay:apis:eBLBaseComponents"></GetUserRequest>`
+  );
+  if (!result.ok) return "";
+  return emailFromXml(result.xml);
 }
 
 export async function readActiveListPage(accessToken: string, page: number): Promise<TradingRead & { page?: ActiveListPage }> {

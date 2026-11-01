@@ -1,5 +1,14 @@
+import { readEbayAccountEmail } from "@/lib/archive/ebay-read";
 import { basicAuthHeader, EBAY_TOKEN_URL, getEbayCreds, isEbayConfigured } from "@/lib/ebay/config";
-import { continuationFrom, describeEbayFailure, ebayAuthRejected, notificationCollectionUrl } from "@/lib/usa-lots/notify-api";
+import {
+  continuationFrom,
+  describeEbayFailure,
+  ebayAuthRejected,
+  needsNotificationConfig,
+  notificationCollectionUrl,
+  notificationConfigUrl,
+  validAlertEmail,
+} from "@/lib/usa-lots/notify-api";
 import { notificationTokenReady, topicsForSales } from "@/lib/usa-lots/notifications";
 
 const NOTIFICATION_API = "https://api.ebay.com/commerce/notification/v1";
@@ -13,7 +22,7 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
 }
 
-async function ebayJson(token: string, method: string, url: string, body?: unknown): Promise<{ status: number; body: unknown; text: string }> {
+async function ebayJson(token: string, method: string, url: string, body?: unknown): Promise<{ status: number; body: unknown; location: string }> {
   const response = await fetch(url, {
     method,
     headers: {
@@ -30,7 +39,64 @@ async function ebayJson(token: string, method: string, url: string, body?: unkno
   } catch {
     parsed = null;
   }
-  return { status: response.status, body: parsed, text };
+  return { status: response.status, body: parsed, location: response.headers.get("location") ?? "" };
+}
+
+function destinationIdFrom(response: { body: unknown; location: string }): string {
+  const bodyId = String(record(response.body)?.destinationId ?? "").trim();
+  if (bodyId) return bodyId;
+  const locationId = response.location.split("/").filter(Boolean).pop() ?? "";
+  return /^[A-Za-z0-9_-]{4,80}$/.test(locationId) ? locationId : "";
+}
+
+async function ensureAlertConfig(userToken: string, verificationToken: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const appToken = await applicationToken();
+  const tokens = [appToken, userToken].filter(Boolean);
+  const secrets = [verificationToken, userToken, appToken];
+  for (const token of tokens) {
+    const current = await ebayJson(token, "GET", notificationConfigUrl());
+    const existing = validAlertEmail(String(record(current.body)?.alertEmail ?? ""));
+    if (current.status === 200 && existing) return { ok: true };
+  }
+  const email = validAlertEmail(process.env.EBAY_NOTIFICATION_ALERT_EMAIL ?? "") || await readEbayAccountEmail(userToken);
+  if (!email) {
+    return {
+      ok: false,
+      error: "eBay no acepta el destino hasta guardar un correo de alertas en /config (error 195003). Agrega EBAY_NOTIFICATION_ALERT_EMAIL en Vercel y vuelve a desplegar. No se creó el destino.",
+    };
+  }
+  secrets.push(email);
+  let lastStatus = 0;
+  let lastBody: unknown = null;
+  for (const token of tokens) {
+    const saved = await ebayJson(token, "PUT", notificationConfigUrl(), { alertEmail: email });
+    if (saved.status === 204 || saved.status === 200) return { ok: true };
+    lastStatus = saved.status;
+    lastBody = saved.body;
+  }
+  return { ok: false, error: `eBay no guardó la configuración de alertas. ${describeEbayFailure(lastStatus, lastBody, secrets)}` };
+}
+
+async function createDestination(userToken: string, endpoint: string, verificationToken: string): Promise<{ id: string; error: string }> {
+  const appToken = await applicationToken();
+  const secrets = [verificationToken, userToken, appToken, validAlertEmail(process.env.EBAY_NOTIFICATION_ALERT_EMAIL ?? "")];
+  const body = {
+    name: "hahm-lotes-ventas",
+    status: "ENABLED",
+    deliveryConfig: {
+      endpoint,
+      verificationToken,
+    },
+  };
+  let lastError = "eBay no devolvió el identificador del destino.";
+  for (const token of [userToken, appToken].filter(Boolean)) {
+    const created = await ebayJson(token, "POST", `${NOTIFICATION_API}/destination`, body);
+    const id = destinationIdFrom(created);
+    if (id) return { id, error: "" };
+    lastError = describeEbayFailure(created.status, created.body, secrets);
+    if (!needsNotificationConfig(created.status, created.body) && !ebayAuthRejected(created.status, created.body)) break;
+  }
+  return { id: "", error: lastError };
 }
 
 function topicsFrom(body: unknown): TopicChoice[] {
@@ -109,15 +175,10 @@ export async function subscribeSaleNotifications(input: {
   const currentDestinations = await ebayJson(input.token, "GET", notificationCollectionUrl("destination"));
   let destinationId = destinationIdFor(currentDestinations.body, input.endpoint);
   if (!destinationId) {
-    const created = await ebayJson(input.token, "POST", `${NOTIFICATION_API}/destination`, {
-      name: "hahm-lotes-ventas",
-      status: "ENABLED",
-      deliveryConfig: {
-        endpoint: input.endpoint,
-        verificationToken: input.verificationToken,
-      },
-    });
-    destinationId = String(record(created.body)?.destinationId ?? "");
+    const prepared = await ensureAlertConfig(input.token, input.verificationToken);
+    if (!prepared.ok) return { ok: false, lines, error: prepared.error };
+    const created = await createDestination(input.token, input.endpoint, input.verificationToken);
+    destinationId = created.id;
     if (!destinationId) {
       const again = await ebayJson(input.token, "GET", notificationCollectionUrl("destination"));
       destinationId = destinationIdFor(again.body, input.endpoint);
@@ -126,9 +187,10 @@ export async function subscribeSaleNotifications(input: {
       return {
         ok: false,
         lines,
-        error: `No se pudo registrar el destino de notificaciones. ${describeEbayFailure(created.status, created.body, [input.verificationToken, input.token])}`,
+        error: `No se pudo registrar el destino de notificaciones. ${created.error}`,
       };
     }
+    lines.push("eBay ya tiene la configuración de alertas que exige antes de aceptar un destino.");
   }
 
   const currentSubscriptions = await ebayJson(input.token, "GET", notificationCollectionUrl("subscription"));
