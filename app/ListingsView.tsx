@@ -231,7 +231,7 @@ export function ListingsView({
       }
     }}
   >
-    {archiving ? "Archivando…" : "Archivar publicados"}
+    {archiving ? "Archivando…" : "Archivar todos los publicados"}
   </button>
 ) : null}
 {archiveNote ? (
