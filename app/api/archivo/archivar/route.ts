@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import { existingVintedLink, type LocalRecord } from "@/lib/archive/link";
 import { saveWorkspaceArticle, setArchiveHidden } from "@/lib/archive/store";
+import { rememberArchiveLot } from "@/lib/usa-lots/store";
 import { exactSku } from "@/lib/archive/text";
 import { archiveAccountKey, assertCanArchive } from "@/lib/archive/workspace";
 import { ensureInventoryTables, getSql } from "@/lib/db";
@@ -114,6 +115,11 @@ export async function POST(req: NextRequest) {
       vintedTitle: vinted.title,
       vintedStatus: vinted.status,
     });
+    try {
+      await rememberArchiveLot(accountKey, saved.id, sku, itemId);
+    } catch (error) {
+      console.error("[archivo] lote", error);
+    }
     return NextResponse.json({ ok: true, id: saved.id });
   } catch (error) {
     console.error("[archivo] archivar", error);

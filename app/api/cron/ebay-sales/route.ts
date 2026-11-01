@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { secretEqual } from "@/lib/secret";
 import { runEbaySalesCheck } from "@/lib/ebay/sales-check";
+import { advanceUsaSaleSync } from "@/lib/usa-lots/sync-step";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -20,7 +21,14 @@ async function handle(req: NextRequest) {
   }
   try {
     const result = await runEbaySalesCheck();
-    return NextResponse.json({ ok: true, ...result });
+    let lots: unknown = null;
+    try {
+      lots = await advanceUsaSaleSync();
+    } catch (error) {
+      console.error("[cron/ebay-sales] lots", error);
+      lots = { ok: false, error: "No se pudo continuar la sincronización de lotes." };
+    }
+    return NextResponse.json({ ok: true, ...result, lots });
   } catch (error) {
     console.error("[cron/ebay-sales]", error);
     return NextResponse.json({ ok: false, error: "eBay sale check failed." }, { status: 500 });

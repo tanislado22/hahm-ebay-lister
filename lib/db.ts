@@ -236,6 +236,18 @@ async function migrate(): Promise<void> {
     ADD COLUMN IF NOT EXISTS vinted_review TEXT NOT NULL DEFAULT 'unverified'
   `;
   await sql`
+    ALTER TABLE article_archive
+    ADD COLUMN IF NOT EXISTS usa_lot_id TEXT NOT NULL DEFAULT ''
+  `;
+  await sql`
+    ALTER TABLE article_archive
+    ADD COLUMN IF NOT EXISTS unit_cost_cents INTEGER
+  `;
+  await sql`
+    ALTER TABLE article_archive
+    ADD COLUMN IF NOT EXISTS cost_estimated BOOLEAN NOT NULL DEFAULT FALSE
+  `;
+  await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS article_archive_account_item_idx
     ON article_archive (account_key, ebay_item_id)
     WHERE ebay_item_id <> ''

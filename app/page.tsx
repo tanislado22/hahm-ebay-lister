@@ -1635,6 +1635,8 @@ const draftAll = async () => {
             >
               Archivo de artículos
             </a>
+            {" · "}
+            <a href="/lotes">Lotes USA</a>
           </p>
         </div>
       </header>

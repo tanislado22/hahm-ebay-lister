@@ -64,6 +64,9 @@ export function restoreGroup(input: {
   ebayUrl: string;
   vintedStatus: string;
   vintedListingUrl: string;
+  usaLotId?: string;
+  unitCostCents?: number | null;
+  costEstimated?: boolean;
   storedGroup: unknown;
   photoIds: string[];
 }): ItemGroup {
@@ -87,6 +90,9 @@ export function restoreGroup(input: {
     listingId: stored.listingId || input.ebayItemId || undefined,
     vintedStatus,
     vintedListingUrl: stored.vintedListingUrl || input.vintedListingUrl || undefined,
+    usaLotId: input.usaLotId || stored.usaLotId || undefined,
+    unitCostCents: input.unitCostCents ?? stored.unitCostCents,
+    costEstimated: input.costEstimated || stored.costEstimated || false,
   };
 }
 

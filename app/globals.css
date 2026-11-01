@@ -1501,6 +1501,18 @@ a.btn {
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   color: inherit;
+}
+
+.archive-card-open {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: stretch;
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
 }
 

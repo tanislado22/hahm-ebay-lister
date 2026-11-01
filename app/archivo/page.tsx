@@ -66,6 +66,9 @@ export default function ArchivePage() {
   const [reloadToken, setReloadToken] = useState(0);
   const [importing, setImporting] = useState<"sample" | "all" | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
+  const [lots, setLots] = useState<{ id: string; name: string }[]>([]);
+  const [lotId, setLotId] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const queryString = () => {
     const params = new URLSearchParams();
@@ -83,6 +86,18 @@ export default function ArchivePage() {
     setWorkMode(mode);
     setClientId(id);
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (workMode === "client" && clientId) {
+      params.set("workMode", "client");
+      params.set("clientId", clientId);
+    }
+    void fetch(`/api/lotes?${params.toString()}`, { cache: "no-store", headers: accessHeaders() })
+      .then((response) => response.json())
+      .then((data: { lots?: { id: string; name: string }[] }) => setLots(data.lots || []))
+      .catch(() => setLots([]));
+  }, [workMode, clientId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -243,6 +258,8 @@ export default function ArchivePage() {
         <p>
           <a href="/">Área de trabajo</a>
           {" · "}
+          <a href={workMode === "client" && clientId ? `/lotes?workMode=client&clientId=${encodeURIComponent(clientId)}` : "/lotes"}>Lotes USA</a>
+          {" · "}
           Los artículos quedan guardados en el servidor, asociados a la cuenta de eBay conectada.
         </p>
       </header>
@@ -339,9 +356,54 @@ export default function ArchivePage() {
         <p className="note">{loading ? "Cargando…" : `${total} artículo${total === 1 ? "" : "s"} en el archivo. Se muestran 20 por página.`}</p>
         {error ? <p className="note note-error" role="alert">{error}</p> : null}
         {message ? <p className="note" role="status">{message}</p> : null}
+        <div className="result-actions">
+          <label>
+            Lote
+            <select value={lotId} onChange={(event) => setLotId(event.target.value)}>
+              <option value="">Elige un lote</option>
+              {lots.map((lot) => <option key={lot.id} value={lot.id}>{lot.name}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={!lotId || selectedIds.length === 0}
+            onClick={() => {
+              const items = articles.filter((article) => selectedIds.includes(article.id)).map((article) => ({
+                sku: article.sku,
+                ebayItemId: article.ebayItemId,
+                archiveId: article.id,
+                title: article.title,
+              }));
+              void fetch("/api/lotes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...accessHeaders() },
+                body: JSON.stringify({ action: "assign", workMode, clientId: clientId || null, lotId, items }),
+              }).then(async (response) => {
+                const data = await response.json() as { ok?: boolean; error?: string; assigned?: number };
+                if (!response.ok || !data.ok) setError(data.error || "No se pudo asignar el lote.");
+                else {
+                  setMessage(`${data.assigned ?? 0} artículo${data.assigned === 1 ? "" : "s"} quedaron en el lote. El SKU no cambió.`);
+                  setSelectedIds([]);
+                }
+              }).catch(() => setError("No se pudo asignar el lote."));
+            }}
+          >
+            Asignar seleccionados al lote
+          </button>
+        </div>
         <div className="archive-grid">
           {articles.map((article) => (
-            <button key={article.id} type="button" className="archive-card" onClick={() => void openArticle(article.id)}>
+            <div key={article.id} className="archive-card">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(article.id)}
+                  onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, article.id] : current.filter((id) => id !== article.id))}
+                />
+                {" "}Seleccionar
+              </label>
+            <button type="button" className="archive-card-open" onClick={() => void openArticle(article.id)}>
               {article.thumbUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={article.thumbUrl} alt="" />
@@ -354,6 +416,7 @@ export default function ArchivePage() {
               <span>{article.ebayItemId || "Sin número de anuncio"}</span>
               <span>{VINTED_REVIEW_LABEL[article.vintedReview] || "Sin verificar"}</span>
             </button>
+            </div>
           ))}
         </div>
         <div className="result-actions">

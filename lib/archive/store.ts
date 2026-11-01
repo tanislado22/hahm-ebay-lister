@@ -60,6 +60,9 @@ interface ArchiveRow extends ArticleCore {
   workspaceHidden: boolean;
   origin: string;
   vintedReview: string;
+  usaLotId: string;
+  unitCostCents: number | null;
+  costEstimated: boolean;
 }
 
 function asText(value: unknown): string {
@@ -119,6 +122,9 @@ function coreFromRow(row: Record<string, unknown>): ArchiveRow {
     workspaceHidden: asBool(row.workspace_hidden),
     origin: asText(row.origin),
     vintedReview: asText(row.vinted_review),
+    usaLotId: asText(row.usa_lot_id),
+    unitCostCents: row.unit_cost_cents == null || row.unit_cost_cents === "" ? null : Number(row.unit_cost_cents),
+    costEstimated: asBool(row.cost_estimated),
     sku: exactSku(asText(row.sku)),
     title: asText(row.title),
     description: asText(row.description),
@@ -830,6 +836,9 @@ export async function restoreArchiveToWorkspace(accountKey: string, articleId: s
     ebayUrl: article.ebayUrl,
     vintedStatus: article.vintedStatus,
     vintedListingUrl: article.vintedListingUrl,
+    usaLotId: article.usaLotId,
+    unitCostCents: article.unitCostCents,
+    costEstimated: article.costEstimated,
     storedGroup: article.workspaceGroup,
     photoIds: workspacePhotos.map((photo) => photo.id),
   });

@@ -153,4 +153,7 @@ export interface ItemGroup {
   postWarnings?: string[];
   vintedStatus?: VintedStatus;
   vintedListingUrl?: string;
+  usaLotId?: string;
+  unitCostCents?: number | null;
+  costEstimated?: boolean;
 }

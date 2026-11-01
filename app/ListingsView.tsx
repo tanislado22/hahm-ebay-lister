@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { ListingCard } from "./ListingCard";
 import {
   downloadFile,
@@ -8,7 +9,7 @@ import {
 } from "@/lib/export";
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
-import { apiPost } from "@/lib/api-client";
+import { accessHeaders, apiPost } from "@/lib/api-client";
 
 async function uploadPhotosToEbay(sku: string, photos: Photo[]) {
 
@@ -108,6 +109,22 @@ export function ListingsView({
   inventoryClientId,
   onBack,
 }: ListingsViewProps) {
+  const [usaLots, setUsaLots] = useState<{ id: string; name: string }[]>([]);
+  const [usaLotId, setUsaLotId] = useState("");
+  const [selectedLotIds, setSelectedLotIds] = useState<string[]>([]);
+  const [lotAssignNote, setLotAssignNote] = useState("");
+  useEffect(() => {
+    if (guatemala) return;
+    const params = new URLSearchParams();
+    if (inventoryClientId) {
+      params.set("workMode", "client");
+      params.set("clientId", inventoryClientId);
+    }
+    void fetch(`/api/lotes?${params.toString()}`, { cache: "no-store", headers: accessHeaders() })
+      .then((response) => response.json())
+      .then((data: { lots?: { id: string; name: string }[] }) => setUsaLots(data.lots || []))
+      .catch(() => setUsaLots([]));
+  }, [guatemala, inventoryClientId]);
   const done = groups.filter((g) => g.status === "done").length;
   const writing = groups.filter((g) => g.status === "writing").length;
   const failed = groups.filter((g) => g.status === "error").length;
@@ -266,11 +283,49 @@ export function ListingsView({
   🗑 Delete All
 
 </button>
+      {!guatemala ? (
+        <div className="result-actions">
+          <label>
+            Lote USA
+            <select value={usaLotId} onChange={(event) => setUsaLotId(event.target.value)}>
+              <option value="">Elige un lote</option>
+              {usaLots.map((lot) => <option key={lot.id} value={lot.id}>{lot.name}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={!usaLotId || selectedLotIds.length === 0}
+            onClick={() => {
+              const items = groups.filter((group) => selectedLotIds.includes(group.id)).map((group) => ({
+                sku: group.sku,
+                ebayItemId: group.listingId || "",
+                jobId: group.id,
+                title: group.listing?.title || group.name,
+              }));
+              const params = inventoryClientId ? { workMode: "client", clientId: inventoryClientId } : { workMode: "store", clientId: null };
+              void fetch("/api/lotes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...accessHeaders() },
+                body: JSON.stringify({ action: "assign", ...params, lotId: usaLotId, items }),
+              }).then(async (response) => {
+                const data = await response.json() as { ok?: boolean; error?: string; assigned?: number };
+                setLotAssignNote(response.ok && data.ok ? `${data.assigned ?? 0} artículos quedaron en el lote.` : data.error || "No se pudo asignar el lote.");
+              }).catch(() => setLotAssignNote("No se pudo asignar el lote."));
+            }}
+          >
+            Asignar seleccionados al lote
+          </button>
+          {lotAssignNote ? <p className="note">{lotAssignNote}</p> : null}
+        </div>
+      ) : null}
       <div className="listing-list">
         {groups.map((group) => (
           <ListingCard
             key={group.id}
             group={group}
+            lotSelected={selectedLotIds.includes(group.id)}
+            onToggleLotSelect={guatemala ? undefined : (id) => setSelectedLotIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])}
             photoById={photoById}
             ebayConnected={ebayConnected}
             onEdit={onEdit}

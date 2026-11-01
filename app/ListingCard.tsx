@@ -89,6 +89,8 @@ onPrepareVinted: (groupId: string, sku: string) => void;
 onMarkVintedPublished: (groupId: string, url: string) => void;
 guatemala?: boolean;
 inventoryClientId?: string;
+lotSelected?: boolean;
+onToggleLotSelect?: (groupId: string) => void;
 }
 
 export function ListingCard({
@@ -107,6 +109,8 @@ export function ListingCard({
   onPrepareVinted,
   onMarkVintedPublished,
   guatemala = false,
+  lotSelected = false,
+  onToggleLotSelect,
   inventoryClientId,
 }: ListingCardProps) {
   const [open, setOpen] = useState(true);
@@ -549,6 +553,12 @@ const keyword = [
 
   return (
     <article className={`listing-card status-${group.status}`}>
+      {onToggleLotSelect ? (
+        <label onClick={(event) => event.stopPropagation()}>
+          <input type="checkbox" checked={lotSelected} onChange={() => onToggleLotSelect(group.id)} />
+          {" "}Seleccionar para el lote
+        </label>
+      ) : null}
       <header className="listing-card-head" onClick={() => setOpen((o) => !o)}>
         {cover && (
           // eslint-disable-next-line @next/next/no-img-element
