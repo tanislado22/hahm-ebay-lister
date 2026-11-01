@@ -299,6 +299,12 @@ describe("USA purchase lots", () => {
       topic("ORDER_CONFIRMATION", [FULFILLMENT_READONLY_SCOPE, NOTIFICATION_SCOPE]),
     ], [NOTIFICATION_SCOPE, FULFILLMENT_READONLY_SCOPE]);
     expect(grantedReadonly.selected.map((item) => item.id)).toEqual(["ORDER_CONFIRMATION"]);
+    const unreported = selectPaidSaleTopics([
+      topic("ORDER_CONFIRMATION", [FULFILLMENT_READONLY_SCOPE]),
+      topic("LOAN_APPLICATION_CANCEL", [FINANCES_SCOPE]),
+    ], null);
+    expect(unreported.selected.map((item) => item.id)).toEqual(["ORDER_CONFIRMATION"]);
+    expect(unreported.unauthorized).toEqual([]);
     expect(EBAY_SCOPES).toContain(FULFILLMENT_READONLY_SCOPE);
     expect(connectionFromToken("refresh-prueba", 3600, `${NOTIFICATION_SCOPE} ${FULFILLMENT_READONLY_SCOPE}`).grantedScopes).toEqual([
       NOTIFICATION_SCOPE,
@@ -415,6 +421,7 @@ describe("USA purchase lots", () => {
         endpoint: "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones",
         verificationToken: "a".repeat(32),
         grantedScopes: [NOTIFICATION_SCOPE, FULFILLMENT_READONLY_SCOPE],
+        scopesReported: true,
       });
       expect(result.ok).toBe(true);
       const configAt = calls.findIndex((call) => call.startsWith("PUT ") && call.includes("/config"));
@@ -479,6 +486,7 @@ describe("USA purchase lots", () => {
         endpoint: "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones",
         verificationToken: "a".repeat(32),
         grantedScopes: EBAY_SCOPES.split(/\s+/).filter((scope) => scope !== FULFILLMENT_READONLY_SCOPE),
+        scopesReported: true,
       });
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -495,7 +503,9 @@ describe("USA purchase lots", () => {
         refreshCalls.push(String(init?.body ?? ""));
         return new Response(JSON.stringify({ access_token: "acceso", expires_in: 7200, token_type: "Bearer" }), { status: 200 });
       };
-      await refreshAccessToken("refresh-viejo");
+      const omitted = await refreshAccessToken("refresh-viejo");
+      expect(omitted.scopesReported).toBe(false);
+      expect(omitted.scope).toBeUndefined();
       expect(refreshCalls[0] ?? "").not.toContain("scope=");
       await refreshAccessToken("refresh-nuevo", [FULFILLMENT_READONLY_SCOPE]);
       expect(refreshCalls[1] ?? "").toContain("sell.fulfillment.readonly");
@@ -504,6 +514,98 @@ describe("USA purchase lots", () => {
       process.env.EBAY_CLIENT_ID = previous.id;
       process.env.EBAY_CLIENT_SECRET = previous.secret;
       process.env.EBAY_RU_NAME = previous.ru;
+    }
+  });
+
+  test("subscribes when the token response omits scope and confirms with a later read", async () => {
+    const calls: string[] = [];
+    const posted: string[] = [];
+    const original = global.fetch;
+    global.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      const endpoint = "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones";
+      if (url.includes("/topic")) {
+        return json({
+          topics: [{ topicId: "ORDER_CONFIRMATION", status: "ENABLED", authorizationScopes: [FULFILLMENT_READONLY_SCOPE], supportedPayloads: [{ schemaVersion: "1.0" }] }],
+        });
+      }
+      if (url.includes("/destination") && method === "GET") {
+        return json({ destinations: [{ destinationId: "dest-1", status: "ENABLED", deliveryConfig: { endpoint } }] });
+      }
+      if (url.includes("/subscription") && method === "GET") {
+        const reads = calls.filter((call) => call.startsWith("GET ") && call.includes("/subscription")).length;
+        if (reads === 1) return json({ subscriptions: [] });
+        return json({
+          subscriptions: [{ subscriptionId: "sub-1", topicId: "ORDER_CONFIRMATION", destinationId: "dest-1", status: "ENABLED" }],
+        });
+      }
+      if (url.includes("/subscription") && method === "POST") {
+        posted.push(String(init?.body ?? ""));
+        return json({ subscriptionId: "sub-1" }, 201);
+      }
+      return json({ errors: [{ errorId: 1, message: "unexpected" }] }, 500);
+    };
+    try {
+      const result = await subscribeSaleNotifications({
+        token: "user-token-prueba",
+        endpoint: "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones",
+        verificationToken: "a".repeat(32),
+        grantedScopes: [],
+        scopesReported: false,
+      });
+      expect(result.ok).toBe(true);
+      expect(posted).toHaveLength(1);
+      expect(posted[0]).toContain("ORDER_CONFIRMATION");
+      expect(calls.some((call) => call.startsWith("POST ") && call.includes("/destination"))).toBe(false);
+      expect(calls.filter((call) => call.startsWith("GET ") && call.includes("/subscription"))).toHaveLength(2);
+      if (result.ok) {
+        const text = result.lines.join(" ");
+        expect(text).toContain("no trajo scope");
+        expect(text).toContain("ORDER_CONFIRMATION quedó suscrita y activa");
+        expect(text).toContain("ENABLED");
+        expect(text).not.toContain(EBAY_SCOPES);
+      }
+    } finally {
+      global.fetch = original;
+    }
+  });
+
+  test("does not mark notifications ready when the later read lacks ORDER_CONFIRMATION", async () => {
+    const original = global.fetch;
+    global.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      const endpoint = "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones";
+      if (url.includes("/topic")) {
+        return json({ topics: [{ topicId: "ORDER_CONFIRMATION", status: "ENABLED", supportedPayloads: [{ schemaVersion: "1.0" }] }] });
+      }
+      if (url.includes("/destination") && method === "GET") {
+        return json({ destinations: [{ destinationId: "dest-1", status: "ENABLED", deliveryConfig: { endpoint } }] });
+      }
+      if (url.includes("/subscription") && method === "GET") return json({ subscriptions: [] });
+      if (url.includes("/subscription") && method === "POST") return json({ subscriptionId: "sub-1" }, 201);
+      return json({ errors: [{ errorId: 1, message: "unexpected" }] }, 500);
+    };
+    try {
+      const result = await subscribeSaleNotifications({
+        token: "user-token-prueba",
+        endpoint: "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones",
+        verificationToken: "a".repeat(32),
+        grantedScopes: [],
+        scopesReported: false,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("no quedó suscrita");
+        expect(result.error).toContain("ENABLED");
+        expect(result.error).not.toContain("quedó suscrita y activa");
+      }
+    } finally {
+      global.fetch = original;
     }
   });
 });

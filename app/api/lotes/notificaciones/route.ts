@@ -39,17 +39,12 @@ export async function POST(req: NextRequest) {
     }
     const grant = await accessGrantFromCookie(connection.sealedConnection);
     if (!grant) return NextResponse.json({ ok: false, error: "No se pudo renovar el acceso a eBay." }, { status: 400 });
-    if (!grant.grantedScopes.length) {
-      return NextResponse.json({
-        ok: false,
-        error: "eBay no informó los permisos concedidos a esta cuenta. No se usó la lista de la aplicación. ORDER_CONFIRMATION no quedó suscrita.",
-      }, { status: 400 });
-    }
     const result = await subscribeSaleNotifications({
       token: grant.token,
       endpoint,
       verificationToken,
       grantedScopes: grant.grantedScopes,
+      scopesReported: grant.scopesReported,
     });
     if (!result.ok) console.error("[lotes] notificaciones", result.error);
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });

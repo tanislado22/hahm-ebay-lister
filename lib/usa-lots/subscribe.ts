@@ -150,6 +150,7 @@ export async function subscribeSaleNotifications(input: {
   endpoint: string;
   verificationToken: string;
   grantedScopes: string[];
+  scopesReported: boolean;
 }): Promise<{ ok: true; lines: string[] } | { ok: false; error: string; lines: string[] }> {
   if (!input.endpoint.startsWith("https://")) {
     return {
@@ -169,16 +170,16 @@ export async function subscribeSaleNotifications(input: {
   const listed = await readTopics(input.token, input.verificationToken);
   if (!listed.ok) return { ok: false, lines: [], error: listed.error };
 
-  const grantedScopes = grantedScopesFrom(input.grantedScopes);
-  if (!grantedScopes.length) {
+  const grantedScopes = input.scopesReported ? grantedScopesFrom(input.grantedScopes) : null;
+  if (grantedScopes && !grantedScopes.length) {
     return {
       ok: false,
       lines: [],
-      error: "eBay no informó los permisos concedidos a esta cuenta. No se usó la lista de la aplicación. ORDER_CONFIRMATION no quedó suscrita.",
+      error: "eBay devolvió el campo scope vacío. No se usó la lista solicitada por la aplicación. ORDER_CONFIRMATION no quedó suscrita.",
     };
   }
   const decision = selectPaidSaleTopics(listed.topics, grantedScopes);
-  const lines = decisionLines(decision, new Set(EBAY_SCOPES.split(/\s+/)));
+  const lines = decisionLines(decision, new Set(EBAY_SCOPES.split(/\s+/)), grantedScopes !== null);
   const currentDestinations = await ebayJson(input.token, "GET", notificationCollectionUrl("destination"));
   if (currentDestinations.status < 200 || currentDestinations.status >= 300) {
     return {
@@ -310,10 +311,13 @@ function subscriptionAlreadyExists(body: unknown): boolean {
   return errors.some((entry) => Number(record(entry)?.errorId) === 195012);
 }
 
-function decisionLines(decision: ReturnType<typeof selectPaidSaleTopics>, requestedScopes: Set<string>): string[] {
+function decisionLines(decision: ReturnType<typeof selectPaidSaleTopics>, requestedScopes: Set<string>, scopesKnown: boolean): string[] {
   const lines: string[] = [];
-  if (decision.selected.length) {
+  if (decision.selected.length && scopesKnown) {
     lines.push(`Evento de venta pagada concedido a esta cuenta: ${decision.selected.map((topic) => topic.id).join(", ")}.`);
+  }
+  if (decision.selected.length && !scopesKnown) {
+    lines.push("La respuesta de autorización no trajo scope. No se usó la lista solicitada como si fueran permisos concedidos. ORDER_CONFIRMATION solo queda lista si la lectura posterior la muestra activa.");
   }
   for (const id of decision.unavailable) {
     lines.push(`${id} no está disponible en la lista oficial de esta aplicación. No se inventó. Las ventas pagadas se siguen leyendo en la consulta diaria de pedidos.`);

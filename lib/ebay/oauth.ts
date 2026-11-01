@@ -17,6 +17,7 @@ export interface TokenResponse {
   refresh_token_expires_in?: number;
   token_type: string;
   scope?: string;
+  scopesReported: boolean;
 }
 
 export function grantedScopesFrom(scope: unknown): string[] {
@@ -101,7 +102,18 @@ async function postToken(
     const text = await resp.text().catch(() => "");
     throw new Error(tokenErrorMessage(resp.status, text));
   }
-  return (await resp.json()) as TokenResponse;
+  const payload = await resp.json().catch(() => null) as Record<string, unknown> | null;
+  const tokenBody = payload && typeof payload === "object" ? payload : {};
+  const scopesReported = Object.prototype.hasOwnProperty.call(tokenBody, "scope");
+  return {
+    access_token: String(tokenBody.access_token ?? ""),
+    expires_in: Number(tokenBody.expires_in ?? 0),
+    refresh_token: tokenBody.refresh_token == null ? undefined : String(tokenBody.refresh_token),
+    refresh_token_expires_in: tokenBody.refresh_token_expires_in == null ? undefined : Number(tokenBody.refresh_token_expires_in),
+    token_type: String(tokenBody.token_type ?? ""),
+    scope: scopesReported ? String(tokenBody.scope ?? "") : undefined,
+    scopesReported,
+  };
 }
 
 // Step 2: exchange the authorization code for access + refresh tokens.

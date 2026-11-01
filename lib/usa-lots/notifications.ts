@@ -11,12 +11,12 @@ export interface SaleTopicChoice {
   status: string;
 }
 
-export function selectPaidSaleTopics(topics: SaleTopicChoice[], grantedScopes: string[]): {
+export function selectPaidSaleTopics(topics: SaleTopicChoice[], grantedScopes: string[] | null): {
   selected: SaleTopicChoice[];
   unavailable: string[];
   unauthorized: { id: string; missingScopes: string[] }[];
 } {
-  const granted = new Set(grantedScopes.map((scope) => scope.trim()).filter(Boolean));
+  const granted = grantedScopes === null ? null : new Set(grantedScopes.map((scope) => scope.trim()).filter(Boolean));
   const byId = new Map(topics.map((topic) => [topic.id, topic]));
   const selected: SaleTopicChoice[] = [];
   const unavailable: string[] = [];
@@ -27,9 +27,14 @@ export function selectPaidSaleTopics(topics: SaleTopicChoice[], grantedScopes: s
       unavailable.push(id);
       continue;
     }
-    const missingScopes = topic.authorizationScopes.filter((scope) => !granted.has(scope));
-    if (missingScopes.length) unauthorized.push({ id, missingScopes });
-    else selected.push(topic);
+    if (granted) {
+      const missingScopes = topic.authorizationScopes.filter((scope) => !granted.has(scope));
+      if (missingScopes.length) {
+        unauthorized.push({ id, missingScopes });
+        continue;
+      }
+    }
+    selected.push(topic);
   }
   return { selected, unavailable, unauthorized };
 }
