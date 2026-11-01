@@ -222,6 +222,7 @@ async function migrate(): Promise<void> {
       vinted_listing_id TEXT NOT NULL DEFAULT '',
       vinted_title TEXT NOT NULL DEFAULT '',
       vinted_status TEXT NOT NULL DEFAULT '',
+      vinted_review TEXT NOT NULL DEFAULT 'unverified',
       source_job_id TEXT NOT NULL DEFAULT '',
       workspace_group JSONB,
       workspace_hidden BOOLEAN NOT NULL DEFAULT FALSE,
@@ -229,6 +230,10 @@ async function migrate(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `;
+  await sql`
+    ALTER TABLE article_archive
+    ADD COLUMN IF NOT EXISTS vinted_review TEXT NOT NULL DEFAULT 'unverified'
   `;
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS article_archive_account_item_idx

@@ -5,8 +5,24 @@ import { chooseSaleRecord, mergeArticleCore, planImportLink, type ArticleCore, t
 import { blankRun, type ImportError, type ImportProgress } from "@/lib/archive/import-progress";
 import { ebayThumbUrl, exactSku, safeEbayImageUrl, searchNeedle } from "@/lib/archive/text";
 import { photoForWorkspace, restoreGroup } from "@/lib/archive/workspace";
+import {
+  ARCHIVE_VINTED_URL_PATTERN,
+  applyVintedReviewAction,
+  planArchiveVintedPrepare,
+  savedVintedListingUrl,
+  vintedReviewOf,
+  workspaceGroupAfterVintedPrepare,
+  type ArchiveVintedFilter,
+  type VintedReview,
+  type VintedReviewAction,
+} from "@/lib/archive/vinted-review";
 import type { PlatformListing } from "@/lib/inventory/links";
-import type { ItemGroup, Photo, VintedStatus } from "@/lib/types";
+import { requestTargetsGuatemala } from "@/lib/markets/guatemala";
+import { skuForVintedPrepare } from "@/lib/sku";
+import type { ItemGroup, ListingResult, Photo, VintedStatus } from "@/lib/types";
+import { prepareVintedFields } from "@/lib/vinted/prepare";
+import { buildReadySnapshot } from "@/lib/vinted/snapshot";
+import { photosForGroupId, replaceVintedReadySnapshot } from "@/lib/vinted/snapshot-store";
 
 export const ARCHIVE_PAGE_SIZE = 20;
 
@@ -20,6 +36,7 @@ export interface ArchiveCard {
   ebayUrl: string;
   listingStatus: string;
   vintedListingUrl: string;
+  vintedReview: VintedReview;
   thumbUrl: string;
 }
 
@@ -42,6 +59,7 @@ interface ArchiveRow extends ArticleCore {
   workspaceGroup: unknown;
   workspaceHidden: boolean;
   origin: string;
+  vintedReview: string;
 }
 
 function asText(value: unknown): string {
@@ -100,6 +118,7 @@ function coreFromRow(row: Record<string, unknown>): ArchiveRow {
     workspaceGroup: row.workspace_group ?? null,
     workspaceHidden: asBool(row.workspace_hidden),
     origin: asText(row.origin),
+    vintedReview: asText(row.vinted_review),
     sku: exactSku(asText(row.sku)),
     title: asText(row.title),
     description: asText(row.description),
@@ -153,12 +172,18 @@ export async function archivedJobIsHidden(jobId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-export async function listArchivePage(accountKey: string, query: string, page: number): Promise<{ total: number; articles: ArchiveCard[] }> {
+export async function listArchivePage(
+  accountKey: string,
+  query: string,
+  page: number,
+  filter: ArchiveVintedFilter
+): Promise<{ total: number; articles: ArchiveCard[] }> {
   const sql = getSql();
   await ensureInventoryTables();
   const needle = searchNeedle(query);
   const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
   const offset = (safePage - 1) * ARCHIVE_PAGE_SIZE;
+  const urlPattern = ARCHIVE_VINTED_URL_PATTERN;
   const totalRows = await sql`
     SELECT COUNT(*)::int AS total
     FROM article_archive
@@ -169,11 +194,17 @@ export async function listArchivePage(accountKey: string, query: string, page: n
         OR strpos(lower(title), ${needle}) > 0
         OR strpos(ebay_item_id, ${needle}) > 0
       )
+      AND (
+        ${filter} = 'all'
+        OR (${filter} = 'linked' AND vinted_listing_url ~* ${urlPattern})
+        OR (${filter} = 'pending' AND vinted_review = 'pending' AND vinted_listing_url !~* ${urlPattern})
+        OR (${filter} = 'unverified' AND vinted_review IS DISTINCT FROM 'pending' AND vinted_listing_url !~* ${urlPattern})
+      )
   `;
   const rows = await sql`
     SELECT
       a.id, a.sku, a.title, a.price, a.currency, a.ebay_item_id, a.ebay_url,
-      a.listing_status, a.vinted_listing_url,
+      a.listing_status, a.vinted_listing_url, a.vinted_review,
       thumb.id AS thumb_id,
       thumb.url AS thumb_remote,
       thumb.thumb_url AS thumb_small,
@@ -193,6 +224,12 @@ export async function listArchivePage(accountKey: string, query: string, page: n
         OR strpos(lower(a.title), ${needle}) > 0
         OR strpos(a.ebay_item_id, ${needle}) > 0
       )
+      AND (
+        ${filter} = 'all'
+        OR (${filter} = 'linked' AND a.vinted_listing_url ~* ${urlPattern})
+        OR (${filter} = 'pending' AND a.vinted_review = 'pending' AND a.vinted_listing_url !~* ${urlPattern})
+        OR (${filter} = 'unverified' AND a.vinted_review IS DISTINCT FROM 'pending' AND a.vinted_listing_url !~* ${urlPattern})
+      )
     ORDER BY a.updated_at DESC, a.id DESC
     LIMIT ${ARCHIVE_PAGE_SIZE}
     OFFSET ${offset}
@@ -211,7 +248,8 @@ export async function listArchivePage(accountKey: string, query: string, page: n
         ebayItemId: asText(record.ebay_item_id),
         ebayUrl: asText(record.ebay_url),
         listingStatus: asText(record.listing_status),
-        vintedListingUrl: asText(record.vinted_listing_url),
+        vintedListingUrl: savedVintedListingUrl(asText(record.vinted_listing_url)),
+        vintedReview: vintedReviewOf(asText(record.vinted_listing_url), asText(record.vinted_review)),
         thumbUrl: thumbFor(thumbId, asText(record.thumb_remote), asText(record.thumb_small), asBool(record.has_thumb)),
       };
     }),
@@ -223,7 +261,7 @@ export async function getArchiveDetail(accountKey: string, articleId: string): P
   await ensureInventoryTables();
   const rows = await sql`
     SELECT id, sku, title, description, price, currency, ebay_item_id, ebay_url, listing_status,
-      quantity_sold, variants, vinted_listing_url, vinted_listing_id, vinted_title, vinted_status
+      quantity_sold, variants, vinted_listing_url, vinted_listing_id, vinted_title, vinted_status, vinted_review
     FROM article_archive
     WHERE id = ${articleId} AND account_key = ${accountKey}
     LIMIT 1
@@ -252,7 +290,8 @@ export async function getArchiveDetail(accountKey: string, articleId: string): P
     ebayItemId: article.ebayItemId,
     ebayUrl: article.ebayUrl,
     listingStatus: article.listingStatus,
-    vintedListingUrl: article.vintedListingUrl,
+    vintedListingUrl: savedVintedListingUrl(article.vintedListingUrl),
+    vintedReview: vintedReviewOf(article.vintedListingUrl, article.vintedReview),
     description: article.description,
     quantitySold: Number.isFinite(article.quantitySold) ? article.quantitySold : null,
     variants: article.variants,
@@ -320,6 +359,8 @@ async function writeArticle(id: string, accountKey: string, ebayUserId: string, 
     `;
     return;
   }
+  // vinted_review stays out of this update. Importing or archiving must not
+  // clear a manual pending mark or turn a missing link into one.
   await sql`
     UPDATE article_archive SET
       ebay_user_id = CASE WHEN ${ebayUserId} <> '' THEN ${ebayUserId} ELSE ebay_user_id END,
@@ -587,6 +628,166 @@ export async function saveWorkspaceArticle(input: {
     WHERE id = ${id}
   `;
   return { id };
+}
+
+export async function setArchiveVintedControl(
+  accountKey: string,
+  articleId: string,
+  action: VintedReviewAction
+): Promise<{ ok: true; review: VintedReview; vintedListingUrl: string } | { ok: false; error: string }> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const rows = await sql`
+    SELECT vinted_listing_url, vinted_review
+    FROM article_archive
+    WHERE id = ${articleId} AND account_key = ${accountKey}
+    LIMIT 1
+  `;
+  if (!rows.length) return { ok: false, error: "Ese artículo no está en el archivo." };
+  const record = rows[0] as Record<string, unknown>;
+  const next = applyVintedReviewAction(
+    { url: asText(record.vinted_listing_url), stored: asText(record.vinted_review) },
+    action
+  );
+  if (!next.ok) return next;
+  const current = await sql`
+    SELECT workspace_group, source_job_id
+    FROM article_archive
+    WHERE id = ${articleId} AND account_key = ${accountKey}
+    LIMIT 1
+  `;
+  const saved = current[0] as { workspace_group?: unknown; source_job_id?: unknown } | undefined;
+  const group = saved?.workspace_group && typeof saved.workspace_group === "object"
+    ? { ...(saved.workspace_group as Record<string, unknown>), vintedListingUrl: next.url || undefined }
+    : null;
+  const groupJson = group ? JSON.stringify(group) : "";
+  if (groupJson) {
+    await sql`
+      UPDATE article_archive SET
+        vinted_listing_url = ${next.url},
+        vinted_listing_id = ${next.id},
+        vinted_review = ${next.stored},
+        workspace_group = ${groupJson}::jsonb,
+        updated_at = NOW()
+      WHERE id = ${articleId} AND account_key = ${accountKey}
+    `;
+  } else {
+    await sql`
+      UPDATE article_archive SET
+        vinted_listing_url = ${next.url},
+        vinted_listing_id = ${next.id},
+        vinted_review = ${next.stored},
+        updated_at = NOW()
+      WHERE id = ${articleId} AND account_key = ${accountKey}
+    `;
+  }
+  const jobId = asText(saved?.source_job_id);
+  if (jobId) await syncJobVintedUrl(jobId, next.url);
+  return { ok: true, review: next.review, vintedListingUrl: next.url };
+}
+
+async function syncJobVintedUrl(jobId: string, url: string): Promise<void> {
+  const sql = getSql();
+  const rows = await sql`SELECT data FROM jobs WHERE id = ${jobId} LIMIT 1`;
+  if (!rows.length) return;
+  const raw = (rows[0] as { data?: unknown }).data;
+  const data = (typeof raw === "string" ? JSON.parse(raw) : raw) as { group?: ItemGroup; photos?: unknown } | null;
+  if (!data?.group) return;
+  const next = { ...data.group, vintedListingUrl: url || undefined };
+  const payload = JSON.stringify({ ...data, group: next });
+  await sql`UPDATE jobs SET data = ${payload}::jsonb, updated_at = NOW() WHERE id = ${jobId}`;
+}
+
+function listingForPrepare(article: ArchiveRow): ListingResult | null {
+  const stored = article.workspaceGroup && typeof article.workspaceGroup === "object"
+    ? (article.workspaceGroup as { listing?: ListingResult }).listing
+    : undefined;
+  const title = stored?.title?.trim() || article.title.trim();
+  if (!title) return null;
+  return {
+    ...stored,
+    title,
+    description: stored?.description || article.description,
+    suggested_price: stored?.suggested_price ?? (article.price || undefined),
+    currency: stored?.currency || article.currency || undefined,
+  };
+}
+
+export async function prepareArchivedArticle(
+  accountKey: string,
+  articleId: string
+): Promise<{ ok: true; jobId: string; already: boolean; sku: string; review: VintedReview } | { ok: false; error: string }> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const rows = await sql`SELECT * FROM article_archive WHERE id = ${articleId} AND account_key = ${accountKey} LIMIT 1`;
+  if (!rows.length) return { ok: false, error: "Ese artículo no está en el archivo." };
+  const article = coreFromRow(rows[0] as Record<string, unknown>);
+  const sku = skuForVintedPrepare(article.sku);
+  if (!sku) return { ok: false, error: "Este artículo no tiene SKU. No se inventó uno y no se publicó en eBay." };
+  const listing = listingForPrepare(article);
+  if (!listing) return { ok: false, error: "Este artículo no tiene título para preparar en Vinted. No se publicó en eBay." };
+  if (requestTargetsGuatemala({ listing })) {
+    return { ok: false, error: "El catálogo de Guatemala no se prepara para Vinted ni se publica en eBay." };
+  }
+  const reviewBefore = vintedReviewOf(article.vintedListingUrl, article.vintedReview);
+  const restored = await restoreArchiveToWorkspace(accountKey, articleId);
+  if (!restored.ok) return restored;
+  const plan = planArchiveVintedPrepare({
+    reviewUrl: article.vintedListingUrl,
+    reviewStored: article.vintedReview,
+    postStatus: "posted",
+    ebayItemId: article.ebayItemId,
+    jobId: restored.jobId,
+    sku,
+  });
+  if (plan.ebayWrite || plan.marksLinked || plan.review !== reviewBefore || plan.jobId !== restored.jobId) {
+    return { ok: false, error: "La preparación se detuvo antes de cambiar el artículo." };
+  }
+  try {
+    const photos = await photosForGroupId(restored.jobId);
+    const snapshot = buildReadySnapshot({ sku, listing, photos });
+    const fields = prepareVintedFields(sku, listing);
+    const { setVintedCurrentSku, upsertVintedReady } = await import("@/lib/inventory/links");
+    await setVintedCurrentSku(accountKey, snapshot.sku);
+    await replaceVintedReadySnapshot(accountKey, snapshot);
+    await upsertVintedReady({
+      workspaceKey: accountKey,
+      prepared: fields,
+      ebayItemId: article.ebayItemId || null,
+      ebayTitle: listing.title,
+      publishedOnEbay: true,
+    });
+    await markPreparedJob(restored.jobId, sku, article.ebayItemId);
+    if (article.workspaceGroup && typeof article.workspaceGroup === "object") {
+      const nextGroup = workspaceGroupAfterVintedPrepare(article.workspaceGroup as ItemGroup, sku, article.ebayItemId);
+      const groupJson = JSON.stringify(nextGroup);
+      await sql`
+        UPDATE article_archive SET workspace_group = ${groupJson}::jsonb, updated_at = NOW()
+        WHERE id = ${article.id} AND account_key = ${accountKey}
+      `;
+    }
+  } catch (error) {
+    console.error("[archivo] preparar", error);
+    return {
+      ok: false,
+      error: restored.already
+        ? "No se pudo preparar para Vinted. El artículo sigue en el área de trabajo, con su anuncio de eBay y su estado de Vinted."
+        : "El artículo volvió al área de trabajo, pero no se pudo preparar para Vinted. No se publicó en eBay y su estado de Vinted no cambió.",
+    };
+  }
+  return { ok: true, jobId: restored.jobId, already: restored.already, sku, review: reviewBefore };
+}
+
+async function markPreparedJob(jobId: string, sku: string, ebayItemId: string): Promise<void> {
+  const sql = getSql();
+  const rows = await sql`SELECT data FROM jobs WHERE id = ${jobId} LIMIT 1`;
+  if (!rows.length) return;
+  const raw = (rows[0] as { data?: unknown }).data;
+  const data = typeof raw === "string" ? JSON.parse(raw) as { group?: ItemGroup; photos?: unknown } : raw as { group?: ItemGroup; photos?: unknown };
+  if (!data?.group) return;
+  const next = workspaceGroupAfterVintedPrepare(data.group, sku, ebayItemId);
+  const payload = JSON.stringify({ ...data, group: next });
+  await sql`UPDATE jobs SET data = ${payload}::jsonb, updated_at = NOW() WHERE id = ${jobId}`;
 }
 
 export async function setArchiveHidden(articleId: string, hidden: boolean): Promise<void> {

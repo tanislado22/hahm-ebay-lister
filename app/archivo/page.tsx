@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { OwnerAccess } from "@/app/OwnerAccess";
 import { accessHeaders } from "@/lib/api-client";
+import { VINTED_REVIEW_LABEL, type ArchiveVintedFilter, type VintedReview } from "@/lib/archive/vinted-review";
 
 interface ArchiveCard {
   id: string;
@@ -14,6 +15,7 @@ interface ArchiveCard {
   ebayUrl: string;
   listingStatus: string;
   vintedListingUrl: string;
+  vintedReview: VintedReview;
   thumbUrl: string;
 }
 
@@ -49,6 +51,9 @@ export default function ArchivePage() {
   const [clientId, setClientId] = useState("");
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
+  const [filter, setFilter] = useState<ArchiveVintedFilter>("all");
+  const [vintedUrl, setVintedUrl] = useState("");
+  const [savingVinted, setSavingVinted] = useState(false);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
@@ -87,6 +92,7 @@ export default function ArchivePage() {
       const params = queryString();
       params.set("page", String(page));
       if (submittedQuery) params.set("q", submittedQuery);
+      if (filter !== "all") params.set("vinted", filter);
       try {
         const response = await fetch(`/api/archivo?${params.toString()}`, {
           cache: "no-store",
@@ -110,7 +116,7 @@ export default function ArchivePage() {
     };
     void load();
     return () => controller.abort();
-  }, [page, submittedQuery, workMode, clientId, reloadToken]);
+  }, [page, submittedQuery, filter, workMode, clientId, reloadToken]);
 
   const openArticle = async (id: string) => {
     setError("");
@@ -125,6 +131,61 @@ export default function ArchivePage() {
       return;
     }
     setDetail(data.article);
+    setVintedUrl(data.article.vintedListingUrl || "");
+  };
+
+  const saveVinted = async (action: "link" | "unlink" | "pending" | "unverified") => {
+    if (!detail) return;
+    setSavingVinted(true);
+    setMessage("");
+    setError("");
+    try {
+      const response = await fetch("/api/archivo/vinted", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...accessHeaders() },
+        body: JSON.stringify({
+          id: detail.id,
+          workMode,
+          clientId: clientId || null,
+          action,
+          url: vintedUrl,
+        }),
+      });
+      const data = (await response.json()) as { ok?: boolean; error?: string; review?: VintedReview; vintedListingUrl?: string };
+      if (!response.ok || !data.ok || !data.review) {
+        setError(data.error || "No se pudo guardar el estado de Vinted.");
+        return;
+      }
+      setDetail({ ...detail, vintedReview: data.review, vintedListingUrl: data.vintedListingUrl || "" });
+      setVintedUrl(data.vintedListingUrl || "");
+      setMessage(`Estado guardado: ${VINTED_REVIEW_LABEL[data.review]}.`);
+      setReloadToken((current) => current + 1);
+    } finally {
+      setSavingVinted(false);
+    }
+  };
+
+  const prepareVinted = async (id: string) => {
+    setSavingVinted(true);
+    setMessage("");
+    setError("");
+    try {
+      const response = await fetch("/api/archivo/preparar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...accessHeaders() },
+        body: JSON.stringify({ id, workMode, clientId: clientId || null }),
+      });
+      const data = (await response.json()) as { ok?: boolean; error?: string; message?: string; review?: VintedReview };
+      if (!response.ok || !data.ok) {
+        setError(data.error || "No se pudo preparar el artículo para Vinted.");
+        return;
+      }
+      if (data.review && detail?.id === id) setDetail({ ...detail, vintedReview: data.review });
+      setMessage(data.message || "Quedó preparado para Vinted.");
+      setReloadToken((current) => current + 1);
+    } finally {
+      setSavingVinted(false);
+    }
   };
 
   const restore = async (id: string) => {
@@ -255,6 +316,26 @@ export default function ArchivePage() {
           />
           <button type="submit" className="btn btn-ghost">Buscar</button>
         </form>
+        <div className="archive-filters" role="group" aria-label="Filtrar por Vinted">
+          {([
+            ["all", "Todos"],
+            ["linked", "Vinculados a Vinted"],
+            ["pending", "Pendientes de publicar"],
+            ["unverified", "Sin verificar"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={filter === value ? "btn btn-primary" : "btn btn-ghost"}
+              onClick={() => {
+                setFilter(value);
+                setPage(1);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <p className="note">{loading ? "Cargando…" : `${total} artículo${total === 1 ? "" : "s"} en el archivo. Se muestran 20 por página.`}</p>
         {error ? <p className="note note-error" role="alert">{error}</p> : null}
         {message ? <p className="note" role="status">{message}</p> : null}
@@ -271,6 +352,7 @@ export default function ArchivePage() {
               <span>SKU: {article.sku || "sin SKU"}</span>
               <span>{article.price ? `${article.price} ${article.currency}` : "Sin precio"}</span>
               <span>{article.ebayItemId || "Sin número de anuncio"}</span>
+              <span>{VINTED_REVIEW_LABEL[article.vintedReview] || "Sin verificar"}</span>
             </button>
           ))}
         </div>
@@ -298,11 +380,56 @@ export default function ArchivePage() {
             Anuncio: {detail.ebayItemId || "sin número"}
             {detail.ebayUrl ? <> · <a href={detail.ebayUrl} target="_blank" rel="noopener noreferrer">Abrir en eBay</a></> : null}
           </p>
-          {detail.vintedListingUrl ? (
-            <p>Vinted: <a href={detail.vintedListingUrl} target="_blank" rel="noopener noreferrer">{detail.vintedListingUrl}</a></p>
-          ) : (
-            <p>Vinted: sin vínculo guardado</p>
-          )}
+          <p>
+            Vinted: {VINTED_REVIEW_LABEL[detail.vintedReview] || "Sin verificar"}.
+            {detail.vintedReview === "linked"
+              ? " Tiene un enlace guardado. Esto no garantiza que el anuncio siga activo."
+              : detail.vintedReview === "pending"
+                ? " Confirmaste que falta publicarlo."
+                : " Todavía no sabemos si está publicado."}
+          </p>
+          <form
+            className="archive-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveVinted("link");
+            }}
+          >
+            <label htmlFor="vinted-url">Vincular anuncio de Vinted</label>
+            <input
+              id="vinted-url"
+              value={vintedUrl}
+              onChange={(event) => setVintedUrl(event.target.value)}
+              placeholder="https://www.vinted.com/items/12345678"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+            <button type="submit" className="btn btn-primary" disabled={savingVinted}>Vincular anuncio de Vinted</button>
+            {detail.vintedListingUrl ? (
+              <a className="btn btn-ghost" href={detail.vintedListingUrl} target="_blank" rel="noopener noreferrer">Abrir en Vinted</a>
+            ) : null}
+          </form>
+          <div className="result-actions">
+            {detail.vintedListingUrl ? (
+              <button type="button" className="btn btn-ghost" disabled={savingVinted} onClick={() => void saveVinted("unlink")}>
+                Quitar vínculo
+              </button>
+            ) : null}
+            {detail.vintedReview !== "linked" && detail.vintedReview !== "pending" ? (
+              <button type="button" className="btn btn-ghost" disabled={savingVinted} onClick={() => void saveVinted("pending")}>
+                Marcar como pendiente
+              </button>
+            ) : null}
+            {detail.vintedReview === "pending" ? (
+              <button type="button" className="btn btn-ghost" disabled={savingVinted} onClick={() => void saveVinted("unverified")}>
+                Marcar como sin verificar
+              </button>
+            ) : null}
+            <button type="button" className="btn btn-ghost" disabled={savingVinted} onClick={() => void prepareVinted(detail.id)}>
+              Preparar para Vinted
+            </button>
+          </div>
           <p className="archive-description">{detail.plainDescription || "eBay no envió descripción."}</p>
           {detail.variants.length > 0 ? (
             <ul>

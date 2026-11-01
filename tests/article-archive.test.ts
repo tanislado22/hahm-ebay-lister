@@ -16,6 +16,16 @@ import { applyListPage, blankRun, completeDetail, statusesForListingsMissingFrom
 import { classifyTradingProblem, missingEbayConfig } from "@/lib/archive/trading-error";
 import { exactSku } from "@/lib/archive/text";
 import { restoreGroup } from "@/lib/archive/workspace";
+import {
+  applyVintedReviewAction,
+  archiveVintedUrlMatchesSql,
+  planArchiveVintedPrepare,
+  savedVintedListingUrl,
+  vintedReviewAfterImport,
+  vintedReviewOf,
+  workspaceGroupAfterVintedPrepare,
+} from "@/lib/archive/vinted-review";
+import type { ItemGroup } from "@/lib/types";
 
 const itemXml = `<?xml version="1.0" encoding="utf-8"?>
 <GetItemResponse>
@@ -283,5 +293,114 @@ describe("article archive", () => {
         else process.env[key] = previous[key];
       }
     }
+  });
+
+  test("an imported article without a Vinted link starts unverified", () => {
+    expect(vintedReviewOf("", "not_prepared")).toBe("unverified");
+    expect(vintedReviewOf("", "ready")).toBe("unverified");
+    expect(vintedReviewOf("", "")).toBe("unverified");
+    const imported = vintedReviewAfterImport({
+      existingUrl: "",
+      existingStored: "",
+      incomingUrl: "",
+      incomingStatus: "not_prepared",
+    });
+    expect(imported).toEqual({ url: "", stored: "unverified", review: "unverified" });
+    const ready = vintedReviewAfterImport({
+      existingUrl: "",
+      existingStored: "unverified",
+      incomingUrl: "",
+      incomingStatus: "ready",
+    });
+    expect(ready.review).toBe("unverified");
+  });
+
+  test("a saved Vinted URL is linked, and removing it returns to unverified", () => {
+    const linked = applyVintedReviewAction({ url: "", stored: "unverified" }, {
+      type: "link",
+      url: "https://www.vinted.com/items/12345678-camiseta",
+    });
+    expect(linked).toMatchObject({ ok: true, review: "linked", id: "12345678" });
+    expect(applyVintedReviewAction({ url: "", stored: "unverified" }, { type: "link", url: "https://example.com/items/12345678" })).toMatchObject({ ok: false });
+    if (!linked.ok) return;
+    const removed = applyVintedReviewAction({ url: linked.url, stored: "pending" }, { type: "unlink" });
+    expect(removed).toEqual({ ok: true, url: "", id: "", stored: "unverified", review: "unverified" });
+  });
+
+  test("pending is a manual mark and a repeated import keeps it and the link", () => {
+    const pending = applyVintedReviewAction({ url: "", stored: "unverified" }, { type: "pending" });
+    expect(pending).toMatchObject({ ok: true, review: "pending" });
+    expect(applyVintedReviewAction({ url: "https://www.vinted.com/items/12345678", stored: "unverified" }, { type: "pending" })).toMatchObject({ ok: false });
+    const again = vintedReviewAfterImport({
+      existingUrl: "https://www.vinted.es/items/12345678",
+      existingStored: "pending",
+      incomingUrl: "",
+      incomingStatus: "not_prepared",
+    });
+    expect(again.url).toBe("https://www.vinted.es/items/12345678");
+    expect(again.stored).toBe("pending");
+    expect(again.review).toBe("linked");
+    const stillPending = vintedReviewAfterImport({
+      existingUrl: "",
+      existingStored: "pending",
+      incomingUrl: "",
+      incomingStatus: "not_prepared",
+    });
+    expect(stillPending.review).toBe("pending");
+    const cleared = applyVintedReviewAction({ url: "", stored: "pending" }, { type: "unverified" });
+    expect(cleared).toMatchObject({ ok: true, review: "unverified", stored: "unverified" });
+  });
+
+  test("the archive filter recognizes the same Vinted URLs the linker accepts", () => {
+    const accepted = [
+      "https://www.vinted.com/items/12345678",
+      "https://www.vinted.es/items/12345678-camiseta",
+      "https://www.vinted.co.uk/items/1234567890?ref=1",
+      "https://vinted.com/items/12345678/",
+    ];
+    for (const url of accepted) {
+      const saved = savedVintedListingUrl(url);
+      expect(saved).not.toBe("");
+      expect(archiveVintedUrlMatchesSql(saved)).toBe(true);
+    }
+    for (const url of ["", "https://www.vinted.com/catalog", "http://www.vinted.com/items/12345678", "not prepared"]) {
+      expect(savedVintedListingUrl(url)).toBe("");
+      expect(archiveVintedUrlMatchesSql(url)).toBe(false);
+    }
+  });
+
+  test("preparing for Vinted keeps the review, the eBay id, and does not write to eBay", () => {
+    const group: ItemGroup = {
+      id: "job-1",
+      sku: "00123",
+      name: "Camisa",
+      photoIds: ["photo-1"],
+      status: "done",
+      postStatus: "posted",
+      listingId: "123456789012",
+      vintedStatus: "not_prepared",
+      listing: { title: "Camisa", description: "Tela" },
+    };
+    const plan = planArchiveVintedPrepare({
+      reviewUrl: "",
+      reviewStored: "pending",
+      postStatus: "posted",
+      ebayItemId: "123456789012",
+      jobId: "job-1",
+      sku: "00123",
+    });
+    expect(plan.review).toBe("pending");
+    expect(plan.postStatus).toBe("posted");
+    expect(plan.listingId).toBe("123456789012");
+    expect(plan.jobId).toBe("job-1");
+    expect(plan.ebayWrite).toBe(false);
+    expect(plan.marksLinked).toBe(false);
+    const prepared = workspaceGroupAfterVintedPrepare(group, "00123", "123456789012");
+    expect(prepared.id).toBe("job-1");
+    expect(prepared.sku).toBe("00123");
+    expect(prepared.postStatus).toBe("posted");
+    expect(prepared.listingId).toBe("123456789012");
+    expect(prepared.vintedStatus).toBe("ready");
+    expect(prepared.vintedListingUrl).toBeUndefined();
   });
 });

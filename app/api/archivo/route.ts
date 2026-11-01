@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import { ARCHIVE_PAGE_SIZE, listArchivePage } from "@/lib/archive/store";
+import { parseArchiveVintedFilter } from "@/lib/archive/vinted-review";
 import { archiveAccountKey } from "@/lib/archive/workspace";
 import { clientIsGuatemala } from "@/lib/markets/client-market";
 
@@ -19,8 +20,12 @@ export async function GET(req: NextRequest) {
   }
   const page = Number(params.get("page") || "1");
   const query = params.get("q") || "";
+  const filter = parseArchiveVintedFilter(params.get("vinted"));
+  if (!filter) {
+    return NextResponse.json({ ok: false, error: "Ese filtro de Vinted no existe." }, { status: 400 });
+  }
   try {
-    const result = await listArchivePage(accountKey, query, page);
+    const result = await listArchivePage(accountKey, query, page, filter);
     const pages = Math.max(1, Math.ceil(result.total / ARCHIVE_PAGE_SIZE));
     return NextResponse.json({
       ok: true,
