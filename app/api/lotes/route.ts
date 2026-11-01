@@ -7,6 +7,7 @@ import { describeSaleSync } from "@/lib/usa-lots/sync-plan";
 import {
   assignItemsToLot,
   correctSaleLink,
+  countUsaSales,
   createUsaLot,
   listOpenSales,
   listUsaLots,
@@ -38,10 +39,14 @@ export async function GET(req: NextRequest) {
     const lots = await listUsaLots(account.key);
     const open = await listOpenSales(account.key);
     const sync = await readSyncState(account.key);
+    const salesStored = await countUsaSales(account.key);
     const status = describeSaleSync({
       cronSecretSet: Boolean(process.env.CRON_SECRET),
       notificationTokenSet: Boolean(process.env.EBAY_NOTIFICATION_VERIFICATION_TOKEN),
       lastSuccessAt: sync.lastSuccessAt,
+      lastSource: sync.lastSource,
+      lastSaved: sync.lastSaved,
+      salesStored,
       lastError: sync.lastError,
       feeNote: sync.feeNote,
     });

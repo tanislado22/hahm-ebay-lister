@@ -3,7 +3,7 @@ import { ensureInventoryTables, getSql } from "@/lib/db";
 import { exactSku } from "@/lib/archive/text";
 import { lotForMatch, matchSaleToItem, type SaleCandidate } from "@/lib/usa-lots/match";
 import { averageUnitCents, applyAverageCosts, buildLotReport, saleProfit, type SaleMoney } from "@/lib/usa-lots/profit";
-import type { ParsedSaleLine } from "@/lib/usa-lots/parse-order";
+import { saleLinesToStore, type ParsedSaleLine } from "@/lib/usa-lots/parse-order";
 
 export async function ensureUsaLots(): Promise<void> {
   await ensureInventoryTables();
@@ -93,7 +93,9 @@ export async function ensureUsaLots(): Promise<void> {
       fee_note TEXT NOT NULL DEFAULT '',
       fee_blocked BOOLEAN NOT NULL DEFAULT FALSE,
       last_attempt_at TIMESTAMPTZ,
-      pages INTEGER NOT NULL DEFAULT 0
+      pages INTEGER NOT NULL DEFAULT 0,
+      last_success_source TEXT NOT NULL DEFAULT '',
+      last_saved INTEGER NOT NULL DEFAULT 0
     )
   `;
   await sql`
@@ -103,9 +105,13 @@ export async function ensureUsaLots(): Promise<void> {
       topic TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'pending',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (order_id, topic)
     )
   `;
+  await sql`ALTER TABLE usa_sale_sync ADD COLUMN IF NOT EXISTS last_success_source TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE usa_sale_sync ADD COLUMN IF NOT EXISTS last_saved INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE usa_sale_notices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
 }
 
 function centsOrNull(value: unknown): number | null {
@@ -227,6 +233,39 @@ export async function assignItemsToLot(input: {
   return { ok: true, assigned };
 }
 
+export async function rememberPublishedLot(input: {
+  accountKey: string;
+  lotId: string;
+  sku: string;
+  ebayItemId: string;
+  title: string;
+  jobId: string;
+}): Promise<{ saved: true } | { saved: false; error: string }> {
+  const lotId = input.lotId.trim();
+  const sku = exactSku(input.sku);
+  const ebayItemId = input.ebayItemId.replace(/\D/g, "");
+  if (!sku && !ebayItemId) return { saved: false, error: "Faltan el SKU y el número del anuncio." };
+  if (lotId) {
+    return assignItemsToLot({
+      accountKey: input.accountKey,
+      lotId,
+      items: [{ sku, ebayItemId, archiveId: "", jobId: input.jobId, title: input.title }],
+    }).then((result) => (result.ok ? { saved: true } : { saved: false, error: result.error }));
+  }
+  await ensureUsaLots();
+  const existing = await findItem(input.accountKey, sku, ebayItemId);
+  if (!existing || !ebayItemId) return { saved: true };
+  const sql = getSql();
+  await sql`
+    UPDATE usa_lot_items SET
+      ebay_item_id = CASE WHEN ebay_item_id = '' THEN ${ebayItemId} ELSE ebay_item_id END,
+      sku = CASE WHEN ${sku} <> '' THEN ${sku} ELSE sku END,
+      updated_at = NOW()
+    WHERE id = ${existing} AND account_key = ${input.accountKey}
+  `;
+  return { saved: true };
+}
+
 export async function rememberArchiveLot(accountKey: string, articleId: string, sku: string, ebayItemId: string): Promise<void> {
   await ensureUsaLots();
   const sql = getSql();
@@ -339,7 +378,7 @@ export async function saveParsedSales(accountKey: string, lines: ParsedSaleLine[
   const candidates = await loadSaleCandidates(accountKey);
   const sql = getSql();
   let saved = 0;
-  for (const line of lines) {
+  for (const line of saleLinesToStore(lines)) {
     const match = lotForMatch(matchSaleToItem({
       ebayItemId: line.ebayItemId,
       sku: line.sku,
@@ -527,7 +566,14 @@ export async function listOpenSales(accountKey: string): Promise<{ unassigned: {
   };
 }
 
-export async function readSyncState(accountKey: string): Promise<{ phase: string; cursorEnd: string | null; nextUrl: string; lastSuccessAt: string | null; lastError: string; feeNote: string; feeBlocked: boolean }> {
+export async function countUsaSales(accountKey: string): Promise<number> {
+  await ensureUsaLots();
+  const sql = getSql();
+  const rows = await sql`SELECT COUNT(*)::int AS total FROM usa_ebay_sales WHERE account_key = ${accountKey}`;
+  return Number((rows[0] as { total?: number } | undefined)?.total ?? 0);
+}
+
+export async function readSyncState(accountKey: string): Promise<{ phase: string; cursorEnd: string | null; nextUrl: string; lastSuccessAt: string | null; lastSource: string; lastSaved: number; lastAttemptAt: string | null; lastError: string; feeNote: string; feeBlocked: boolean }> {
   await ensureUsaLots();
   const sql = getSql();
   const rows = await sql`SELECT * FROM usa_sale_sync WHERE account_key = ${accountKey} LIMIT 1`;
@@ -537,6 +583,9 @@ export async function readSyncState(accountKey: string): Promise<{ phase: string
     cursorEnd: row?.cursor_end ? String(row.cursor_end) : null,
     nextUrl: String(row?.next_url ?? ""),
     lastSuccessAt: row?.last_success_at ? String(row.last_success_at) : null,
+    lastSource: String(row?.last_success_source ?? ""),
+    lastSaved: Number(row?.last_saved ?? 0),
+    lastAttemptAt: row?.last_attempt_at ? String(row.last_attempt_at) : null,
     lastError: String(row?.last_error ?? ""),
     feeNote: String(row?.fee_note ?? ""),
     feeBlocked: Boolean(row?.fee_blocked),
@@ -552,14 +601,20 @@ export async function saveSyncState(input: {
   feeNote: string;
   feeBlocked: boolean;
   success: boolean;
+  source: string;
+  saved: number;
 }): Promise<void> {
   await ensureUsaLots();
   const sql = getSql();
   await sql`
-    INSERT INTO usa_sale_sync (account_key, phase, cursor_end, next_url, last_success_at, last_error, fee_note, fee_blocked, last_attempt_at, pages)
+    INSERT INTO usa_sale_sync (
+      account_key, phase, cursor_end, next_url, last_success_at, last_error, fee_note, fee_blocked,
+      last_attempt_at, pages, last_success_source, last_saved
+    )
     VALUES (
       ${input.accountKey}, ${input.phase}, ${input.cursorEnd}, ${input.nextUrl},
-      ${input.success ? new Date().toISOString() : null}, ${input.lastError}, ${input.feeNote}, ${input.feeBlocked}, NOW(), 1
+      ${input.success ? new Date().toISOString() : null}, ${input.lastError}, ${input.feeNote}, ${input.feeBlocked},
+      NOW(), 1, ${input.success ? input.source : ""}, ${input.success ? input.saved : 0}
     )
     ON CONFLICT (account_key) DO UPDATE SET
       phase = EXCLUDED.phase,
@@ -567,10 +622,12 @@ export async function saveSyncState(input: {
       next_url = EXCLUDED.next_url,
       last_success_at = CASE WHEN ${input.success} THEN NOW() ELSE usa_sale_sync.last_success_at END,
       last_error = EXCLUDED.last_error,
-      fee_note = CASE WHEN EXCLUDED.fee_note <> '' THEN EXCLUDED.fee_note ELSE usa_sale_sync.fee_note END,
-      fee_blocked = usa_sale_sync.fee_blocked OR EXCLUDED.fee_blocked,
+      fee_note = EXCLUDED.fee_note,
+      fee_blocked = EXCLUDED.fee_blocked,
       last_attempt_at = NOW(),
-      pages = usa_sale_sync.pages + 1
+      pages = usa_sale_sync.pages + 1,
+      last_success_source = CASE WHEN ${input.success} THEN ${input.source} ELSE usa_sale_sync.last_success_source END,
+      last_saved = CASE WHEN ${input.success} THEN ${input.saved} ELSE usa_sale_sync.last_saved END
   `;
 }
 
@@ -580,9 +637,23 @@ export async function enqueueSaleNotice(orderId: string, topic: string): Promise
   await ensureUsaLots();
   const sql = getSql();
   await sql`
-    INSERT INTO usa_sale_notices (id, order_id, topic, status)
-    VALUES (${crypto.randomUUID()}, ${clean}, ${topic}, 'pending')
+    INSERT INTO usa_sale_notices (id, order_id, topic, status, updated_at)
+    VALUES (${crypto.randomUUID()}, ${clean}, ${topic}, 'pending', NOW())
     ON CONFLICT (order_id, topic) DO NOTHING
+  `;
+}
+
+export async function holdSaleNotice(orderId: string, topic: string): Promise<void> {
+  const clean = orderId.trim();
+  if (!clean) return;
+  await ensureUsaLots();
+  const sql = getSql();
+  await sql`
+    INSERT INTO usa_sale_notices (id, order_id, topic, status, updated_at)
+    VALUES (${crypto.randomUUID()}, ${clean}, ${topic}, 'pending', NOW() + INTERVAL '30 minutes')
+    ON CONFLICT (order_id, topic) DO UPDATE SET
+      updated_at = NOW() + INTERVAL '30 minutes',
+      status = CASE WHEN usa_sale_notices.status = 'done' THEN 'done' ELSE 'pending' END
   `;
 }
 
@@ -591,7 +662,7 @@ export async function takeSaleNotices(limit: number): Promise<{ id: string; orde
   const sql = getSql();
   const rows = await sql`
     SELECT id, order_id FROM usa_sale_notices
-    WHERE status = 'pending'
+    WHERE status = 'pending' AND updated_at <= NOW()
     ORDER BY created_at ASC
     LIMIT ${limit}
   `;
@@ -601,4 +672,9 @@ export async function takeSaleNotices(limit: number): Promise<{ id: string; orde
 export async function finishSaleNotice(id: string): Promise<void> {
   const sql = getSql();
   await sql`UPDATE usa_sale_notices SET status = 'done' WHERE id = ${id}`;
+}
+
+export async function postponeSaleNotice(id: string): Promise<void> {
+  const sql = getSql();
+  await sql`UPDATE usa_sale_notices SET updated_at = NOW() + INTERVAL '30 minutes' WHERE id = ${id} AND status = 'pending'`;
 }

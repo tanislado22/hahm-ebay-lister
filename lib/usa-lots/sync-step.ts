@@ -2,10 +2,12 @@ import { EBAY_MARKETPLACE_ID } from "@/lib/ebay/config";
 import { listEbayConnections } from "@/lib/ebay/client-connections";
 import { accessTokenFromCookie } from "@/lib/ebay/session";
 import { clientIsGuatemala } from "@/lib/markets/client-market";
-import { isReadOnlyOrderRequest, parseFulfillmentOrders } from "@/lib/usa-lots/parse-order";
+import { feeFromTransactions } from "@/lib/usa-lots/finances";
+import { isReadOnlyOrderRequest, parseFulfillmentOrders, saleLinesToStore } from "@/lib/usa-lots/parse-order";
 import { feeGapFromStatus, nextOrderWindow } from "@/lib/usa-lots/sync-plan";
 import {
   finishSaleNotice,
+  postponeSaleNotice,
   readSyncState,
   saveParsedSales,
   saveSyncState,
@@ -14,6 +16,13 @@ import {
 
 const FULFILLMENT = "https://api.ebay.com/sell/fulfillment/v1";
 const FINANCES = "https://apiz.ebay.com/sell/finances/v1/transaction";
+
+type SyncSource = "cron" | "manual" | "notification";
+
+interface Connection {
+  connectionKey: string;
+  sealedConnection: string;
+}
 
 async function ebayGet(token: string, url: string): Promise<{ status: number; body: Record<string, unknown> | null; error: string }> {
   if (!isReadOnlyOrderRequest("GET", url) && !url.startsWith(FINANCES)) {
@@ -37,38 +46,9 @@ async function ebayGet(token: string, url: string): Promise<{ status: number; bo
   return { status: response.status, body, error: "" };
 }
 
-function feeFromTransactions(body: Record<string, unknown> | null, orderId: string): { feeCents: number | null; sellerShippingCents: number | null } {
-  const transactions = Array.isArray(body?.transactions) ? body.transactions : [];
-  let fee = 0;
-  let shipping = 0;
-  let feeSeen = false;
-  let shippingSeen = false;
-  for (const entry of transactions) {
-    if (!entry || typeof entry !== "object") continue;
-    const transaction = entry as Record<string, unknown>;
-    if (String(transaction.orderId ?? "") !== orderId) continue;
-    const type = String(transaction.transactionType ?? "");
-    const amount = transaction.amount && typeof transaction.amount === "object" ? transaction.amount as { value?: unknown; currency?: unknown } : null;
-    const cents = amount ? Math.round(Number(amount.value) * 100) : null;
-    if (cents == null || !Number.isFinite(cents)) continue;
-    if (type === "NON_SALE_CHARGE" || type === "SALE") {
-      const feeType = String(transaction.feeType ?? transaction.bookingEntry ?? "");
-      if (feeType.toUpperCase().includes("FEE") || type === "NON_SALE_CHARGE") {
-        fee += Math.abs(cents);
-        feeSeen = true;
-      }
-    }
-    if (type === "SHIPPING_LABEL") {
-      shipping += Math.abs(cents);
-      shippingSeen = true;
-    }
-  }
-  return { feeCents: feeSeen ? fee : null, sellerShippingCents: shippingSeen ? shipping : null };
-}
-
-export async function advanceUsaSaleSync(accountKey?: string): Promise<{ ok: true; accountKey: string; saved: number; retryable: boolean } | { ok: false; error: string; retryable: boolean }> {
+async function usableConnections(accountKey?: string): Promise<Connection[]> {
   const connections = await listEbayConnections();
-  const usable = [];
+  const usable: Connection[] = [];
   for (const connection of connections) {
     if (connection.connectionKey.startsWith("client:")) {
       const clientId = connection.connectionKey.slice("client:".length);
@@ -77,12 +57,106 @@ export async function advanceUsaSaleSync(accountKey?: string): Promise<{ ok: tru
     if (accountKey && connection.connectionKey !== accountKey) continue;
     usable.push(connection);
   }
-  const connection = usable[0];
+  return usable;
+}
+
+async function tokenFor(connection: Connection): Promise<string> {
+  const token = await accessTokenFromCookie(connection.sealedConnection);
+  if (!token) throw new Error("No se pudo renovar el acceso a eBay.");
+  return token;
+}
+
+async function feesFor(token: string, orderIds: string[]): Promise<{ fees: { orderId: string; feeCents: number | null; sellerShippingCents: number | null }[]; feeNote: string; feeBlocked: boolean }> {
+  const fees: { orderId: string; feeCents: number | null; sellerShippingCents: number | null }[] = [];
+  for (const orderId of orderIds.slice(0, 5)) {
+    const feeUrl = `${FINANCES}?filter=${encodeURIComponent(`orderId:{${orderId}}`)}&limit=20`;
+    const response = await fetch(feeUrl, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+    if (response.status === 401 || response.status === 403) {
+      return { fees, feeNote: feeGapFromStatus(response.status), feeBlocked: true };
+    }
+    if (!response.ok) {
+      return { fees, feeNote: feeGapFromStatus(response.status) || "No se pudieron leer las comisiones de este pedido. No se anotaron como cero.", feeBlocked: false };
+    }
+    const body = await response.json() as Record<string, unknown>;
+    fees.push({ orderId, ...feeFromTransactions(body, orderId) });
+  }
+  return { fees, feeNote: "", feeBlocked: false };
+}
+
+export async function ingestNotifiedOrder(orderId: string): Promise<"saved" | "unpaid" | "missing" | "retry"> {
+  const connections = await usableConnections();
+  if (!connections.length) return "retry";
+  let tokenFailed = false;
+  for (const connection of connections) {
+    let token = "";
+    try {
+      token = await tokenFor(connection);
+    } catch {
+      tokenFailed = true;
+      continue;
+    }
+    const read = await ebayGet(token, `${FULFILLMENT}/order/${encodeURIComponent(orderId)}`);
+    if (read.status === 404) continue;
+    if (read.error) return read.status === 429 || read.status >= 500 ? "retry" : "missing";
+    const parsed = parseFulfillmentOrders([read.body?.order ?? read.body]);
+    const lines = saleLinesToStore(parsed);
+    if (!lines.length) return parsed.length ? "unpaid" : "missing";
+    const state = await readSyncState(connection.connectionKey);
+    const feeState = await feesFor(token, [...new Set(lines.map((line) => line.orderId))]);
+    const saved = await saveParsedSales(connection.connectionKey, lines, feeState.fees);
+    await saveSyncState({
+      accountKey: connection.connectionKey,
+      phase: state.phase === "watch" ? "watch" : "backfill",
+      cursorEnd: state.cursorEnd,
+      nextUrl: state.nextUrl,
+      lastError: "",
+      feeNote: feeState.feeNote || state.feeNote,
+      feeBlocked: feeState.feeBlocked,
+      success: true,
+      source: "notification",
+      saved: saved.saved,
+    });
+    return "saved";
+  }
+  return tokenFailed ? "retry" : "missing";
+}
+
+async function oldestConnection(connections: Connection[], accountKey?: string): Promise<Connection | undefined> {
+  if (accountKey) return connections.find((connection) => connection.connectionKey === accountKey) ?? connections[0];
+  let chosen = connections[0];
+  let stamp = "9999";
+  for (const connection of connections) {
+    const state = await readSyncState(connection.connectionKey);
+    const attempt = state.lastAttemptAt || "";
+    if (attempt < stamp) {
+      chosen = connection;
+      stamp = attempt;
+    }
+  }
+  return chosen;
+}
+
+export async function advanceUsaSaleSync(accountKeyOrOptions?: string | { accountKey?: string; source?: SyncSource }): Promise<{ ok: true; accountKey: string; saved: number; retryable: boolean } | { ok: false; error: string; retryable: boolean }> {
+  const accountKey = typeof accountKeyOrOptions === "string" ? accountKeyOrOptions : accountKeyOrOptions?.accountKey;
+  const source: SyncSource = typeof accountKeyOrOptions === "string" ? "manual" : accountKeyOrOptions?.source ?? "manual";
+  const connections = await usableConnections(accountKey);
+  if (!connections.length) return { ok: false, error: "No hay una cuenta de eBay conectada para sincronizar.", retryable: false };
+
+  let savedTotal = 0;
+  const notices = await takeSaleNotices(3);
+  for (const notice of notices) {
+    const result = await ingestNotifiedOrder(notice.orderId);
+    if (result === "retry" || result === "unpaid") await postponeSaleNotice(notice.id);
+    else await finishSaleNotice(notice.id);
+    if (result === "saved") savedTotal += 1;
+  }
+
+  const connection = await oldestConnection(connections, accountKey);
   if (!connection) return { ok: false, error: "No hay una cuenta de eBay conectada para sincronizar.", retryable: false };
   const state = await readSyncState(connection.connectionKey);
-  let token: string | null = null;
+  let token = "";
   try {
-    token = await accessTokenFromCookie(connection.sealedConnection);
+    token = await tokenFor(connection);
   } catch (error) {
     await saveSyncState({
       accountKey: connection.connectionKey,
@@ -93,78 +167,62 @@ export async function advanceUsaSaleSync(accountKey?: string): Promise<{ ok: tru
       feeNote: state.feeNote,
       feeBlocked: state.feeBlocked,
       success: false,
+      source,
+      saved: 0,
     });
     return { ok: false, error: (error as Error).message, retryable: true };
   }
-  if (!token) return { ok: false, error: "No se pudo renovar el acceso a eBay.", retryable: true };
 
-  const notices = await takeSaleNotices(3);
-  const orders: unknown[] = [];
-  let nextUrl = state.nextUrl;
   let phase: "backfill" | "watch" = state.phase === "watch" ? "watch" : "backfill";
   let cursorEnd = state.cursorEnd;
-  if (notices.length) {
-    for (const notice of notices) {
-      const url = `${FULFILLMENT}/order/${encodeURIComponent(notice.orderId)}`;
-      const read = await ebayGet(token, url);
-      if (read.error) {
-        await saveSyncState({ accountKey: connection.connectionKey, phase, cursorEnd, nextUrl, lastError: read.error, feeNote: state.feeNote, feeBlocked: state.feeBlocked, success: false });
-        return { ok: false, error: read.error, retryable: read.status === 429 || read.status >= 500 };
-      }
-      if (read.body) orders.push(read.body.order ?? read.body);
-      await finishSaleNotice(notice.id);
-    }
-  } else {
-    const window = nextOrderWindow({
-      now: Date.now(),
-      cursorEnd: cursorEnd ? Date.parse(cursorEnd) : null,
+  let nextUrl = state.nextUrl;
+  const window = nextOrderWindow({
+    now: Date.now(),
+    cursorEnd: cursorEnd ? Date.parse(cursorEnd) : null,
+    phase,
+  });
+  const url = nextUrl || `${FULFILLMENT}/order?filter=${encodeURIComponent(`creationdate:[${window.start}..${window.end}]`)}&limit=50`;
+  const read = await ebayGet(token, url);
+  if (read.error) {
+    await saveSyncState({
+      accountKey: connection.connectionKey,
       phase,
+      cursorEnd,
+      nextUrl,
+      lastError: read.error,
+      feeNote: state.feeNote,
+      feeBlocked: state.feeBlocked,
+      success: false,
+      source,
+      saved: 0,
     });
-    const url = nextUrl || `${FULFILLMENT}/order?filter=${encodeURIComponent(`creationdate:[${window.start}..${window.end}]`)}&limit=50`;
-    const read = await ebayGet(token, url);
-    if (read.error) {
-      await saveSyncState({ accountKey: connection.connectionKey, phase, cursorEnd, nextUrl, lastError: read.error, feeNote: state.feeNote, feeBlocked: state.feeBlocked, success: false });
-      return { ok: false, error: read.error, retryable: read.status === 429 || read.status >= 500 };
-    }
-    orders.push(...(Array.isArray(read.body?.orders) ? read.body.orders : []));
-    const next = typeof read.body?.next === "string" ? read.body.next : "";
-    if (next) {
-      nextUrl = next.startsWith("http") ? next : `https://api.ebay.com${next}`;
-    } else {
-      nextUrl = "";
-      phase = window.phase;
-      cursorEnd = window.nextCursorEnd ? new Date(window.nextCursorEnd).toISOString() : null;
-    }
+    return { ok: false, error: read.error, retryable: read.status === 429 || read.status >= 500 };
   }
-
+  const orders = Array.isArray(read.body?.orders) ? read.body.orders : [];
+  const next = typeof read.body?.next === "string" ? read.body.next : "";
+  if (next) {
+    nextUrl = next.startsWith("http") ? next : `https://api.ebay.com${next}`;
+  } else {
+    nextUrl = "";
+    phase = window.phase;
+    cursorEnd = window.nextCursorEnd ? new Date(window.nextCursorEnd).toISOString() : null;
+  }
   const lines = parseFulfillmentOrders(orders);
-  let feeNote = state.feeNote;
-  let feeBlocked = state.feeBlocked;
-  const fees: { orderId: string; feeCents: number | null; sellerShippingCents: number | null }[] = [];
-  const orderIds = [...new Set(lines.map((line) => line.orderId))];
-  if (!feeBlocked && orderIds.length) {
-    const feeUrl = `${FINANCES}?filter=${encodeURIComponent(`orderId:{${orderIds[0]}}`)}&limit=20`;
-    const feeRead = await fetch(feeUrl, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
-    if (feeRead.status === 401 || feeRead.status === 403) {
-      feeBlocked = true;
-      feeNote = feeGapFromStatus(feeRead.status);
-    } else if (feeRead.ok) {
-      const body = await feeRead.json() as Record<string, unknown>;
-      fees.push({ orderId: orderIds[0], ...feeFromTransactions(body, orderIds[0]) });
-    } else {
-      feeNote = feeGapFromStatus(feeRead.status) || feeNote;
-    }
-  }
-  const saved = await saveParsedSales(connection.connectionKey, lines, fees);
+  const feeState = lines.length
+    ? await feesFor(token, [...new Set(lines.map((line) => line.orderId))])
+    : { fees: [], feeNote: state.feeNote, feeBlocked: state.feeBlocked };
+  const saved = await saveParsedSales(connection.connectionKey, lines, feeState.fees);
   await saveSyncState({
     accountKey: connection.connectionKey,
     phase,
     cursorEnd,
     nextUrl,
     lastError: "",
-    feeNote,
-    feeBlocked,
+    feeNote: feeState.feeNote,
+    feeBlocked: feeState.feeBlocked,
     success: true,
+    source,
+    saved: saved.saved + savedTotal,
   });
-  return { ok: true, accountKey: connection.connectionKey, saved: saved.saved, retryable: false };
+  return { ok: true, accountKey: connection.connectionKey, saved: saved.saved + savedTotal, retryable: false };
 }

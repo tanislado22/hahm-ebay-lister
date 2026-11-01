@@ -16,6 +16,7 @@ export interface ParsedSaleLine {
   taxRemittedCents: number | null;
   refundCents: number | null;
   cancelled: boolean;
+  paymentStatus: string;
   currency: string;
   allocation: string;
 }
@@ -59,6 +60,7 @@ export function parseFulfillmentOrders(orders: unknown[]): ParsedSaleLine[] {
     if (!orderId) continue;
     const cancel = String((order.cancelStatus as { cancelState?: unknown } | undefined)?.cancelState ?? "");
     const cancelled = cancel === "CANCELED" || cancel === "CANCELLED";
+    const paymentStatus = String(order.orderPaymentStatus ?? "").trim().toUpperCase();
     const soldAt = String(order.creationDate ?? "").trim();
     const rawLines = Array.isArray(order.lineItems) ? order.lineItems : [];
     const parsed = rawLines.flatMap((item) => {
@@ -115,12 +117,19 @@ export function parseFulfillmentOrders(orders: unknown[]): ParsedSaleLine[] {
         taxRemittedCents: line.tax,
         refundCents: refundShares[index] ?? null,
         cancelled,
+        paymentStatus,
         currency: "USD",
         allocation: SHARED_COST_RULE,
       });
     });
   }
   return lines;
+}
+
+const PAID_STATUSES = new Set(["PAID", "PARTIALLY_REFUNDED", "FULLY_REFUNDED"]);
+
+export function saleLinesToStore(lines: ParsedSaleLine[]): ParsedSaleLine[] {
+  return lines.filter((line) => line.cancelled || PAID_STATUSES.has(line.paymentStatus));
 }
 
 export function isReadOnlyOrderRequest(method: string, path: string): boolean {

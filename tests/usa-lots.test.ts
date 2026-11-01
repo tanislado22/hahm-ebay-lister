@@ -1,9 +1,13 @@
+import crypto from "crypto";
 import { describe, expect, test } from "vitest";
 import { exactSku } from "@/lib/archive/text";
+import { EBAY_SCOPES } from "@/lib/ebay/config";
+import { feeFromTransactions } from "@/lib/usa-lots/finances";
 import { applyIncomingSale, lotForMatch, matchSaleToItem } from "@/lib/usa-lots/match";
-import { isReadOnlyOrderRequest, parseFulfillmentOrders } from "@/lib/usa-lots/parse-order";
+import { challengeResponse, topicsForSales, verifyEbayNotification } from "@/lib/usa-lots/notifications";
+import { isReadOnlyOrderRequest, parseFulfillmentOrders, saleLinesToStore } from "@/lib/usa-lots/parse-order";
 import { allocateSharedCents, applyAverageCosts, averageUnitCents, buildLotReport, saleProfit } from "@/lib/usa-lots/profit";
-import { describeSaleSync, feeGapFromStatus, nextOrderWindow } from "@/lib/usa-lots/sync-plan";
+import { describeSaleSync, feeGapFromStatus, FINANCES_SCOPE, nextOrderWindow, NOTIFICATION_SCOPE } from "@/lib/usa-lots/sync-plan";
 
 const archived = {
   id: "archive-1",
@@ -170,9 +174,112 @@ describe("USA purchase lots", () => {
     expect(isReadOnlyOrderRequest("POST", "https://api.ebay.com/sell/fulfillment/v1/order")).toBe(false);
     expect(isReadOnlyOrderRequest("POST", "https://api.ebay.com/ws/api.dll")).toBe(false);
     expect(feeGapFromStatus(403)).toContain("sell.finances");
-    const status = describeSaleSync({ cronSecretSet: false, notificationTokenSet: false, lastSuccessAt: null, lastError: "", feeNote: "" });
+    const status = describeSaleSync({
+      cronSecretSet: true,
+      notificationTokenSet: false,
+      lastSuccessAt: null,
+      lastSource: "",
+      lastSaved: 0,
+      salesStored: 0,
+      lastError: "",
+      feeNote: "",
+    });
     expect(status.active).toBe(false);
+    expect(status.lines.join(" ")).toContain("No hay una consulta correcta");
     expect(status.lines.join(" ")).toContain("CRON_SECRET");
-    expect(status.lines.join(" ")).toContain("cada 15 minutos");
+    expect(status.lines.join(" ")).toContain("una vez al día");
+    expect(status.lines.join(" ")).toContain("20 USD");
+    expect(status.lines.join(" ")).not.toMatch(/sincronización activa/i);
+  });
+
+  test("records one paid sale in its lot and leaves an unlotted sale out of the totals", () => {
+    const paid = saleLinesToStore(parseFulfillmentOrders([{
+      orderId: "ORD-LOTE",
+      orderPaymentStatus: "PAID",
+      creationDate: "2026-04-01T00:00:00.000Z",
+      lineItems: [{ lineItemId: "LINE-LOTE", legacyItemId: "123456789012", sku: "00123", quantity: 1, lineItemCost: { value: "20.00", currency: "USD" }, discountedLineItemCost: { value: "18.00", currency: "USD" } }],
+    }]));
+    const pending = saleLinesToStore(parseFulfillmentOrders([{
+      orderId: "ORD-PEND",
+      orderPaymentStatus: "PENDING",
+      lineItems: [{ lineItemId: "LINE-PEND", sku: "00123", quantity: 1, lineItemCost: { value: "10.00", currency: "USD" } }],
+    }]));
+    expect(paid).toHaveLength(1);
+    expect(pending).toHaveLength(0);
+    const once = applyIncomingSale([], { id: "sale-1", orderId: "ORD-LOTE", lineItemId: "LINE-LOTE", lotId: "lote-a", linkLocked: true, incomeCents: 1800 });
+    const repeated = applyIncomingSale(once, { id: "sale-9", orderId: "ORD-LOTE", lineItemId: "LINE-LOTE", lotId: "lote-b", linkLocked: false, incomeCents: 1800 });
+    expect(repeated).toHaveLength(1);
+    expect(repeated[0]).toMatchObject({ id: "sale-1", lotId: "lote-a" });
+    const profit = saleProfit({
+      itemCents: 1800,
+      buyerShippingCents: 0,
+      taxRemittedCents: 150,
+      feeCents: 200,
+      sellerShippingCents: 0,
+      refundCents: 0,
+      otherCents: 0,
+      unitCostCents: 500,
+      quantity: 1,
+      costEstimated: false,
+      cancelled: false,
+    });
+    const item = { id: "item-a", ebayItemId: "123456789012", disposition: "" as const, unitCostCents: 500, costEstimated: false };
+    const lotted = { itemId: "item-a", cancelled: false, linkStatus: "lotted" as const, profit };
+    const base = buildLotReport({ purchaseCents: 1000, extraCents: 0, sellableCount: 1, publishedCount: 1, items: [item], sales: [lotted] });
+    const looseProfit = saleProfit({
+      itemCents: 9000,
+      buyerShippingCents: 0,
+      taxRemittedCents: 0,
+      feeCents: 100,
+      sellerShippingCents: 0,
+      refundCents: 0,
+      otherCents: 0,
+      unitCostCents: null,
+      quantity: 1,
+      costEstimated: false,
+      cancelled: false,
+    });
+    const withLoose = buildLotReport({
+      purchaseCents: 1000,
+      extraCents: 0,
+      sellableCount: 1,
+      publishedCount: 1,
+      items: [item],
+      sales: [lotted, { itemId: "item-b", cancelled: false, linkStatus: "unassigned", profit: looseProfit }],
+    });
+    expect(base.sold).toBe(1);
+    expect(withLoose.sold).toBe(base.sold);
+    expect(withLoose.soldProfitCents).toBe(base.soldProfitCents);
+    expect(withLoose.recoveredCents).toBe(base.recoveredCents);
+    expect(withLoose.investedCents).toBe(base.investedCents);
+  });
+
+  test("keeps the eBay fee separate from the sale price and checks notification topics", () => {
+    expect(feeFromTransactions({
+      transactions: [
+        { transactionType: "SALE", orderId: "ORD-FEE", amount: { value: "18.00", currency: "USD" }, totalFeeAmount: { value: "2.35", currency: "USD" } },
+        { transactionType: "SHIPPING_LABEL", orderId: "ORD-FEE", amount: { value: "4.50", currency: "USD" } },
+      ],
+    }, "ORD-FEE")).toEqual({ feeCents: 235, sellerShippingCents: 450 });
+    expect(feeFromTransactions({
+      transactions: [{ transactionType: "SALE", orderId: "ORD-FEE", amount: { value: "18.00", currency: "USD" } }],
+    }, "ORD-FEE").feeCents).toBeNull();
+    expect(topicsForSales(["ORDER_CONFIRMATION", "BUYER_QUESTION", "ORDER_CANCELLED"])).toEqual(["ORDER_CONFIRMATION", "ORDER_CANCELLED"]);
+    expect(topicsForSales(["BUYER_QUESTION"])).toEqual([]);
+    expect(EBAY_SCOPES).toContain(FINANCES_SCOPE);
+    expect(EBAY_SCOPES).toContain(NOTIFICATION_SCOPE);
+    const endpoint = "https://example.com/api/ebay/notificaciones";
+    expect(challengeResponse("code", "token", endpoint)).toBe(
+      crypto.createHash("sha256").update(`codetoken${endpoint}`).digest("hex")
+    );
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const body = JSON.stringify({ notification: { orderId: "12-34567-89012" } });
+    const signer = crypto.createSign("sha1");
+    signer.update(body);
+    const signature = signer.sign(privateKey).toString("base64");
+    const header = Buffer.from(JSON.stringify({ alg: "ECDSA", kid: "key-1", signature, digest: "SHA1" })).toString("base64");
+    const pem = publicKey.export({ type: "spki", format: "pem" }).toString();
+    expect(verifyEbayNotification(body, header, pem)).toBe(true);
+    expect(verifyEbayNotification(`${body}x`, header, pem)).toBe(false);
   });
 });

@@ -246,7 +246,7 @@ export async function DELETE(request: Request) {
 
     const sql = await ensureJobsTable();
 
-    // Workspace only. Archived articles and their photos live in article_archive.
+    // Workspace only. Lots, SKUs, eBay item ids, archived articles, and photos stay.
     await sql`
 
       DELETE FROM jobs

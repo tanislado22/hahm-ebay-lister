@@ -127,12 +127,13 @@ export function buildLotReport(input: {
   items: LotItemSnapshot[];
   sales: LotSaleSnapshot[];
 }): LotReport {
+  const sales = input.sales.filter((sale) => sale.linkStatus === "lotted");
   const investedCents = input.purchaseCents + input.extraCents;
   const registered = input.items.length;
   const transferred = input.items.filter((item) => item.disposition === "guatemala-transfer").length;
   const soldIds = new Set(
-    input.sales
-      .filter((sale) => sale.linkStatus === "lotted" && !sale.cancelled && sale.itemId)
+    sales
+      .filter((sale) => !sale.cancelled && sale.itemId)
       .map((sale) => sale.itemId as string)
   );
   const sold = input.items.filter((item) => soldIds.has(item.id) && item.disposition !== "guatemala-transfer").length;
@@ -140,15 +141,15 @@ export function buildLotReport(input: {
   const remaining = countIncomplete ? null : Math.max(0, registered - sold - transferred);
   const pending: string[] = [];
   if (countIncomplete) pending.push("El conteo de piezas vendibles está incompleto.");
-  const profitKnown = input.sales.every((sale) => sale.profit.profitCents != null);
-  const recoveredKnown = input.sales.every((sale) => sale.profit.recoveredCents != null);
+  const profitKnown = sales.every((sale) => sale.profit.profitCents != null);
+  const recoveredKnown = sales.every((sale) => sale.profit.recoveredCents != null);
   const soldProfitCents = profitKnown
-    ? input.sales.reduce((total, sale) => total + (sale.profit.profitCents ?? 0), 0)
+    ? sales.reduce((total, sale) => total + (sale.profit.profitCents ?? 0), 0)
     : null;
   const recoveredCents = recoveredKnown
-    ? input.sales.reduce((total, sale) => total + (sale.profit.recoveredCents ?? 0), 0)
+    ? sales.reduce((total, sale) => total + (sale.profit.recoveredCents ?? 0), 0)
     : null;
-  for (const sale of input.sales) pending.push(...sale.profit.missing.map((item) => `Venta: ${item}`));
+  for (const sale of sales) pending.push(...sale.profit.missing.map((item) => `Venta: ${item}`));
   const unsold = input.items.filter((item) => item.disposition !== "guatemala-transfer" && !soldIds.has(item.id));
   const unsoldKnown = unsold.every((item) => item.unitCostCents != null && !item.costEstimated);
   const unsoldCostCents = unsoldKnown ? unsold.reduce((total, item) => total + (item.unitCostCents ?? 0), 0) : null;
@@ -163,9 +164,9 @@ export function buildLotReport(input: {
     remaining,
     remainingEstimated: countIncomplete,
     soldProfitCents,
-    soldProfitProvisional: !profitKnown || input.sales.some((sale) => sale.profit.provisional),
+    soldProfitProvisional: !profitKnown || sales.some((sale) => sale.profit.provisional),
     recoveredCents,
-    recoveredProvisional: !recoveredKnown || input.sales.some((sale) => sale.profit.provisional),
+    recoveredProvisional: !recoveredKnown || sales.some((sale) => sale.profit.provisional),
     investmentLeftCents: investmentLeftCents != null && investmentLeftCents > 0 ? investmentLeftCents : investmentLeftCents === 0 ? 0 : null,
     surplusCents: investmentLeftCents != null && investmentLeftCents < 0 ? -investmentLeftCents : null,
     unsoldCostCents,

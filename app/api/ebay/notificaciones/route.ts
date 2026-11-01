@@ -1,19 +1,47 @@
-import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { enqueueSaleNotice } from "@/lib/usa-lots/store";
+import { basicAuthHeader, EBAY_TOKEN_URL, getEbayCreds, isEbayConfigured } from "@/lib/ebay/config";
+import {
+  challengeResponse,
+  decodeSignatureHeader,
+  orderIdFromNotification,
+  verifyEbayNotification,
+} from "@/lib/usa-lots/notifications";
+import { ingestNotifiedOrder } from "@/lib/usa-lots/sync-step";
+import { holdSaleNotice } from "@/lib/usa-lots/store";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
-function orderIdFrom(body: unknown): { orderId: string; topic: string } {
-  if (!body || typeof body !== "object") return { orderId: "", topic: "" };
-  const record = body as Record<string, unknown>;
-  const topic = String(record.metadata && typeof record.metadata === "object" ? (record.metadata as { topic?: unknown }).topic ?? "" : record.topic ?? "");
-  const data = record.notification && typeof record.notification === "object" ? record.notification as Record<string, unknown> : record;
-  const nested = data.data && typeof data.data === "object" ? data.data as Record<string, unknown> : data;
-  const order = nested.order && typeof nested.order === "object" ? nested.order as { orderId?: unknown } : null;
-  const raw = String(order?.orderId ?? nested.orderId ?? "");
-  const orderId = /^[A-Za-z0-9-]{6,64}$/.test(raw) ? raw : "";
-  return { orderId, topic: topic.slice(0, 80) };
+const keys = new Map<string, string>();
+
+async function publicKey(kid: string): Promise<string> {
+  const cached = keys.get(kid);
+  if (cached) return cached;
+  const url = `https://api.ebay.com/commerce/notification/v1/public_key/${encodeURIComponent(kid)}`;
+  let response = await fetch(url, { headers: { Accept: "application/json" } });
+  if ((response.status === 401 || response.status === 403) && isEbayConfigured()) {
+    const creds = getEbayCreds();
+    const tokenResponse = await fetch(EBAY_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: basicAuthHeader(creds),
+      },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        scope: "https://api.ebay.com/oauth/api_scope",
+      }),
+    });
+    const tokenBody = await tokenResponse.json().catch(() => null) as { access_token?: string } | null;
+    if (tokenBody?.access_token) {
+      response = await fetch(url, { headers: { Accept: "application/json", Authorization: `Bearer ${tokenBody.access_token}` } });
+    }
+  }
+  if (!response.ok) return "";
+  const body = await response.json().catch(() => null) as { key?: string } | null;
+  const key = String(body?.key ?? "");
+  if (key) keys.set(kid, key);
+  return key;
 }
 
 export async function GET(req: NextRequest) {
@@ -26,24 +54,36 @@ export async function GET(req: NextRequest) {
     }, { status: 503 });
   }
   const endpoint = new URL("/api/ebay/notificaciones", req.nextUrl.origin).toString();
-  const challengeResponse = crypto.createHash("sha256").update(`${challenge}${token}${endpoint}`).digest("hex");
-  return NextResponse.json({ challengeResponse });
+  return NextResponse.json({ challengeResponse: challengeResponse(challenge, token, endpoint) });
 }
 
 export async function POST(req: NextRequest) {
+  const raw = await req.text();
+  const header = req.headers.get("x-ebay-signature") || "";
+  const decoded = decodeSignatureHeader(header);
+  if (!decoded) {
+    return NextResponse.json({ ok: false, error: "La notificación no trae una firma reconocible." }, { status: 412 });
+  }
+  const key = await publicKey(decoded.kid);
+  if (!key || !verifyEbayNotification(raw, header, key)) {
+    return NextResponse.json({ ok: false, error: "La firma de la notificación no es válida." }, { status: 412 });
+  }
   let body: unknown = null;
   try {
-    body = await req.json();
+    body = raw ? JSON.parse(raw) : null;
   } catch {
     return NextResponse.json({ ok: true, ignored: true });
   }
-  const notice = orderIdFrom(body);
+  const notice = orderIdFromNotification(body);
   if (!notice.orderId) return NextResponse.json({ ok: true, ignored: true });
   try {
-    await enqueueSaleNotice(notice.orderId, notice.topic || "order");
+    const result = await ingestNotifiedOrder(notice.orderId);
+    if (result === "unpaid" || result === "retry" || result === "missing") {
+      await holdSaleNotice(notice.orderId, notice.topic || "order");
+    }
   } catch (error) {
     console.error("[ebay] notificaciones", error);
-    return NextResponse.json({ ok: false, error: "No se pudo guardar la notificación para la siguiente sincronización." }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "No se pudo guardar la notificación." }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
 }

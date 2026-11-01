@@ -160,6 +160,25 @@ export default function LotsPage() {
     }
   };
 
+  const prepareNotifications = async () => {
+    setSyncing(true);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/lotes/notificaciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...accessHeaders() },
+        body: JSON.stringify({ workMode, clientId: clientId || null }),
+      });
+      const data = await response.json() as { ok?: boolean; error?: string; lines?: string[] };
+      if (!response.ok || data.ok === false) setError(data.error || "No se pudieron preparar las notificaciones.");
+      else setMessage((data.lines || []).join(" "));
+      await load(selected);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <main className="wrap">
       <header>
@@ -172,6 +191,9 @@ export default function LotsPage() {
         {statusLines.map((line) => <p key={line} className="note">{line}</p>)}
         <button type="button" className="btn btn-ghost" disabled={syncing} onClick={() => void sync()}>
           {syncing ? "Leyendo ventas…" : "Actualizar ventas de eBay"}
+        </button>
+        <button type="button" className="btn btn-ghost" disabled={syncing} onClick={() => void prepareNotifications()}>
+          Preparar notificaciones de eBay
         </button>
         {message ? <p className="note" role="status">{message}</p> : null}
         {error ? <p className="note note-error" role="alert">{error}</p> : null}

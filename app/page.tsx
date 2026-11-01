@@ -1280,7 +1280,7 @@ const archiveGroups = async (targets: ItemGroup[]) => {
     );
 
   const postGroup = useCallback(
-    async (groupId: string) => {
+    async (groupId: string, lotId?: string) => {
       if (guatemalaActiveRef.current) return;
       const group = groupsRef.current.find((g) => g.id === groupId);
       if (!group || !group.listing) return;
@@ -1363,18 +1363,23 @@ const archiveGroups = async (targets: ItemGroup[]) => {
         if (!data?.success) throw new Error(data?.error || "eBay rejected the listing.");
         const allWarnings = [...uploadWarnings, ...(data.warnings ?? [])];
         try {
+          const boundLot = (lotId || group.usaLotId || "").trim();
           const linkRes = await apiPost("/api/inventory/ebay-published", {
             workMode,
             clientId: workMode === "client" ? selectedClientId : null,
             sku: group.sku,
             ebayItemId: data.listingId,
             ebayTitle: group.listing.title,
+            lotId: boundLot,
+            jobId: group.id,
           });
-          const linkData = (await readJson(linkRes)) as { ok?: boolean };
+          const linkData = (await readJson(linkRes)) as { ok?: boolean; lotSaved?: boolean; lotError?: string };
           if (!linkData?.ok) {
             allWarnings.push(
               "Posted to eBay, but the SKU link for sale alerts was not saved."
             );
+          } else if (boundLot && linkData.lotSaved === false) {
+            allWarnings.push(linkData.lotError || "Posted to eBay, but the purchase lot was not saved.");
           }
         } catch {
           allWarnings.push("Posted to eBay, but the SKU link for sale alerts was not saved.");
@@ -1386,6 +1391,7 @@ const archiveGroups = async (targets: ItemGroup[]) => {
                   ...g,
                   postStatus: "posted",
                   listingId: data!.listingId,
+                  usaLotId: (lotId || g.usaLotId || "").trim() || g.usaLotId,
                   postWarnings: allWarnings.length ? allWarnings : undefined,
                 }
               : g
@@ -2128,6 +2134,13 @@ const draftAll = async () => {
           onRenameSku={renameSku}
           onRetry={writeGroup}
           onPost={postGroup}
+          onRememberLot={(ids, lot) => {
+            setGroups((prev) => {
+              const next = prev.map((group) => (ids.includes(group.id) ? { ...group, usaLotId: lot } : group));
+              groupsRef.current = next;
+              return next;
+            });
+          }}
           onDraft={draftGroup}
           onReorderPhoto={reorderPhoto}
           onRemovePhoto={removePhoto}

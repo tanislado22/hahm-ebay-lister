@@ -55,7 +55,8 @@ interface ListingsViewProps {
   onEdit: (groupId: string, patch: Partial<ListingResult>) => void;
   onRenameSku: (groupId: string, sku: string) => void;
   onRetry: (groupId: string) => void;
-  onPost: (groupId: string) => void;
+  onPost: (groupId: string, lotId?: string) => void;
+  onRememberLot?: (groupIds: string[], lotId: string) => void;
   onDraft: (groupId: string) => void;
 
 
@@ -88,6 +89,7 @@ export function ListingsView({
   onRenameSku,
   onRetry,
   onPost,
+  onRememberLot,
   onDraft,
   onReorderPhoto,
   onRemovePhoto,
@@ -266,7 +268,7 @@ export function ListingsView({
 
     if (
       window.confirm(
-        "Eliminar todo quita estos artículos del área de trabajo. No los guarda en el archivo y no borra el archivo ni sus fotos."
+        "Eliminar todo quita estos artículos del área de trabajo. No borra el archivo, las fotos ni el lote, el SKU y el número de anuncio ya guardados."
       )
     ) {
 
@@ -297,7 +299,9 @@ export function ListingsView({
             className="btn btn-ghost"
             disabled={!usaLotId || selectedLotIds.length === 0}
             onClick={() => {
-              const items = groups.filter((group) => selectedLotIds.includes(group.id)).map((group) => ({
+              const chosenIds = [...selectedLotIds];
+              const chosenLot = usaLotId;
+              const items = groups.filter((group) => chosenIds.includes(group.id)).map((group) => ({
                 sku: group.sku,
                 ebayItemId: group.listingId || "",
                 jobId: group.id,
@@ -307,15 +311,21 @@ export function ListingsView({
               void fetch("/api/lotes", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...accessHeaders() },
-                body: JSON.stringify({ action: "assign", ...params, lotId: usaLotId, items }),
+                body: JSON.stringify({ action: "assign", ...params, lotId: chosenLot, items }),
               }).then(async (response) => {
                 const data = await response.json() as { ok?: boolean; error?: string; assigned?: number };
-                setLotAssignNote(response.ok && data.ok ? `${data.assigned ?? 0} artículos quedaron en el lote.` : data.error || "No se pudo asignar el lote.");
+                if (response.ok && data.ok) {
+                  onRememberLot?.(chosenIds, chosenLot);
+                  setLotAssignNote(`${data.assigned ?? 0} artículos quedaron en el lote. Publicar guarda el número del anuncio; quitarlos del área de trabajo no borra ese vínculo.`);
+                } else {
+                  setLotAssignNote(data.error || "No se pudo asignar el lote.");
+                }
               }).catch(() => setLotAssignNote("No se pudo asignar el lote."));
             }}
           >
             Asignar seleccionados al lote
           </button>
+          <p className="note">Marca el artículo, elige su lote y publícalo. El SKU, el lote y el número del anuncio se quedan guardados si después limpias el área de trabajo. Una venta sin lote no entra en las cuentas de ningún lote.</p>
           {lotAssignNote ? <p className="note">{lotAssignNote}</p> : null}
         </div>
       ) : null}
@@ -331,7 +341,11 @@ export function ListingsView({
             onEdit={onEdit}
             onRenameSku={onRenameSku}
             onRetry={onRetry}
-            onPost={onPost}
+            onPost={(id) => {
+              const group = groups.find((item) => item.id === id);
+              const lot = group?.usaLotId || (selectedLotIds.includes(id) && usaLotId ? usaLotId : "");
+              onPost(id, lot);
+            }}
             onDraft={onDraft}
             onReorderPhoto={onReorderPhoto}
             onRemovePhoto={onRemovePhoto}

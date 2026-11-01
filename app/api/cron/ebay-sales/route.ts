@@ -23,7 +23,7 @@ async function handle(req: NextRequest) {
     const result = await runEbaySalesCheck();
     let lots: unknown = null;
     try {
-      lots = await advanceUsaSaleSync();
+      lots = await advanceUsaSaleSync({ source: "cron" });
     } catch (error) {
       console.error("[cron/ebay-sales] lots", error);
       lots = { ok: false, error: "No se pudo continuar la sincronización de lotes." };
