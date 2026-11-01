@@ -100,6 +100,8 @@ export default function Home() {
   // second batch from bin K31 gets K31-N… instead of colliding with K31-A.
   const [skuStart, setSkuStart] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [archiveNote, setArchiveNote] = useState<string | null>(null);
+  const [archiving, setArchiving] = useState(false);
   const [ebayConnected, setEbayConnected] = useState(false);
   const [vintedPreparing, setVintedPreparing] = useState(false);
   const [workMode, setWorkMode] = useState<"store" | "client">("store");
@@ -346,6 +348,7 @@ if (!selectedClientSaveReadyRef.current) {
 
 }, [workMode]);
   const jobsLoadedKeyRef = useRef<string | null>(null);
+  const skipJobSaveRef = useRef(new Set<string>());
 
   useEffect(() => {
 
@@ -562,6 +565,8 @@ setStep(
         try {
 
           for (const group of groups) {
+
+            if (skipJobSaveRef.current.has(group.id)) continue;
 
             const groupPhotos = photos.filter((photo) =>
 
@@ -1074,8 +1079,65 @@ const deleteAll = async () => {
 
 };
 
-
-
+const archiveGroups = async (targets: ItemGroup[]) => {
+  if (guatemalaActiveRef.current) return;
+  const published = targets.filter((group) => group.postStatus === "posted");
+  if (published.length === 0) {
+    setArchiveNote("No hay artículos publicados para archivar. Los pendientes se quedan en el área de trabajo.");
+    return;
+  }
+  setArchiving(true);
+  setArchiveNote(null);
+  try {
+    for (const group of published) {
+      const groupPhotos = photos
+        .filter((photo) => group.photoIds.includes(photo.id))
+        .map((photo) => ({ id: photo.id, mediaType: photo.mediaType, data: photo.data }));
+      const response = await fetch("/api/archivo/archivar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...accessHeaders() },
+        body: JSON.stringify({
+          workMode,
+          clientId: workMode === "client" ? selectedClientId : null,
+          group,
+          photos: groupPhotos,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string; id?: string };
+      if (!response.ok || !data.ok || !data.id) {
+        setArchiveNote(data.error || "No se pudo guardar en el archivo. El artículo sigue en el área de trabajo.");
+        return;
+      }
+      skipJobSaveRef.current.add(group.id);
+      const removed = await fetch("/api/jobs", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", ...accessHeaders() },
+        body: JSON.stringify({ id: group.id }),
+      });
+      if (!removed.ok) {
+        skipJobSaveRef.current.delete(group.id);
+        await fetch("/api/archivo/archivar", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...accessHeaders() },
+          body: JSON.stringify({ id: data.id, hidden: false }),
+        }).catch(() => undefined);
+        setArchiveNote("Se guardó en el archivo, pero no se pudo quitar del área de trabajo. Sigue visible.");
+        return;
+      }
+      groupsRef.current = groupsRef.current.filter((item) => item.id !== group.id);
+      setGroups((prev) => prev.filter((item) => item.id !== group.id));
+    }
+    setArchiveNote(
+      published.length === 1
+        ? "Artículo archivado. Sigue guardado en Archivo de artículos."
+        : `${published.length} artículos archivados. Siguen guardados en Archivo de artículos.`
+    );
+  } catch {
+    setArchiveNote("No se pudo guardar en el archivo. El artículo sigue en el área de trabajo.");
+  } finally {
+    setArchiving(false);
+  }
+};
 
   const addGroup = () =>
     setGroups((prev) => [
@@ -1561,6 +1623,18 @@ const draftAll = async () => {
             <a href="/vinted/inventory">Inventario Vinted</a>
             {" · "}
             <a href="/ebay/vinculos">Actualizar vínculos de eBay</a>
+            {" · "}
+            <a
+              href={
+                workMode === "client" &&
+                selectedClientId &&
+                !clients.some((client) => client.id === selectedClientId && client.market === "guatemala")
+                  ? `/archivo?workMode=client&clientId=${encodeURIComponent(selectedClientId)}`
+                  : "/archivo"
+              }
+            >
+              Archivo de artículos
+            </a>
           </p>
         </div>
       </header>
@@ -2057,6 +2131,13 @@ const draftAll = async () => {
           onRemovePhoto={removePhoto}
           onDelete={deleteGroup}
           onDeleteAll={deleteAll}
+          onArchive={(groupId) => {
+            const group = groupsRef.current.find((item) => item.id === groupId);
+            if (group) void archiveGroups([group]);
+          }}
+          onArchivePublished={() => void archiveGroups(groupsRef.current)}
+          archiveNote={archiveNote}
+          archiving={archiving}
 
 
           onPostAll={postAll}

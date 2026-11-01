@@ -62,6 +62,10 @@ interface ListingsViewProps {
   onRemovePhoto: (photoId: string) => void;
   onDelete: (groupId: string) => void;
   onDeleteAll: () => void;
+  onArchive?: (groupId: string) => void;
+  onArchivePublished?: () => void;
+  archiveNote?: string | null;
+  archiving?: boolean;
   onPostAll: () => void;
   onDraftAll: () => void;
   onSoldCompsAll: () => void;
@@ -88,6 +92,10 @@ export function ListingsView({
   onRemovePhoto,
   onDelete,
   onDeleteAll,
+  onArchive,
+  onArchivePublished,
+  archiveNote,
+  archiving = false,
   onPostAll,
   onDraftAll,
   onSoldCompsAll,
@@ -208,15 +216,42 @@ export function ListingsView({
         </a>
       </div>
       )}
+{!guatemala && onArchivePublished ? (
+  <button
+    type="button"
+    className="btn btn-ghost"
+    disabled={posted === 0 || archiving}
+    onClick={() => {
+      if (
+        window.confirm(
+          "Archivar quita del área de trabajo solo los artículos ya publicados y los guarda en el archivo. No los elimina y no modifica los anuncios en eBay. Los que siguen pendientes se quedan aquí."
+        )
+      ) {
+        onArchivePublished();
+      }
+    }}
+  >
+    {archiving ? "Archivando…" : "Archivar publicados"}
+  </button>
+) : null}
+{archiveNote ? (
+  <p className="note" role="status">
+    {archiveNote}
+  </p>
+) : null}
 <button
 
   type="button"
 
-  className="btn btn-ghost"
+  className="btn btn-ghost danger"
 
   onClick={() => {
 
-    if (window.confirm("Delete ALL items permanently?")) {
+    if (
+      window.confirm(
+        "Eliminar todo quita estos artículos del área de trabajo. No los guarda en el archivo y no borra el archivo ni sus fotos."
+      )
+    ) {
 
       onDeleteAll();
 
@@ -224,7 +259,7 @@ export function ListingsView({
 
   }}
 
-  disabled={groups.length === 0}
+  disabled={groups.length === 0 || archiving}
 
 >
 
@@ -246,6 +281,7 @@ export function ListingsView({
             onReorderPhoto={onReorderPhoto}
             onRemovePhoto={onRemovePhoto}
             onDelete={onDelete}
+            onArchive={onArchive}
             onPrepareVinted={onPrepareVinted}
             onMarkVintedPublished={onMarkVintedPublished}
             guatemala={guatemala}

@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { ensureInventoryTables, getSql } from "@/lib/db";
 import type { SalePlatform } from "@/lib/telegram/message";
 import { sendTelegramSale } from "@/lib/telegram/send";
-import { saleNoticeIsDuplicate } from "@/lib/telegram/sale-links";
+import { listingUrlForPlatform, saleNoticeIsDuplicate } from "@/lib/telegram/sale-links";
 import { findVerifiedVintedUrl } from "@/lib/vinted/inventory-store";
 
 export type TelegramDelivery = "sent" | "duplicate" | "failed" | "missing";
@@ -167,6 +167,7 @@ export async function deliverConfirmedSale(input: {
   sku: string;
   title: string;
   listingUrl?: string | null;
+  vintedUrl?: string | null;
 }): Promise<TelegramDelivery> {
   const sku = input.sku.trim();
   const title = input.title.trim();
@@ -186,7 +187,9 @@ export async function deliverConfirmedSale(input: {
   if (claim.action === "done") return "duplicate";
 
   try {
-    const vintedUrl = input.platform === "vinted" || !sku ? null : await findVerifiedVintedUrl(sku).catch(() => null);
+    const verified = input.platform === "vinted" || !sku ? null : await findVerifiedVintedUrl(sku).catch(() => null);
+    const stored = input.vintedUrl ? listingUrlForPlatform("vinted", input.vintedUrl) : null;
+    const vintedUrl = verified || stored;
     const links = input.platform === "vinted"
       ? { listingUrl: input.listingUrl }
       : { listingUrl: input.listingUrl, url: vintedUrl };

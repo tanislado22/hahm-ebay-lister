@@ -200,4 +200,96 @@ async function migrate(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+
+  // Permanent article file. Separate from jobs: Delete All only removes workspace
+  // rows, and these tables have no foreign key back to jobs.
+  await sql`
+    CREATE TABLE IF NOT EXISTS article_archive (
+      id TEXT PRIMARY KEY,
+      account_key TEXT NOT NULL,
+      ebay_user_id TEXT NOT NULL DEFAULT '',
+      ebay_item_id TEXT NOT NULL DEFAULT '',
+      sku TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      price TEXT NOT NULL DEFAULT '',
+      currency TEXT NOT NULL DEFAULT '',
+      ebay_url TEXT NOT NULL DEFAULT '',
+      listing_status TEXT NOT NULL DEFAULT '',
+      quantity_sold INTEGER,
+      variants JSONB NOT NULL DEFAULT '[]',
+      vinted_listing_url TEXT NOT NULL DEFAULT '',
+      vinted_listing_id TEXT NOT NULL DEFAULT '',
+      vinted_title TEXT NOT NULL DEFAULT '',
+      vinted_status TEXT NOT NULL DEFAULT '',
+      source_job_id TEXT NOT NULL DEFAULT '',
+      workspace_group JSONB,
+      workspace_hidden BOOLEAN NOT NULL DEFAULT FALSE,
+      origin TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS article_archive_account_item_idx
+    ON article_archive (account_key, ebay_item_id)
+    WHERE ebay_item_id <> ''
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS article_archive_user_item_idx
+    ON article_archive (ebay_user_id, ebay_item_id)
+    WHERE ebay_user_id <> '' AND ebay_item_id <> ''
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS article_archive_account_updated_idx
+    ON article_archive (account_key, updated_at DESC)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS article_archive_source_job_idx
+    ON article_archive (account_key, source_job_id)
+    WHERE source_job_id <> ''
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS article_archive_photos (
+      id TEXT PRIMARY KEY,
+      article_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      source TEXT NOT NULL,
+      media_type TEXT NOT NULL DEFAULT '',
+      bytes TEXT NOT NULL DEFAULT '',
+      thumb_bytes TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL DEFAULT '',
+      thumb_url TEXT NOT NULL DEFAULT ''
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS article_archive_photos_article_idx
+    ON article_archive_photos (article_id, position)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS article_import_runs (
+      id TEXT PRIMARY KEY,
+      account_key TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      ebay_user_id TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      list_page INTEGER NOT NULL DEFAULT 0,
+      total_pages INTEGER,
+      total_entries INTEGER,
+      list_complete BOOLEAN NOT NULL DEFAULT FALSE,
+      found INTEGER NOT NULL DEFAULT 0,
+      imported INTEGER NOT NULL DEFAULT 0,
+      existing_count INTEGER NOT NULL DEFAULT 0,
+      error_count INTEGER NOT NULL DEFAULT 0,
+      errors JSONB NOT NULL DEFAULT '[]',
+      notices JSONB NOT NULL DEFAULT '[]',
+      pending_ids JSONB NOT NULL DEFAULT '[]',
+      failed_ids JSONB NOT NULL DEFAULT '[]',
+      attempts JSONB NOT NULL DEFAULT '{}',
+      detail TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (account_key, mode)
+    )
+  `;
 }

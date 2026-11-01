@@ -84,6 +84,7 @@ interface ListingCardProps {
   onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
 onRemovePhoto: (photoId: string) => void;
 onDelete: (groupId: string) => void;
+onArchive?: (groupId: string) => void;
 onPrepareVinted: (groupId: string, sku: string) => void;
 onMarkVintedPublished: (groupId: string, url: string) => void;
 guatemala?: boolean;
@@ -102,6 +103,7 @@ export function ListingCard({
   onReorderPhoto,
   onRemovePhoto,
   onDelete,
+  onArchive,
   onPrepareVinted,
   onMarkVintedPublished,
   guatemala = false,
@@ -1400,15 +1402,38 @@ const keyword = [
           )}
         </div>
       )}
+      {!guatemala && group.postStatus === "posted" && onArchive ? (
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => {
+            if (
+              window.confirm(
+                "Archivar guarda el artículo en el archivo y lo quita del área de trabajo. No lo elimina y no modifica el anuncio en eBay."
+              )
+            ) {
+              onArchive(group.id);
+            }
+          }}
+        >
+          Archivar
+        </button>
+      ) : null}
       <button
 
   type="button"
 
-  className="btn btn-ghost"
+  className="btn btn-ghost danger"
 
   onClick={() => {
 
-    if (window.confirm("Delete this item permanently?")) {
+    if (
+      window.confirm(
+        guatemala
+          ? "¿Eliminar esta prenda del área de trabajo?"
+          : "Eliminar quita este artículo del área de trabajo. No lo guarda en el archivo."
+      )
+    ) {
 
       onDelete(group.id);
 
@@ -1418,7 +1443,7 @@ const keyword = [
 
 >
 
-  {guatemala ? "Eliminar" : "🗑️ Delete"}
+  {guatemala ? "Eliminar" : "🗑️ Eliminar"}
 
 </button>
     </article>

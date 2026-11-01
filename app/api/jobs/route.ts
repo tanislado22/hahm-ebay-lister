@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { neon } from "@neondatabase/serverless";
+import { archivedJobIsHidden } from "@/lib/archive/store";
 
 function getSql() {
 
@@ -178,6 +179,14 @@ export async function POST(request: Request) {
 
     const sql = await ensureJobsTable();
 
+    try {
+      if (await archivedJobIsHidden(id)) {
+        return NextResponse.json({ success: true, archived: true });
+      }
+    } catch (error) {
+      console.error("POST /api/jobs archive hold", error);
+    }
+
     await sql`
 
       INSERT INTO jobs (id, work_mode, client_id, data, updated_at)
@@ -237,6 +246,7 @@ export async function DELETE(request: Request) {
 
     const sql = await ensureJobsTable();
 
+    // Workspace only. Archived articles and their photos live in article_archive.
     await sql`
 
       DELETE FROM jobs

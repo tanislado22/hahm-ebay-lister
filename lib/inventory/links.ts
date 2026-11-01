@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { findArchivedListingForSale } from "@/lib/archive/store";
 import { ensureInventoryTables, getSql } from "@/lib/db";
 import type { VintedPrepared } from "@/lib/vinted/prepare";
 import type { VintedStatus } from "@/lib/types";
@@ -346,5 +347,5 @@ export async function findListingForEbaySale(
     if (rows.length > 1) return { kind: "ambiguous" };
   }
 
-  return { kind: "none" };
+  return findArchivedListingForSale(workspaceKey, cleanSku, cleanItemId);
 }

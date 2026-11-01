@@ -69,6 +69,7 @@ export async function runEbaySalesCheck(): Promise<EbaySalesCheckResult> {
           line.sku,
           line.legacyItemId
         );
+        const row = lookup.kind === "one" ? lookup.row : null;
         try {
           const notice = ebaySaleNotice(line, lookup);
           if (notice && !isNewTelegramSale(line.createdAt)) {
@@ -85,6 +86,7 @@ export async function runEbaySalesCheck(): Promise<EbaySalesCheckResult> {
               sku: notice.sku,
               title: notice.title,
               listingUrl: ebayItemUrl(line.legacyItemId),
+              vintedUrl: row?.vintedListingUrl,
             });
             if (delivery === "sent") result.telegramSent += 1;
             else if (delivery === "duplicate") result.telegramDuplicate += 1;
@@ -98,7 +100,6 @@ export async function runEbaySalesCheck(): Promise<EbaySalesCheckResult> {
           result.errors.push(`${externalEventId}: Telegram failed`);
           console.error("[ebay-sales] telegram", externalEventId, error);
         }
-        const row = lookup.kind === "one" ? lookup.row : null;
         const decision = decideEbaySale({
           cancelled: line.cancelled,
           lookup: lookup.kind,
