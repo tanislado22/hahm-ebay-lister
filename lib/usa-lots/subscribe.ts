@@ -1,3 +1,5 @@
+import { basicAuthHeader, EBAY_TOKEN_URL, getEbayCreds, isEbayConfigured } from "@/lib/ebay/config";
+import { continuationFrom, describeEbayFailure, ebayAuthRejected, notificationCollectionUrl } from "@/lib/usa-lots/notify-api";
 import { notificationTokenReady, topicsForSales } from "@/lib/usa-lots/notifications";
 
 const NOTIFICATION_API = "https://api.ebay.com/commerce/notification/v1";
@@ -9,11 +11,6 @@ interface TopicChoice {
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
-}
-
-function safeText(text: string, token: string): string {
-  const hidden = token ? text.split(token).join("[token]") : text;
-  return hidden.replace(/\s+/g, " ").slice(0, 240);
 }
 
 async function ebayJson(token: string, method: string, url: string, body?: unknown): Promise<{ status: number; body: unknown; text: string }> {
@@ -41,7 +38,7 @@ function topicsFrom(body: unknown): TopicChoice[] {
   return topics.flatMap((entry) => {
     const topic = record(entry);
     const id = String(topic?.topicId ?? "").trim();
-    if (!id) return [];
+    if (!id || String(topic?.status ?? "ENABLED").toUpperCase() === "DISABLED") return [];
     const payloads = Array.isArray(topic?.supportedPayloads) ? topic.supportedPayloads : [];
     const first = record(payloads[0]);
     const schemaVersion = String(first?.schemaVersion ?? "1.0").trim() || "1.0";
@@ -92,19 +89,10 @@ export async function subscribeSaleNotifications(input: {
     };
   }
 
-  const listed = await ebayJson(input.token, "GET", `${NOTIFICATION_API}/topic?limit=200`);
-  if (listed.status === 401 || listed.status === 403) {
-    return {
-      ok: false,
-      lines: [],
-      error: "eBay rechazó la consulta de eventos. Activa commerce.notification.subscription en la aplicación y vuelve a autorizar la cuenta. No se creó la suscripción.",
-    };
-  }
-  if (listed.status < 200 || listed.status >= 300) {
-    return { ok: false, lines: [], error: `eBay no entregó la lista oficial de eventos (${listed.status}).` };
-  }
+  const listed = await readTopics(input.token, input.verificationToken);
+  if (!listed.ok) return { ok: false, lines: [], error: listed.error };
 
-  const available = topicsFrom(listed.body);
+  const available = listed.topics;
   const wanted = new Set(topicsForSales(available.map((topic) => topic.id)));
   const chosen = available.filter((topic) => wanted.has(topic.id));
   const lines = [
@@ -118,7 +106,7 @@ export async function subscribeSaleNotifications(input: {
   lines.push("Cancelaciones y reembolsos se actualizan en la misma venta cuando el pedido los trae. Si eBay no publica un evento para ellos, la consulta periódica es la que los recoge.");
   if (!chosen.length) return { ok: true, lines };
 
-  const currentDestinations = await ebayJson(input.token, "GET", `${NOTIFICATION_API}/destination?limit=100`);
+  const currentDestinations = await ebayJson(input.token, "GET", notificationCollectionUrl("destination"));
   let destinationId = destinationIdFor(currentDestinations.body, input.endpoint);
   if (!destinationId) {
     const created = await ebayJson(input.token, "POST", `${NOTIFICATION_API}/destination`, {
@@ -131,19 +119,19 @@ export async function subscribeSaleNotifications(input: {
     });
     destinationId = String(record(created.body)?.destinationId ?? "");
     if (!destinationId) {
-      const again = await ebayJson(input.token, "GET", `${NOTIFICATION_API}/destination?limit=100`);
+      const again = await ebayJson(input.token, "GET", notificationCollectionUrl("destination"));
       destinationId = destinationIdFor(again.body, input.endpoint);
     }
     if (!destinationId) {
       return {
         ok: false,
         lines,
-        error: `No se pudo registrar el destino de notificaciones. ${safeText(created.text, input.verificationToken)}`,
+        error: `No se pudo registrar el destino de notificaciones. ${describeEbayFailure(created.status, created.body, [input.verificationToken, input.token])}`,
       };
     }
   }
 
-  const currentSubscriptions = await ebayJson(input.token, "GET", `${NOTIFICATION_API}/subscription?limit=200`);
+  const currentSubscriptions = await ebayJson(input.token, "GET", notificationCollectionUrl("subscription"));
   const already = subscribedTopics(currentSubscriptions.body, destinationId);
   const createdTopics: string[] = [];
   for (const topic of chosen) {
@@ -162,12 +150,59 @@ export async function subscribeSaleNotifications(input: {
       return {
         ok: false,
         lines,
-        error: `No se pudo suscribir ${topic.id}. ${safeText(created.text, input.verificationToken)}`,
+        error: `No se pudo suscribir ${topic.id}. ${describeEbayFailure(created.status, created.body, [input.verificationToken, input.token])}`,
       };
     }
     createdTopics.push(topic.id);
   }
   lines.push(createdTopics.length ? `Suscripciones creadas: ${createdTopics.join(", ")}.` : "Esas suscripciones ya existían. No se duplicaron.");
-  lines.push("eBay validará el destino con el reto SHA-256. La firma de cada aviso se comprueba antes de registrar una venta.");
+  lines.push(`Destino registrado: ${input.endpoint}. eBay lo valida con el reto SHA-256 contra esa misma dirección.`);
   return { ok: true, lines };
+}
+
+async function applicationToken(): Promise<string> {
+  if (!isEbayConfigured()) return "";
+  const creds = getEbayCreds();
+  const response = await fetch(EBAY_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: basicAuthHeader(creds),
+    },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      scope: "https://api.ebay.com/oauth/api_scope",
+    }),
+  });
+  if (!response.ok) return "";
+  const body = await response.json().catch(() => null) as { access_token?: string } | null;
+  return body?.access_token ?? "";
+}
+
+async function readTopics(userToken: string, verificationToken: string): Promise<{ ok: true; topics: TopicChoice[] } | { ok: false; error: string }> {
+  const first = await readTopicPages(userToken);
+  if (first.ok) return first;
+  if (!ebayAuthRejected(first.status, first.body)) {
+    return { ok: false, error: `eBay no entregó la lista oficial de eventos. ${describeEbayFailure(first.status, first.body, [verificationToken, userToken])}` };
+  }
+  const appToken = await applicationToken();
+  if (!appToken) {
+    return { ok: false, error: `eBay rechazó la consulta de eventos. ${describeEbayFailure(first.status, first.body, [verificationToken, userToken])}` };
+  }
+  const second = await readTopicPages(appToken);
+  if (second.ok) return second;
+  return { ok: false, error: `eBay no entregó la lista oficial de eventos. ${describeEbayFailure(second.status, second.body, [verificationToken, userToken, appToken])}` };
+}
+
+async function readTopicPages(token: string): Promise<{ ok: true; topics: TopicChoice[] } | { ok: false; status: number; body: unknown }> {
+  const topics: TopicChoice[] = [];
+  let continuation = "";
+  for (let page = 0; page < 5; page += 1) {
+    const listed = await ebayJson(token, "GET", notificationCollectionUrl("topic", continuation));
+    if (listed.status < 200 || listed.status >= 300) return { ok: false, status: listed.status, body: listed.body };
+    topics.push(...topicsFrom(listed.body));
+    continuation = continuationFrom(listed.body);
+    if (!continuation) return { ok: true, topics };
+  }
+  return { ok: true, topics };
 }

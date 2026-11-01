@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { basicAuthHeader, EBAY_TOKEN_URL, getEbayCreds, isEbayConfigured } from "@/lib/ebay/config";
+import { notificationEndpoint } from "@/lib/usa-lots/notify-api";
 import {
   challengeResponse,
   decodeSignatureHeader,
@@ -53,8 +54,14 @@ export async function GET(req: NextRequest) {
       error: "Falta EBAY_NOTIFICATION_VERIFICATION_TOKEN. Sin esa variable eBay no puede verificar el destino de notificaciones.",
     }, { status: 503 });
   }
-  const endpoint = new URL("/api/ebay/notificaciones", req.nextUrl.origin).toString();
-  return NextResponse.json({ challengeResponse: challengeResponse(challenge, token, endpoint) });
+  const destination = notificationEndpoint({
+    productionHost: process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    requestOrigin: req.nextUrl.origin,
+  });
+  if ("error" in destination) {
+    return NextResponse.json({ ok: false, error: destination.error }, { status: 503 });
+  }
+  return NextResponse.json({ challengeResponse: challengeResponse(challenge, token, destination.endpoint) });
 }
 
 export async function POST(req: NextRequest) {

@@ -4,6 +4,7 @@ import { archiveAccountKey } from "@/lib/archive/workspace";
 import { listEbayConnections } from "@/lib/ebay/client-connections";
 import { accessTokenFromCookie } from "@/lib/ebay/session";
 import { clientIsGuatemala } from "@/lib/markets/client-market";
+import { notificationEndpoint } from "@/lib/usa-lots/notify-api";
 import { subscribeSaleNotifications } from "@/lib/usa-lots/subscribe";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "El inventario de Guatemala no recibe estas notificaciones." }, { status: 400 });
   }
   const verificationToken = process.env.EBAY_NOTIFICATION_VERIFICATION_TOKEN || "";
-  const endpoint = new URL("/api/ebay/notificaciones", req.nextUrl.origin).toString();
+  const destination = notificationEndpoint({
+    productionHost: process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    requestOrigin: req.nextUrl.origin,
+  });
+  if ("error" in destination) return NextResponse.json({ ok: false, error: destination.error }, { status: 400 });
+  const endpoint = destination.endpoint;
   try {
     const connections = await listEbayConnections();
     const connection = connections.find((item) => item.connectionKey === accountKey);
@@ -34,6 +40,7 @@ export async function POST(req: NextRequest) {
     const token = await accessTokenFromCookie(connection.sealedConnection);
     if (!token) return NextResponse.json({ ok: false, error: "No se pudo renovar el acceso a eBay." }, { status: 400 });
     const result = await subscribeSaleNotifications({ token, endpoint, verificationToken });
+    if (!result.ok) console.error("[lotes] notificaciones", result.error);
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   } catch (error) {
     console.error("[lotes] notificaciones", error);

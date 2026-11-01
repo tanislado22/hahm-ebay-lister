@@ -4,6 +4,8 @@ import { exactSku } from "@/lib/archive/text";
 import { EBAY_SCOPES } from "@/lib/ebay/config";
 import { feeFromTransactions } from "@/lib/usa-lots/finances";
 import { applyIncomingSale, lotForMatch, matchSaleToItem } from "@/lib/usa-lots/match";
+import { cronAuthorized } from "@/lib/ebay/cron-auth";
+import { describeEbayFailure, notificationCollectionUrl, notificationEndpoint } from "@/lib/usa-lots/notify-api";
 import { challengeResponse, topicsForSales, verifyEbayNotification } from "@/lib/usa-lots/notifications";
 import { isReadOnlyOrderRequest, parseFulfillmentOrders, saleLinesToStore } from "@/lib/usa-lots/parse-order";
 import { allocateSharedCents, applyAverageCosts, averageUnitCents, buildLotReport, saleProfit } from "@/lib/usa-lots/profit";
@@ -281,5 +283,30 @@ describe("USA purchase lots", () => {
     const pem = publicKey.export({ type: "spki", format: "pem" }).toString();
     expect(verifyEbayNotification(body, header, pem)).toBe(true);
     expect(verifyEbayNotification(`${body}x`, header, pem)).toBe(false);
+  });
+
+  test("asks eBay for at most 100 topics and keeps the lister as the notification host", () => {
+    const topics = new URL(notificationCollectionUrl("topic"));
+    expect(topics.pathname).toBe("/commerce/notification/v1/topic");
+    expect(Number(topics.searchParams.get("limit"))).toBeGreaterThanOrEqual(10);
+    expect(Number(topics.searchParams.get("limit"))).toBeLessThanOrEqual(100);
+    expect(notificationCollectionUrl("subscription", "next-page")).toContain("continuation_token=next-page");
+    const failure = describeEbayFailure(400, {
+      errors: [{ errorId: 195004, longMessage: "Invalid limit. Supported ranges 10 - 100. Token secreto-privado-de-prueba" }],
+    }, ["secreto-privado-de-prueba"]);
+    expect(failure).toContain("195004");
+    expect(failure).toContain("Invalid limit");
+    expect(failure).not.toContain("secreto-privado-de-prueba");
+    expect(notificationEndpoint({
+      productionHost: "www.variedadessanandres.com",
+      requestOrigin: "https://hahm-ebay-lister-ebay-lister3.vercel.app",
+    })).toEqual({ endpoint: "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones" });
+    expect(notificationEndpoint({
+      productionHost: "hahm-ebay-lister-ebay-lister3.vercel.app",
+      requestOrigin: "https://www.variedadessanandres.com",
+    })).toEqual({ endpoint: "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones" });
+    expect(cronAuthorized(null, null, "")).toBe(false);
+    expect(cronAuthorized("Bearer cron-de-prueba", null, "cron-de-prueba")).toBe(true);
+    expect(cronAuthorized("Bearer otro", null, "cron-de-prueba")).toBe(false);
   });
 });
