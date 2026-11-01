@@ -1,5 +1,5 @@
 import { readEbayAccountEmail } from "@/lib/archive/ebay-read";
-import { basicAuthHeader, EBAY_TOKEN_URL, getEbayCreds, isEbayConfigured } from "@/lib/ebay/config";
+import { basicAuthHeader, EBAY_SCOPES, EBAY_TOKEN_URL, getEbayCreds, isEbayConfigured } from "@/lib/ebay/config";
 import {
   continuationFrom,
   describeEbayFailure,
@@ -9,13 +9,15 @@ import {
   notificationConfigUrl,
   validAlertEmail,
 } from "@/lib/usa-lots/notify-api";
-import { notificationTokenReady, topicsForSales } from "@/lib/usa-lots/notifications";
+import { notificationTokenReady, PAID_SALE_TOPIC_IDS, selectPaidSaleTopics, type SaleTopicChoice } from "@/lib/usa-lots/notifications";
 
 const NOTIFICATION_API = "https://api.ebay.com/commerce/notification/v1";
 
-interface TopicChoice {
+interface StoredSubscription {
   id: string;
-  schemaVersion: string;
+  topicId: string;
+  destinationId: string;
+  status: string;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -99,40 +101,47 @@ async function createDestination(userToken: string, endpoint: string, verificati
   return { id: "", error: lastError };
 }
 
-function topicsFrom(body: unknown): TopicChoice[] {
+function topicsFrom(body: unknown): SaleTopicChoice[] {
   const topics = Array.isArray(record(body)?.topics) ? record(body)?.topics as unknown[] : [];
   return topics.flatMap((entry) => {
     const topic = record(entry);
     const id = String(topic?.topicId ?? "").trim();
-    if (!id || String(topic?.status ?? "ENABLED").toUpperCase() === "DISABLED") return [];
+    if (!id) return [];
     const payloads = Array.isArray(topic?.supportedPayloads) ? topic.supportedPayloads : [];
     const first = record(payloads[0]);
     const schemaVersion = String(first?.schemaVersion ?? "1.0").trim() || "1.0";
-    return [{ id, schemaVersion }];
+    const authorizationScopes = Array.isArray(topic?.authorizationScopes)
+      ? topic.authorizationScopes.map((scope) => String(scope).trim()).filter(Boolean)
+      : [];
+    return [{ id, schemaVersion, authorizationScopes, status: String(topic?.status ?? "ENABLED") }];
   });
 }
 
-function destinationIdFor(body: unknown, endpoint: string): string {
+function destinationFor(body: unknown, endpoint: string): { id: string; status: string } {
   const destinations = Array.isArray(record(body)?.destinations) ? record(body)?.destinations as unknown[] : [];
   for (const entry of destinations) {
     const destination = record(entry);
     const config = record(destination?.deliveryConfig);
-    if (String(config?.endpoint ?? "") === endpoint) return String(destination?.destinationId ?? "");
+    if (String(config?.endpoint ?? "") !== endpoint) continue;
+    return { id: String(destination?.destinationId ?? ""), status: String(destination?.status ?? "") };
   }
-  return "";
+  return { id: "", status: "" };
 }
 
-function subscribedTopics(body: unknown, destinationId: string): Set<string> {
+function subscriptionsFrom(body: unknown): StoredSubscription[] {
   const subscriptions = Array.isArray(record(body)?.subscriptions) ? record(body)?.subscriptions as unknown[] : [];
-  const ids = new Set<string>();
-  for (const entry of subscriptions) {
+  return subscriptions.flatMap((entry) => {
     const subscription = record(entry);
-    if (String(subscription?.destinationId ?? "") !== destinationId) continue;
-    if (String(subscription?.status ?? "ENABLED").toUpperCase() === "DISABLED") continue;
-    const id = String(subscription?.topicId ?? "").trim();
-    if (id) ids.add(id);
-  }
-  return ids;
+    const id = String(subscription?.subscriptionId ?? "").trim();
+    const topicId = String(subscription?.topicId ?? "").trim();
+    if (!id || !topicId) return [];
+    return [{
+      id,
+      topicId,
+      destinationId: String(subscription?.destinationId ?? ""),
+      status: String(subscription?.status ?? "ENABLED"),
+    }];
+  });
 }
 
 export async function subscribeSaleNotifications(input: {
@@ -158,32 +167,27 @@ export async function subscribeSaleNotifications(input: {
   const listed = await readTopics(input.token, input.verificationToken);
   if (!listed.ok) return { ok: false, lines: [], error: listed.error };
 
-  const available = listed.topics;
-  const wanted = new Set(topicsForSales(available.map((topic) => topic.id)));
-  const chosen = available.filter((topic) => wanted.has(topic.id));
-  const lines = [
-    chosen.length
-      ? `Eventos disponibles para esta integración: ${chosen.map((topic) => topic.id).join(", ")}.`
-      : "La lista oficial no incluye ORDER_CONFIRMATION ni un evento de cancelación, reembolso o devolución. Las ventas se leerán por la consulta periódica de pedidos.",
-  ];
-  if (!chosen.some((topic) => topic.id.toUpperCase() === "ORDER_CONFIRMATION")) {
-    lines.push("ORDER_CONFIRMATION no apareció en getTopics. No se inventó ese evento.");
-  }
-  lines.push("Cancelaciones y reembolsos se actualizan en la misma venta cuando el pedido los trae. Si eBay no publica un evento para ellos, la consulta periódica es la que los recoge.");
-  if (!chosen.length) return { ok: true, lines };
-
+  const decision = selectPaidSaleTopics(listed.topics, EBAY_SCOPES.split(/\s+/));
+  const lines = decisionLines(decision);
   const currentDestinations = await ebayJson(input.token, "GET", notificationCollectionUrl("destination"));
-  let destinationId = destinationIdFor(currentDestinations.body, input.endpoint);
-  if (!destinationId) {
+  if (currentDestinations.status < 200 || currentDestinations.status >= 300) {
+    return {
+      ok: false,
+      lines,
+      error: `No se pudo leer el destino de notificaciones. ${describeEbayFailure(currentDestinations.status, currentDestinations.body, [input.verificationToken, input.token])}`,
+    };
+  }
+  let destination = destinationFor(currentDestinations.body, input.endpoint);
+  if (!destination.id && decision.selected.length) {
     const prepared = await ensureAlertConfig(input.token, input.verificationToken);
     if (!prepared.ok) return { ok: false, lines, error: prepared.error };
     const created = await createDestination(input.token, input.endpoint, input.verificationToken);
-    destinationId = created.id;
-    if (!destinationId) {
+    destination = { id: created.id, status: "" };
+    if (!destination.id) {
       const again = await ebayJson(input.token, "GET", notificationCollectionUrl("destination"));
-      destinationId = destinationIdFor(again.body, input.endpoint);
+      destination = destinationFor(again.body, input.endpoint);
     }
-    if (!destinationId) {
+    if (!destination.id) {
       return {
         ok: false,
         lines,
@@ -192,22 +196,51 @@ export async function subscribeSaleNotifications(input: {
     }
     lines.push("eBay ya tiene la configuración de alertas que exige antes de aceptar un destino.");
   }
+  if (!destination.id) return { ok: true, lines };
 
-  const currentSubscriptions = await ebayJson(input.token, "GET", notificationCollectionUrl("subscription"));
-  const already = subscribedTopics(currentSubscriptions.body, destinationId);
+  const currentSubscriptions = await readSubscriptions(input.token);
+  if (!currentSubscriptions.ok) {
+    return {
+      ok: false,
+      lines,
+      error: `No se pudo leer las suscripciones existentes. ${describeEbayFailure(currentSubscriptions.status, currentSubscriptions.body, [input.verificationToken, input.token])}`,
+    };
+  }
+  const onDestination = currentSubscriptions.items.filter((item) => item.destinationId === destination.id);
+  const allowed = new Set<string>(PAID_SALE_TOPIC_IDS);
+  const removed: string[] = [];
+  const removeErrors: string[] = [];
+  for (const extra of onDestination) {
+    if (allowed.has(extra.topicId)) continue;
+    const deleted = await deleteSubscription(input.token, extra.id);
+    if (deleted.ok) removed.push(extra.topicId);
+    else removeErrors.push(`${extra.topicId}: ${describeEbayFailure(deleted.status, deleted.body, [input.verificationToken, input.token])}`);
+  }
+  if (removed.length) lines.push(`Se eliminaron suscripciones que no registran ventas pagadas: ${removed.join(", ")}.`);
+  if (removeErrors.length) lines.push(`No se pudieron eliminar estas suscripciones ajenas: ${removeErrors.join(" ")}`);
+
+  const payloadFor = (topic: SaleTopicChoice) => ({
+    topicId: topic.id,
+    status: "ENABLED",
+    destinationId: destination.id,
+    payload: {
+      format: "JSON",
+      schemaVersion: topic.schemaVersion,
+      deliveryProtocol: "HTTPS",
+    },
+  });
   const createdTopics: string[] = [];
-  for (const topic of chosen) {
-    if (already.has(topic.id)) continue;
-    const created = await ebayJson(input.token, "POST", `${NOTIFICATION_API}/subscription`, {
-      topicId: topic.id,
-      status: "ENABLED",
-      destinationId,
-      payload: {
-        format: "JSON",
-        schemaVersion: topic.schemaVersion,
-        deliveryProtocol: "HTTPS",
-      },
-    });
+  for (const topic of decision.selected) {
+    const existing = onDestination.find((item) => item.topicId === topic.id);
+    if (existing && existing.status.toUpperCase() !== "DISABLED") continue;
+    if (existing) {
+      const updated = await ebayJson(input.token, "PUT", `${NOTIFICATION_API}/subscription/${encodeURIComponent(existing.id)}`, payloadFor(topic));
+      if (updated.status >= 200 && updated.status < 300) {
+        createdTopics.push(topic.id);
+        continue;
+      }
+    }
+    const created = await ebayJson(input.token, "POST", `${NOTIFICATION_API}/subscription`, payloadFor(topic));
     if (created.status < 200 || created.status >= 300) {
       return {
         ok: false,
@@ -217,9 +250,27 @@ export async function subscribeSaleNotifications(input: {
     }
     createdTopics.push(topic.id);
   }
-  lines.push(createdTopics.length ? `Suscripciones creadas: ${createdTopics.join(", ")}.` : "Esas suscripciones ya existían. No se duplicaron.");
-  lines.push(`Destino registrado: ${input.endpoint}. eBay lo valida con el reto SHA-256 contra esa misma dirección.`);
+  if (decision.selected.length) {
+    lines.push(createdTopics.length ? `Suscripciones creadas: ${createdTopics.join(", ")}.` : "La suscripción de venta pagada ya existía. No se duplicó.");
+  }
+  const statusText = destination.status ? ` Estado del destino: ${destination.status}.` : "";
+  lines.push(`Destino registrado: ${input.endpoint}.${statusText} eBay lo valida con el reto SHA-256 contra esa misma dirección.`);
   return { ok: true, lines };
+}
+
+function decisionLines(decision: ReturnType<typeof selectPaidSaleTopics>): string[] {
+  const lines: string[] = [];
+  if (decision.selected.length) {
+    lines.push(`Evento de venta pagada autorizado para esta aplicación: ${decision.selected.map((topic) => topic.id).join(", ")}.`);
+  }
+  for (const id of decision.unavailable) {
+    lines.push(`${id} no está disponible en la lista oficial de esta aplicación. No se inventó. Las ventas pagadas se siguen leyendo en la consulta diaria de pedidos.`);
+  }
+  for (const item of decision.unauthorized) {
+    lines.push(`${item.id} aparece en la lista, pero esta aplicación no tiene permiso para suscribirlo. Falta: ${item.missingScopes.join(", ")}. Actívalo en el portal de desarrolladores de eBay y vuelve a autorizar la cuenta. No se creó esa suscripción.`);
+  }
+  lines.push("Solo se usa el identificador exacto ORDER_CONFIRMATION. No se elige ningún evento por coincidencia parcial del nombre. Cancelaciones y reembolsos se actualizan cuando la consulta diaria lee el pedido.");
+  return lines;
 }
 
 async function applicationToken(): Promise<string> {
@@ -241,7 +292,34 @@ async function applicationToken(): Promise<string> {
   return body?.access_token ?? "";
 }
 
-async function readTopics(userToken: string, verificationToken: string): Promise<{ ok: true; topics: TopicChoice[] } | { ok: false; error: string }> {
+async function readSubscriptions(token: string): Promise<{ ok: true; items: StoredSubscription[] } | { ok: false; status: number; body: unknown }> {
+  const items: StoredSubscription[] = [];
+  let continuation = "";
+  for (let page = 0; page < 5; page += 1) {
+    const listed = await ebayJson(token, "GET", notificationCollectionUrl("subscription", continuation));
+    if (listed.status < 200 || listed.status >= 300) return { ok: false, status: listed.status, body: listed.body };
+    items.push(...subscriptionsFrom(listed.body));
+    continuation = continuationFrom(listed.body);
+    if (!continuation) return { ok: true, items };
+  }
+  return { ok: true, items };
+}
+
+async function deleteSubscription(token: string, id: string): Promise<{ ok: true } | { ok: false; status: number; body: unknown }> {
+  const response = await ebayJson(token, "DELETE", `${NOTIFICATION_API}/subscription/${encodeURIComponent(id)}`);
+  if (response.status === 204 || response.status === 200 || response.status === 404) return { ok: true };
+  if (ebayAuthRejected(response.status, response.body)) {
+    const appToken = await applicationToken();
+    if (appToken) {
+      const again = await ebayJson(appToken, "DELETE", `${NOTIFICATION_API}/subscription/${encodeURIComponent(id)}`);
+      if (again.status === 204 || again.status === 200 || again.status === 404) return { ok: true };
+      return { ok: false, status: again.status, body: again.body };
+    }
+  }
+  return { ok: false, status: response.status, body: response.body };
+}
+
+async function readTopics(userToken: string, verificationToken: string): Promise<{ ok: true; topics: SaleTopicChoice[] } | { ok: false; error: string }> {
   const first = await readTopicPages(userToken);
   if (first.ok) return first;
   if (!ebayAuthRejected(first.status, first.body)) {
@@ -256,8 +334,8 @@ async function readTopics(userToken: string, verificationToken: string): Promise
   return { ok: false, error: `eBay no entregó la lista oficial de eventos. ${describeEbayFailure(second.status, second.body, [verificationToken, userToken, appToken])}` };
 }
 
-async function readTopicPages(token: string): Promise<{ ok: true; topics: TopicChoice[] } | { ok: false; status: number; body: unknown }> {
-  const topics: TopicChoice[] = [];
+async function readTopicPages(token: string): Promise<{ ok: true; topics: SaleTopicChoice[] } | { ok: false; status: number; body: unknown }> {
+  const topics: SaleTopicChoice[] = [];
   let continuation = "";
   for (let page = 0; page < 5; page += 1) {
     const listed = await ebayJson(token, "GET", notificationCollectionUrl("topic", continuation));

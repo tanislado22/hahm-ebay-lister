@@ -4,6 +4,7 @@ import { notificationEndpoint } from "@/lib/usa-lots/notify-api";
 import {
   challengeResponse,
   decodeSignatureHeader,
+  ORDER_CONFIRMATION_TOPIC,
   orderIdFromNotification,
   verifyEbayNotification,
 } from "@/lib/usa-lots/notifications";
@@ -82,6 +83,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, ignored: true });
   }
   const notice = orderIdFromNotification(body);
+  if (notice.topic && notice.topic !== ORDER_CONFIRMATION_TOPIC) return NextResponse.json({ ok: true, ignored: true });
   if (!notice.orderId) return NextResponse.json({ ok: true, ignored: true });
   try {
     const result = await ingestNotifiedOrder(notice.orderId);

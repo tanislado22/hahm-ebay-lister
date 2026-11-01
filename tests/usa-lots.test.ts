@@ -7,7 +7,7 @@ import { applyIncomingSale, lotForMatch, matchSaleToItem } from "@/lib/usa-lots/
 import { cronAuthorized } from "@/lib/ebay/cron-auth";
 import { describeEbayFailure, emailFromXml, needsNotificationConfig, notificationCollectionUrl, notificationConfigUrl, notificationEndpoint, validAlertEmail } from "@/lib/usa-lots/notify-api";
 import { subscribeSaleNotifications } from "@/lib/usa-lots/subscribe";
-import { challengeResponse, topicsForSales, verifyEbayNotification } from "@/lib/usa-lots/notifications";
+import { challengeResponse, selectPaidSaleTopics, verifyEbayNotification } from "@/lib/usa-lots/notifications";
 import { isReadOnlyOrderRequest, parseFulfillmentOrders, saleLinesToStore } from "@/lib/usa-lots/parse-order";
 import { allocateSharedCents, applyAverageCosts, averageUnitCents, buildLotReport, saleProfit } from "@/lib/usa-lots/profit";
 import { describeSaleSync, feeGapFromStatus, FINANCES_SCOPE, nextOrderWindow, NOTIFICATION_SCOPE } from "@/lib/usa-lots/sync-plan";
@@ -267,8 +267,26 @@ describe("USA purchase lots", () => {
     expect(feeFromTransactions({
       transactions: [{ transactionType: "SALE", orderId: "ORD-FEE", amount: { value: "18.00", currency: "USD" } }],
     }, "ORD-FEE").feeCents).toBeNull();
-    expect(topicsForSales(["ORDER_CONFIRMATION", "BUYER_QUESTION", "ORDER_CANCELLED"])).toEqual(["ORDER_CONFIRMATION", "ORDER_CANCELLED"]);
-    expect(topicsForSales(["BUYER_QUESTION"])).toEqual([]);
+    const granted = EBAY_SCOPES.split(/\s+/);
+    const topic = (id: string, authorizationScopes: string[] = [], status = "ENABLED") => ({ id, schemaVersion: "1.0", authorizationScopes, status });
+    const chosen = selectPaidSaleTopics([
+      topic("ORDER_CONFIRMATION", [NOTIFICATION_SCOPE]),
+      topic("LOAN_APPLICATION_CANCEL", [FINANCES_SCOPE]),
+      topic("ORDER_CANCELLED"),
+      topic("BUYER_QUESTION"),
+      topic("ITEM_PRICE_REFUND"),
+    ], granted);
+    expect(chosen.selected.map((item) => item.id)).toEqual(["ORDER_CONFIRMATION"]);
+    expect(chosen.unavailable).toEqual([]);
+    expect(chosen.unauthorized).toEqual([]);
+    const missing = selectPaidSaleTopics([topic("LOAN_APPLICATION_CANCEL"), topic("ORDER_CANCELLED")], granted);
+    expect(missing.selected).toEqual([]);
+    expect(missing.unavailable).toEqual(["ORDER_CONFIRMATION"]);
+    const blocked = selectPaidSaleTopics([
+      topic("ORDER_CONFIRMATION", ["https://api.ebay.com/oauth/api_scope/commerce.identity.readonly"]),
+    ], granted);
+    expect(blocked.selected).toEqual([]);
+    expect(blocked.unauthorized).toEqual([{ id: "ORDER_CONFIRMATION", missingScopes: ["https://api.ebay.com/oauth/api_scope/commerce.identity.readonly"] }]);
     expect(EBAY_SCOPES).toContain(FINANCES_SCOPE);
     expect(EBAY_SCOPES).toContain(NOTIFICATION_SCOPE);
     const endpoint = "https://example.com/api/ebay/notificaciones";
@@ -322,6 +340,7 @@ describe("USA purchase lots", () => {
 
   test("saves the eBay alert config before creating the destination and subscription", async () => {
     const calls: string[] = [];
+    const posted: string[] = [];
     const original = global.fetch;
     const previous = {
       id: process.env.EBAY_CLIENT_ID,
@@ -339,7 +358,15 @@ describe("USA purchase lots", () => {
       calls.push(`${method} ${url}`);
       const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
       if (url.includes("/identity/v1/oauth2/token")) return json({ access_token: "app-token-prueba", expires_in: 7200 });
-      if (url.includes("/topic")) return json({ topics: [{ topicId: "ORDER_CONFIRMATION", status: "ENABLED", supportedPayloads: [{ schemaVersion: "1.0" }] }] });
+      if (url.includes("/topic")) {
+        return json({
+          topics: [
+            { topicId: "LOAN_APPLICATION_CANCEL", status: "ENABLED", authorizationScopes: [FINANCES_SCOPE], supportedPayloads: [{ schemaVersion: "1.0" }] },
+            { topicId: "ORDER_CONFIRMATION", status: "ENABLED", authorizationScopes: [NOTIFICATION_SCOPE], supportedPayloads: [{ schemaVersion: "1.0" }] },
+            { topicId: "ORDER_CANCELLED", status: "ENABLED", supportedPayloads: [{ schemaVersion: "1.0" }] },
+          ],
+        });
+      }
       if (url.endsWith("/config") && method === "GET") return json({}, 404);
       if (url.endsWith("/config") && method === "PUT") return new Response(null, { status: 204 });
       if (url.includes("/ws/api.dll")) {
@@ -347,8 +374,16 @@ describe("USA purchase lots", () => {
       }
       if (url.includes("/destination") && method === "GET") return json({ destinations: [] });
       if (url.includes("/destination") && method === "POST") return json({ destinationId: "dest-1" }, 201);
-      if (url.includes("/subscription") && method === "GET") return json({ subscriptions: [] });
-      if (url.includes("/subscription") && method === "POST") return json({ subscriptionId: "sub-1" }, 201);
+      if (url.includes("/subscription/") && method === "DELETE") return new Response(null, { status: 204 });
+      if (url.includes("/subscription") && method === "GET") {
+        return json({
+          subscriptions: [{ subscriptionId: "sub-loan", topicId: "LOAN_APPLICATION_CANCEL", destinationId: "dest-1", status: "ENABLED" }],
+        });
+      }
+      if (url.includes("/subscription") && method === "POST") {
+        posted.push(String(init?.body ?? ""));
+        return json({ subscriptionId: "sub-1" }, 201);
+      }
       return json({ errors: [{ errorId: 1, message: "unexpected" }] }, 500);
     };
     try {
@@ -364,7 +399,17 @@ describe("USA purchase lots", () => {
       expect(configAt).toBeGreaterThanOrEqual(0);
       expect(destinationAt).toBeGreaterThan(configAt);
       expect(subscriptionAt).toBeGreaterThan(destinationAt);
-      if (result.ok) expect(result.lines.join(" ")).not.toContain("alertas@ejemplo.com");
+      expect(calls.some((call) => call.startsWith("DELETE ") && call.includes("/subscription/sub-loan"))).toBe(true);
+      expect(posted).toHaveLength(1);
+      expect(posted[0]).toContain("ORDER_CONFIRMATION");
+      expect(posted.join(" ")).not.toContain("LOAN_APPLICATION_CANCEL");
+      expect(posted.join(" ")).not.toContain("ORDER_CANCELLED");
+      if (result.ok) {
+        const text = result.lines.join(" ");
+        expect(text).not.toContain("alertas@ejemplo.com");
+        expect(text).toContain("ORDER_CONFIRMATION");
+        expect(text).toContain("LOAN_APPLICATION_CANCEL");
+      }
     } finally {
       global.fetch = original;
       process.env.EBAY_CLIENT_ID = previous.id;

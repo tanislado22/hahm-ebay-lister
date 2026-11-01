@@ -2,24 +2,44 @@ import crypto from "crypto";
 
 export const ORDER_CONFIRMATION_TOPIC = "ORDER_CONFIRMATION";
 
+export const PAID_SALE_TOPIC_IDS = [ORDER_CONFIRMATION_TOPIC] as const;
+
+export interface SaleTopicChoice {
+  id: string;
+  schemaVersion: string;
+  authorizationScopes: string[];
+  status: string;
+}
+
+export function selectPaidSaleTopics(topics: SaleTopicChoice[], grantedScopes: string[]): {
+  selected: SaleTopicChoice[];
+  unavailable: string[];
+  unauthorized: { id: string; missingScopes: string[] }[];
+} {
+  const granted = new Set(grantedScopes.map((scope) => scope.trim()).filter(Boolean));
+  const byId = new Map(topics.map((topic) => [topic.id, topic]));
+  const selected: SaleTopicChoice[] = [];
+  const unavailable: string[] = [];
+  const unauthorized: { id: string; missingScopes: string[] }[] = [];
+  for (const id of PAID_SALE_TOPIC_IDS) {
+    const topic = byId.get(id);
+    if (!topic || topic.status.toUpperCase() === "DISABLED") {
+      unavailable.push(id);
+      continue;
+    }
+    const missingScopes = topic.authorizationScopes.filter((scope) => !granted.has(scope));
+    if (missingScopes.length) unauthorized.push({ id, missingScopes });
+    else selected.push(topic);
+  }
+  return { selected, unavailable, unauthorized };
+}
+
 export function challengeResponse(challenge: string, token: string, endpoint: string): string {
   return crypto.createHash("sha256").update(`${challenge}${token}${endpoint}`).digest("hex");
 }
 
 export function notificationTokenReady(token: string): boolean {
   return /^[A-Za-z0-9_-]{32,80}$/.test(token);
-}
-
-export function topicsForSales(topicIds: string[]): string[] {
-  const seen = new Set<string>();
-  const selected: string[] = [];
-  for (const raw of topicIds) {
-    const id = raw.trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    if (id.toUpperCase() === ORDER_CONFIRMATION_TOPIC || /CANCEL|REFUND|RETURN/i.test(id)) selected.push(id);
-  }
-  return selected;
 }
 
 export function orderIdFromNotification(body: unknown): { orderId: string; topic: string } {
