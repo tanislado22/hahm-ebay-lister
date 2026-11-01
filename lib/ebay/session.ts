@@ -4,7 +4,7 @@
 // Short-lived access tokens are minted on demand from it, so nothing sensitive
 // is exposed to the browser and there's no database to manage.
 
-import { refreshAccessToken } from "./oauth";
+import { grantedScopesFrom, refreshAccessToken } from "./oauth";
 
 export const EBAY_COOKIE = "ebay_conn";
 export const EBAY_STATE_COOKIE = "ebay_oauth_state";
@@ -14,6 +14,7 @@ export const EBAY_COOKIE_MAX_AGE = 400 * 24 * 60 * 60;
 interface Connection {
   refreshToken: string;
   refreshExpiresAt: number; // epoch ms
+  grantedScopes?: string[];
 }
 
 async function aesKey(): Promise<CryptoKey> {
@@ -64,37 +65,63 @@ export async function openConnection(
     const conn = JSON.parse(new TextDecoder().decode(pt)) as Connection;
     if (!conn.refreshToken) return null;
     if (conn.refreshExpiresAt && conn.refreshExpiresAt < Date.now()) return null;
-    return conn;
+    const grantedScopes = grantedScopesFrom(conn.grantedScopes);
+    return grantedScopes.length ? { ...conn, grantedScopes } : { refreshToken: conn.refreshToken, refreshExpiresAt: conn.refreshExpiresAt };
   } catch {
     return null;
   }
 }
 
 // Build a Connection from a fresh token-exchange response.
-export function connectionFromToken(refreshToken: string, refreshExpiresIn?: number): Connection {
+export function connectionFromToken(refreshToken: string, refreshExpiresIn?: number, scope?: unknown): Connection {
   const ttl = (refreshExpiresIn ?? 47304000) * 1000; // default ~18 months
-  return { refreshToken, refreshExpiresAt: Date.now() + ttl };
+  const grantedScopes = grantedScopesFrom(scope);
+  return {
+    refreshToken,
+    refreshExpiresAt: Date.now() + ttl,
+    ...(grantedScopes.length ? { grantedScopes } : {}),
+  };
 }
 
 // Access tokens live ~2h. Minting one per publish means an extra eBay
 // round-trip on every item of a batch (and risks eBay throttling the refresh
 // grant), so cache them in the warm lambda keyed by refresh token.
-const tokenCache = new Map<string, { token: string; expiresAt: number }>();
+const tokenCache = new Map<string, { token: string; grantedScopes: string[]; expiresAt: number }>();
+
+function grantCacheKey(refreshToken: string, grantedScopes: string[]): string {
+  return `${refreshToken}\n${grantedScopes.join(" ")}`;
+}
+
+// Mint a short-lived access token and return the scopes eBay actually granted.
+// The application scope list is not a substitute for that response.
+export async function accessGrantFromCookie(
+  sealed: string | undefined
+): Promise<{ token: string; grantedScopes: string[] } | null> {
+  const conn = await openConnection(sealed);
+  if (!conn) return null;
+  const storedScopes = conn.grantedScopes ?? [];
+  const key = grantCacheKey(conn.refreshToken, storedScopes);
+  const cached = tokenCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { token: cached.token, grantedScopes: cached.grantedScopes };
+  }
+  const token = await refreshAccessToken(conn.refreshToken, storedScopes);
+  const fromResponse = grantedScopesFrom(token.scope);
+  const grantedScopes = fromResponse.length ? fromResponse : storedScopes;
+  if (tokenCache.size > 100) tokenCache.clear(); // bound memory
+  tokenCache.set(key, {
+    token: token.access_token,
+    grantedScopes,
+    // Refresh 5 minutes before eBay's stated expiry.
+    expiresAt: Date.now() + Math.max(60, (token.expires_in ?? 7200) - 300) * 1000,
+  });
+  return { token: token.access_token, grantedScopes };
+}
 
 // Mint a short-lived access token from the stored connection cookie value.
 export async function accessTokenFromCookie(
   sealed: string | undefined
 ): Promise<string | null> {
-  const conn = await openConnection(sealed);
-  if (!conn) return null;
-  const cached = tokenCache.get(conn.refreshToken);
-  if (cached && cached.expiresAt > Date.now()) return cached.token;
-  const token = await refreshAccessToken(conn.refreshToken);
-  if (tokenCache.size > 100) tokenCache.clear(); // bound memory
-  tokenCache.set(conn.refreshToken, {
-    token: token.access_token,
-    // Refresh 5 minutes before eBay's stated expiry.
-    expiresAt: Date.now() + Math.max(60, (token.expires_in ?? 7200) - 300) * 1000,
-  });
-  return token.access_token;
+  const grant = await accessGrantFromCookie(sealed);
+  return grant?.token ?? null;
 }

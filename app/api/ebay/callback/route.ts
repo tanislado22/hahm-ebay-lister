@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
       throw new Error("eBay did not return a refresh token.");
     }
     const sealed = await sealConnection(
-      connectionFromToken(token.refresh_token, token.refresh_token_expires_in)
+      connectionFromToken(token.refresh_token, token.refresh_token_expires_in, token.scope)
     );
     try {
       await saveEbayConnection("store", sealed);

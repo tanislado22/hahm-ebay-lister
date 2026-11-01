@@ -1,7 +1,9 @@
 import crypto from "crypto";
 import { describe, expect, test } from "vitest";
 import { exactSku } from "@/lib/archive/text";
-import { EBAY_SCOPES } from "@/lib/ebay/config";
+import { EBAY_SCOPES, FULFILLMENT_READONLY_SCOPE } from "@/lib/ebay/config";
+import { buildAuthorizeUrl, refreshAccessToken } from "@/lib/ebay/oauth";
+import { connectionFromToken } from "@/lib/ebay/session";
 import { feeFromTransactions } from "@/lib/usa-lots/finances";
 import { applyIncomingSale, lotForMatch, matchSaleToItem } from "@/lib/usa-lots/match";
 import { cronAuthorized } from "@/lib/ebay/cron-auth";
@@ -287,6 +289,21 @@ describe("USA purchase lots", () => {
     ], granted);
     expect(blocked.selected).toEqual([]);
     expect(blocked.unauthorized).toEqual([{ id: "ORDER_CONFIRMATION", missingScopes: ["https://api.ebay.com/oauth/api_scope/commerce.identity.readonly"] }]);
+    const oldGrant = granted.filter((scope) => scope !== FULFILLMENT_READONLY_SCOPE);
+    const readonlyOnly = selectPaidSaleTopics([
+      topic("ORDER_CONFIRMATION", [FULFILLMENT_READONLY_SCOPE, NOTIFICATION_SCOPE]),
+    ], oldGrant);
+    expect(readonlyOnly.selected).toEqual([]);
+    expect(readonlyOnly.unauthorized[0]?.missingScopes).toEqual([FULFILLMENT_READONLY_SCOPE]);
+    const grantedReadonly = selectPaidSaleTopics([
+      topic("ORDER_CONFIRMATION", [FULFILLMENT_READONLY_SCOPE, NOTIFICATION_SCOPE]),
+    ], [NOTIFICATION_SCOPE, FULFILLMENT_READONLY_SCOPE]);
+    expect(grantedReadonly.selected.map((item) => item.id)).toEqual(["ORDER_CONFIRMATION"]);
+    expect(EBAY_SCOPES).toContain(FULFILLMENT_READONLY_SCOPE);
+    expect(connectionFromToken("refresh-prueba", 3600, `${NOTIFICATION_SCOPE} ${FULFILLMENT_READONLY_SCOPE}`).grantedScopes).toEqual([
+      NOTIFICATION_SCOPE,
+      FULFILLMENT_READONLY_SCOPE,
+    ]);
     expect(EBAY_SCOPES).toContain(FINANCES_SCOPE);
     expect(EBAY_SCOPES).toContain(NOTIFICATION_SCOPE);
     const endpoint = "https://example.com/api/ebay/notificaciones";
@@ -362,7 +379,7 @@ describe("USA purchase lots", () => {
         return json({
           topics: [
             { topicId: "LOAN_APPLICATION_CANCEL", status: "ENABLED", authorizationScopes: [FINANCES_SCOPE], supportedPayloads: [{ schemaVersion: "1.0" }] },
-            { topicId: "ORDER_CONFIRMATION", status: "ENABLED", authorizationScopes: [NOTIFICATION_SCOPE], supportedPayloads: [{ schemaVersion: "1.0" }] },
+            { topicId: "ORDER_CONFIRMATION", status: "ENABLED", authorizationScopes: [NOTIFICATION_SCOPE, FULFILLMENT_READONLY_SCOPE], supportedPayloads: [{ schemaVersion: "1.0" }] },
             { topicId: "ORDER_CANCELLED", status: "ENABLED", supportedPayloads: [{ schemaVersion: "1.0" }] },
           ],
         });
@@ -376,8 +393,14 @@ describe("USA purchase lots", () => {
       if (url.includes("/destination") && method === "POST") return json({ destinationId: "dest-1" }, 201);
       if (url.includes("/subscription/") && method === "DELETE") return new Response(null, { status: 204 });
       if (url.includes("/subscription") && method === "GET") {
+        const priorReads = calls.filter((call) => call.startsWith("GET ") && call.includes("/subscription")).length;
+        if (priorReads === 1) {
+          return json({
+            subscriptions: [{ subscriptionId: "sub-loan", topicId: "LOAN_APPLICATION_CANCEL", destinationId: "dest-1", status: "ENABLED" }],
+          });
+        }
         return json({
-          subscriptions: [{ subscriptionId: "sub-loan", topicId: "LOAN_APPLICATION_CANCEL", destinationId: "dest-1", status: "ENABLED" }],
+          subscriptions: [{ subscriptionId: "sub-1", topicId: "ORDER_CONFIRMATION", destinationId: "dest-1", status: "ENABLED" }],
         });
       }
       if (url.includes("/subscription") && method === "POST") {
@@ -391,6 +414,7 @@ describe("USA purchase lots", () => {
         token: "user-token-prueba",
         endpoint: "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones",
         verificationToken: "a".repeat(32),
+        grantedScopes: [NOTIFICATION_SCOPE, FULFILLMENT_READONLY_SCOPE],
       });
       expect(result.ok).toBe(true);
       const configAt = calls.findIndex((call) => call.startsWith("PUT ") && call.includes("/config"));
@@ -407,7 +431,7 @@ describe("USA purchase lots", () => {
       if (result.ok) {
         const text = result.lines.join(" ");
         expect(text).not.toContain("alertas@ejemplo.com");
-        expect(text).toContain("ORDER_CONFIRMATION");
+        expect(text).toContain("ORDER_CONFIRMATION quedó suscrita y activa");
         expect(text).toContain("LOAN_APPLICATION_CANCEL");
       }
     } finally {
@@ -417,6 +441,69 @@ describe("USA purchase lots", () => {
       process.env.EBAY_RU_NAME = previous.ru;
       if (previous.email == null) delete process.env.EBAY_NOTIFICATION_ALERT_EMAIL;
       else process.env.EBAY_NOTIFICATION_ALERT_EMAIL = previous.email;
+    }
+  });
+
+  test("does not subscribe when the account grant lacks sell.fulfillment.readonly", async () => {
+    const calls: string[] = [];
+    const original = global.fetch;
+    const previous = {
+      id: process.env.EBAY_CLIENT_ID,
+      secret: process.env.EBAY_CLIENT_SECRET,
+      ru: process.env.EBAY_RU_NAME,
+    };
+    process.env.EBAY_CLIENT_ID = "app-id-prueba";
+    process.env.EBAY_CLIENT_SECRET = "cert-prueba";
+    process.env.EBAY_RU_NAME = "ru-prueba";
+    global.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url} ${init?.body ?? ""}`);
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/topic")) {
+        return json({
+          topics: [{ topicId: "ORDER_CONFIRMATION", status: "ENABLED", authorizationScopes: [FULFILLMENT_READONLY_SCOPE], supportedPayloads: [{ schemaVersion: "1.0" }] }],
+        });
+      }
+      if (url.includes("/destination") && method === "GET") {
+        return json({
+          destinations: [{ destinationId: "dest-1", status: "ENABLED", deliveryConfig: { endpoint: "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones" } }],
+        });
+      }
+      if (url.includes("/subscription") && method === "GET") return json({ subscriptions: [] });
+      return json({ errors: [{ errorId: 1, message: "unexpected" }] }, 500);
+    };
+    try {
+      const result = await subscribeSaleNotifications({
+        token: "user-token-prueba",
+        endpoint: "https://hahm-ebay-lister-ebay-lister3.vercel.app/api/ebay/notificaciones",
+        verificationToken: "a".repeat(32),
+        grantedScopes: EBAY_SCOPES.split(/\s+/).filter((scope) => scope !== FULFILLMENT_READONLY_SCOPE),
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("no quedó suscrita");
+        expect(result.error).toContain(FULFILLMENT_READONLY_SCOPE);
+        expect(result.error).toContain("ENABLED");
+        expect(result.error).not.toContain("quedó suscrita y activa");
+      }
+      expect(calls.some((call) => call.startsWith("POST ") && call.includes("/subscription"))).toBe(false);
+      expect(calls.some((call) => call.startsWith("POST ") && call.includes("/destination"))).toBe(false);
+      expect(buildAuthorizeUrl("estado-prueba")).toContain("sell.fulfillment.readonly");
+      const refreshCalls: string[] = [];
+      global.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        refreshCalls.push(String(init?.body ?? ""));
+        return new Response(JSON.stringify({ access_token: "acceso", expires_in: 7200, token_type: "Bearer" }), { status: 200 });
+      };
+      await refreshAccessToken("refresh-viejo");
+      expect(refreshCalls[0] ?? "").not.toContain("scope=");
+      await refreshAccessToken("refresh-nuevo", [FULFILLMENT_READONLY_SCOPE]);
+      expect(refreshCalls[1] ?? "").toContain("sell.fulfillment.readonly");
+    } finally {
+      global.fetch = original;
+      process.env.EBAY_CLIENT_ID = previous.id;
+      process.env.EBAY_CLIENT_SECRET = previous.secret;
+      process.env.EBAY_RU_NAME = previous.ru;
     }
   });
 });

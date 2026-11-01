@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
       throw new Error("eBay didn't return a refresh token (the code may have expired — try again).");
     }
     const sealed = await sealConnection(
-      connectionFromToken(token.refresh_token, token.refresh_token_expires_in)
+      connectionFromToken(token.refresh_token, token.refresh_token_expires_in, token.scope)
     );
    const workMode = body.workMode ?? "store";
     const clientId = body.clientId ?? null;

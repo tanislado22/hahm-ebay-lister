@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import { archiveAccountKey } from "@/lib/archive/workspace";
 import { listEbayConnections } from "@/lib/ebay/client-connections";
-import { accessTokenFromCookie } from "@/lib/ebay/session";
+import { accessGrantFromCookie } from "@/lib/ebay/session";
 import { clientIsGuatemala } from "@/lib/markets/client-market";
 import { notificationEndpoint } from "@/lib/usa-lots/notify-api";
 import { subscribeSaleNotifications } from "@/lib/usa-lots/subscribe";
@@ -37,9 +37,20 @@ export async function POST(req: NextRequest) {
     if (!connection) {
       return NextResponse.json({ ok: false, error: "Conecta la cuenta de eBay antes de preparar las notificaciones." }, { status: 400 });
     }
-    const token = await accessTokenFromCookie(connection.sealedConnection);
-    if (!token) return NextResponse.json({ ok: false, error: "No se pudo renovar el acceso a eBay." }, { status: 400 });
-    const result = await subscribeSaleNotifications({ token, endpoint, verificationToken });
+    const grant = await accessGrantFromCookie(connection.sealedConnection);
+    if (!grant) return NextResponse.json({ ok: false, error: "No se pudo renovar el acceso a eBay." }, { status: 400 });
+    if (!grant.grantedScopes.length) {
+      return NextResponse.json({
+        ok: false,
+        error: "eBay no informó los permisos concedidos a esta cuenta. No se usó la lista de la aplicación. ORDER_CONFIRMATION no quedó suscrita.",
+      }, { status: 400 });
+    }
+    const result = await subscribeSaleNotifications({
+      token: grant.token,
+      endpoint,
+      verificationToken,
+      grantedScopes: grant.grantedScopes,
+    });
     if (!result.ok) console.error("[lotes] notificaciones", result.error);
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   } catch (error) {

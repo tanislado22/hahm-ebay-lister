@@ -1,5 +1,6 @@
 import { readEbayAccountEmail } from "@/lib/archive/ebay-read";
 import { basicAuthHeader, EBAY_SCOPES, EBAY_TOKEN_URL, getEbayCreds, isEbayConfigured } from "@/lib/ebay/config";
+import { grantedScopesFrom } from "@/lib/ebay/oauth";
 import {
   continuationFrom,
   describeEbayFailure,
@@ -148,6 +149,7 @@ export async function subscribeSaleNotifications(input: {
   token: string;
   endpoint: string;
   verificationToken: string;
+  grantedScopes: string[];
 }): Promise<{ ok: true; lines: string[] } | { ok: false; error: string; lines: string[] }> {
   if (!input.endpoint.startsWith("https://")) {
     return {
@@ -167,8 +169,16 @@ export async function subscribeSaleNotifications(input: {
   const listed = await readTopics(input.token, input.verificationToken);
   if (!listed.ok) return { ok: false, lines: [], error: listed.error };
 
-  const decision = selectPaidSaleTopics(listed.topics, EBAY_SCOPES.split(/\s+/));
-  const lines = decisionLines(decision);
+  const grantedScopes = grantedScopesFrom(input.grantedScopes);
+  if (!grantedScopes.length) {
+    return {
+      ok: false,
+      lines: [],
+      error: "eBay no informó los permisos concedidos a esta cuenta. No se usó la lista de la aplicación. ORDER_CONFIRMATION no quedó suscrita.",
+    };
+  }
+  const decision = selectPaidSaleTopics(listed.topics, grantedScopes);
+  const lines = decisionLines(decision, new Set(EBAY_SCOPES.split(/\s+/)));
   const currentDestinations = await ebayJson(input.token, "GET", notificationCollectionUrl("destination"));
   if (currentDestinations.status < 200 || currentDestinations.status >= 300) {
     return {
@@ -178,6 +188,7 @@ export async function subscribeSaleNotifications(input: {
     };
   }
   let destination = destinationFor(currentDestinations.body, input.endpoint);
+  const reusedDestination = Boolean(destination.id);
   if (!destination.id && decision.selected.length) {
     const prepared = await ensureAlertConfig(input.token, input.verificationToken);
     if (!prepared.ok) return { ok: false, lines, error: prepared.error };
@@ -196,7 +207,7 @@ export async function subscribeSaleNotifications(input: {
     }
     lines.push("eBay ya tiene la configuración de alertas que exige antes de aceptar un destino.");
   }
-  if (!destination.id) return { ok: true, lines };
+  if (!destination.id) return { ok: false, lines, error: notSubscribedError(lines, "") };
 
   const currentSubscriptions = await readSubscriptions(input.token);
   if (!currentSubscriptions.ok) {
@@ -241,33 +252,83 @@ export async function subscribeSaleNotifications(input: {
       }
     }
     const created = await ebayJson(input.token, "POST", `${NOTIFICATION_API}/subscription`, payloadFor(topic));
-    if (created.status < 200 || created.status >= 300) {
+    if (created.status >= 200 && created.status < 300) {
+      createdTopics.push(topic.id);
+      continue;
+    }
+    if (!subscriptionAlreadyExists(created.body)) {
       return {
         ok: false,
         lines,
-        error: `No se pudo suscribir ${topic.id}. ${describeEbayFailure(created.status, created.body, [input.verificationToken, input.token])}`,
+        error: `No se pudo suscribir ${topic.id}. ${describeEbayFailure(created.status, created.body, [input.verificationToken, input.token])} ORDER_CONFIRMATION no quedó suscrita.`,
       };
     }
-    createdTopics.push(topic.id);
   }
-  if (decision.selected.length) {
-    lines.push(createdTopics.length ? `Suscripciones creadas: ${createdTopics.join(", ")}.` : "La suscripción de venta pagada ya existía. No se duplicó.");
+  if (!decision.selected.length) {
+    return { ok: false, lines, error: notSubscribedError(lines, reusedDestination ? destination.status : "") };
   }
-  const statusText = destination.status ? ` Estado del destino: ${destination.status}.` : "";
-  lines.push(`Destino registrado: ${input.endpoint}.${statusText} eBay lo valida con el reto SHA-256 contra esa misma dirección.`);
+  const confirmed = await readSubscriptions(input.token);
+  if (!confirmed.ok) {
+    return {
+      ok: false,
+      lines,
+      error: `ORDER_CONFIRMATION no quedó confirmada. ${describeEbayFailure(confirmed.status, confirmed.body, [input.verificationToken, input.token])}`,
+    };
+  }
+  const active = confirmed.items.find((item) => (
+    item.destinationId === destination.id
+    && item.topicId === "ORDER_CONFIRMATION"
+    && item.status.toUpperCase() === "ENABLED"
+  ));
+  if (!active) {
+    return { ok: false, lines, error: notSubscribedError(lines, reusedDestination ? destination.status : "") };
+  }
+  const kept = destinationNote(reusedDestination, destination.status);
+  lines.push(createdTopics.length
+    ? `ORDER_CONFIRMATION quedó suscrita y activa.${kept}`
+    : `ORDER_CONFIRMATION ya estaba suscrita y activa. No se duplicó.${kept}`);
+  lines.push(`Destino: ${input.endpoint}.`);
   return { ok: true, lines };
 }
 
-function decisionLines(decision: ReturnType<typeof selectPaidSaleTopics>): string[] {
+function destinationNote(reused: boolean, status: string): string {
+  if (!reused) return " Se registró el destino.";
+  return status
+    ? ` El destino existente sigue ${status} y no se creó otro.`
+    : " Se conservó el destino existente y no se creó otro.";
+}
+
+function notSubscribedError(lines: string[], destinationStatus: string): string {
+  const kept = destinationStatus
+    ? ` El destino existente sigue ${destinationStatus} y no se creó otro.`
+    : "";
+  return `ORDER_CONFIRMATION no quedó suscrita.${kept} ${lines.join(" ")}`.replace(/\s+/g, " ").trim();
+}
+
+function subscriptionAlreadyExists(body: unknown): boolean {
+  const errors = Array.isArray(record(body)?.errors) ? record(body)?.errors as unknown[] : [];
+  return errors.some((entry) => Number(record(entry)?.errorId) === 195012);
+}
+
+function decisionLines(decision: ReturnType<typeof selectPaidSaleTopics>, requestedScopes: Set<string>): string[] {
   const lines: string[] = [];
   if (decision.selected.length) {
-    lines.push(`Evento de venta pagada autorizado para esta aplicación: ${decision.selected.map((topic) => topic.id).join(", ")}.`);
+    lines.push(`Evento de venta pagada concedido a esta cuenta: ${decision.selected.map((topic) => topic.id).join(", ")}.`);
   }
   for (const id of decision.unavailable) {
     lines.push(`${id} no está disponible en la lista oficial de esta aplicación. No se inventó. Las ventas pagadas se siguen leyendo en la consulta diaria de pedidos.`);
   }
   for (const item of decision.unauthorized) {
-    lines.push(`${item.id} aparece en la lista, pero esta aplicación no tiene permiso para suscribirlo. Falta: ${item.missingScopes.join(", ")}. Actívalo en el portal de desarrolladores de eBay y vuelve a autorizar la cuenta. No se creó esa suscripción.`);
+    const notGranted = item.missingScopes.filter((scope) => requestedScopes.has(scope));
+    const notRequested = item.missingScopes.filter((scope) => !requestedScopes.has(scope));
+    const parts = [`${item.id} no se suscribió.`];
+    if (notGranted.length) {
+      parts.push(`Esta cuenta no tiene concedido: ${notGranted.join(", ")}. Estar marcado en la aplicación no concede ese permiso. El enlace de autorización ya lo pide; vuelve a conectar eBay cuando esta corrección esté en producción.`);
+    }
+    if (notRequested.length) {
+      parts.push(`El enlace de autorización no solicita: ${notRequested.join(", ")}.`);
+    }
+    lines.push(parts.join(" "));
   }
   lines.push("Solo se usa el identificador exacto ORDER_CONFIRMATION. No se elige ningún evento por coincidencia parcial del nombre. Cancelaciones y reembolsos se actualizan cuando la consulta diaria lee el pedido.");
   return lines;

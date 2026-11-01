@@ -16,6 +16,20 @@ export interface TokenResponse {
   refresh_token?: string;
   refresh_token_expires_in?: number;
   token_type: string;
+  scope?: string;
+}
+
+export function grantedScopesFrom(scope: unknown): string[] {
+  const values = Array.isArray(scope) ? scope : String(scope ?? "").split(/\s+/);
+  const seen = new Set<string>();
+  const scopes: string[] = [];
+  for (const value of values) {
+    const item = String(value).trim();
+    if (!item.startsWith("https://api.ebay.com/oauth/api_scope") || seen.has(item)) continue;
+    seen.add(item);
+    scopes.push(item);
+  }
+  return scopes;
 }
 
 // Step 1: the URL we send the user to so they can authorize the app.
@@ -101,11 +115,16 @@ export function exchangeCode(code: string): Promise<TokenResponse> {
 }
 
 // Mint a fresh short-lived access token from a stored refresh token.
-export function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
+// Scopes are sent only when they were saved from a token response. Sending the
+// current application list would reject an older refresh token that never
+// consented to a scope added later.
+export function refreshAccessToken(refreshToken: string, grantedScopes?: string[]): Promise<TokenResponse> {
   const creds = getEbayCreds();
-  return postToken(creds, {
+  const body: Record<string, string> = {
     grant_type: "refresh_token",
     refresh_token: refreshToken,
-    scope: EBAY_SCOPES,
-  });
+  };
+  const scopes = grantedScopesFrom(grantedScopes);
+  if (scopes.length) body.scope = scopes.join(" ");
+  return postToken(creds, body);
 }

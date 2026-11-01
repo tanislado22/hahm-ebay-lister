@@ -25,11 +25,14 @@ export const EBAY_MARKETPLACE_ID = process.env.EBAY_MARKETPLACE_ID || "EBAY_US";
 export const EBAY_CATEGORY_TREE_ID = process.env.EBAY_CATEGORY_TREE_ID || "0";
 export const EBAY_CURRENCY = process.env.EBAY_CURRENCY || "USD";
 
+export const FULFILLMENT_READONLY_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly";
+
 export const EBAY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.account",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+  FULFILLMENT_READONLY_SCOPE,
   "https://api.ebay.com/oauth/api_scope/sell.finances",
   "https://api.ebay.com/oauth/api_scope/commerce.notification.subscription",
 ].join(" ");

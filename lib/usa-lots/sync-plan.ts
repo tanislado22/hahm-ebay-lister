@@ -82,7 +82,7 @@ export function describeSaleSync(input: {
       ? "CRON_SECRET está presente en este proceso. Eso no demuestra que Vercel haya ejecutado la tarea."
       : "Falta CRON_SECRET en Vercel. Sin esa variable la tarea programada responde no autorizada.",
     input.notificationTokenSet
-      ? "EBAY_NOTIFICATION_VERIFICATION_TOKEN está presente. Pulsa Preparar notificaciones en el sitio publicado para suscribir solo ORDER_CONFIRMATION, si eBay lo autoriza para esta aplicación."
+      ? "EBAY_NOTIFICATION_VERIFICATION_TOKEN está presente. Las notificaciones no están listas hasta que Preparar notificaciones confirme que ORDER_CONFIRMATION quedó suscrita y activa."
       : "Falta EBAY_NOTIFICATION_VERIFICATION_TOKEN en Vercel. Sin esa variable eBay no puede validar el destino.",
     `Las comisiones salen de Sell Finances (${FINANCES_SCOPE}). El consentimiento ya lo pide, junto con ${NOTIFICATION_SCOPE}. Hasta volver a autorizar la cuenta, la comisión queda pendiente y la ganancia se muestra provisional. No se usa cero en su lugar.`,
   );
