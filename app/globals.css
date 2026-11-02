@@ -586,6 +586,36 @@ textarea {
   border-top: 1px solid var(--color-border);
 }
 
+.lot-assign-bar {
+  align-items: center;
+}
+
+.lot-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-faint);
+}
+
+.lot-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.lot-select-count {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+}
+
 .footnote {
   text-align: center;
   color: var(--color-ink-faint);

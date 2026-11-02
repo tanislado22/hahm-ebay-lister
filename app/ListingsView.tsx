@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ListingCard } from "./ListingCard";
 import {
   downloadFile,
@@ -10,6 +10,17 @@ import {
 import type { ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { accessHeaders, apiPost } from "@/lib/api-client";
+import {
+  applySelectAll,
+  assignedGarmentsNote,
+  canAssignSelectedToLot,
+  clearSelectionAfterAssign,
+  garmentsToAssign,
+  selectAllChecked,
+  selectAllIndeterminate,
+  selectedGarmentsLabel,
+  toggleWorkspaceGarment,
+} from "@/lib/usa-lots/workspace-selection";
 
 async function uploadPhotosToEbay(sku: string, photos: Photo[]) {
 
@@ -115,6 +126,11 @@ export function ListingsView({
   const [usaLotId, setUsaLotId] = useState("");
   const [selectedLotIds, setSelectedLotIds] = useState<string[]>([]);
   const [lotAssignNote, setLotAssignNote] = useState("");
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  const workspaceIds = groups.map((group) => group.id);
+  const selectedWorkspaceIds = garmentsToAssign(selectedLotIds, workspaceIds);
+  const allWorkspaceSelected = selectAllChecked(selectedWorkspaceIds, workspaceIds);
+  const workspacePartiallySelected = selectAllIndeterminate(selectedWorkspaceIds, workspaceIds);
   useEffect(() => {
     if (guatemala) return;
     const params = new URLSearchParams();
@@ -127,6 +143,9 @@ export function ListingsView({
       .then((data: { lots?: { id: string; name: string }[] }) => setUsaLots(data.lots || []))
       .catch(() => setUsaLots([]));
   }, [guatemala, inventoryClientId]);
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = workspacePartiallySelected;
+  }, [workspacePartiallySelected]);
   const done = groups.filter((g) => g.status === "done").length;
   const writing = groups.filter((g) => g.status === "writing").length;
   const failed = groups.filter((g) => g.status === "error").length;
@@ -286,20 +305,34 @@ export function ListingsView({
 
 </button>
       {!guatemala ? (
-        <div className="result-actions">
-          <label>
+        <div className="result-actions lot-assign-bar">
+          <label className="lot-field" htmlFor="usa-lot-select">
             Lote USA
-            <select value={usaLotId} onChange={(event) => setUsaLotId(event.target.value)}>
+            <select id="usa-lot-select" value={usaLotId} onChange={(event) => setUsaLotId(event.target.value)}>
               <option value="">Elige un lote</option>
               {usaLots.map((lot) => <option key={lot.id} value={lot.id}>{lot.name}</option>)}
             </select>
           </label>
+          <label className="lot-select-all" htmlFor="select-all-workspace">
+            <input
+              ref={selectAllRef}
+              id="select-all-workspace"
+              type="checkbox"
+              checked={allWorkspaceSelected}
+              disabled={workspaceIds.length === 0}
+              onChange={(event) => setSelectedLotIds(applySelectAll(workspaceIds, event.target.checked))}
+            />
+            Seleccionar todos
+          </label>
+          <span className="lot-select-count" role="status">
+            {selectedGarmentsLabel(selectedWorkspaceIds.length)}
+          </span>
           <button
             type="button"
             className="btn btn-ghost"
-            disabled={!usaLotId || selectedLotIds.length === 0}
+            disabled={!canAssignSelectedToLot(usaLotId, selectedWorkspaceIds.length)}
             onClick={() => {
-              const chosenIds = [...selectedLotIds];
+              const chosenIds = [...selectedWorkspaceIds];
               const chosenLot = usaLotId;
               const items = groups.filter((group) => chosenIds.includes(group.id)).map((group) => ({
                 sku: group.sku,
@@ -316,7 +349,8 @@ export function ListingsView({
                 const data = await response.json() as { ok?: boolean; error?: string; assigned?: number };
                 if (response.ok && data.ok) {
                   onRememberLot?.(chosenIds, chosenLot);
-                  setLotAssignNote(`${data.assigned ?? 0} artículos quedaron en el lote. Publicar guarda el número del anuncio; quitarlos del área de trabajo no borra ese vínculo.`);
+                  setSelectedLotIds(clearSelectionAfterAssign());
+                  setLotAssignNote(assignedGarmentsNote(data.assigned ?? chosenIds.length));
                 } else {
                   setLotAssignNote(data.error || "No se pudo asignar el lote.");
                 }
@@ -326,7 +360,7 @@ export function ListingsView({
             Asignar seleccionados al lote
           </button>
           <p className="note">Marca el artículo, elige su lote y publícalo. El SKU, el lote y el número del anuncio se quedan guardados si después limpias el área de trabajo. Una venta sin lote no entra en las cuentas de ningún lote.</p>
-          {lotAssignNote ? <p className="note">{lotAssignNote}</p> : null}
+          {lotAssignNote ? <p className="note" role="status">{lotAssignNote}</p> : null}
         </div>
       ) : null}
       <div className="listing-list">
@@ -334,8 +368,8 @@ export function ListingsView({
           <ListingCard
             key={group.id}
             group={group}
-            lotSelected={selectedLotIds.includes(group.id)}
-            onToggleLotSelect={guatemala ? undefined : (id) => setSelectedLotIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])}
+            lotSelected={selectedWorkspaceIds.includes(group.id)}
+            onToggleLotSelect={guatemala ? undefined : (id) => setSelectedLotIds((current) => toggleWorkspaceGarment(current, id, workspaceIds))}
             photoById={photoById}
             ebayConnected={ebayConnected}
             onEdit={onEdit}
@@ -343,7 +377,7 @@ export function ListingsView({
             onRetry={onRetry}
             onPost={(id) => {
               const group = groups.find((item) => item.id === id);
-              const lot = group?.usaLotId || (selectedLotIds.includes(id) && usaLotId ? usaLotId : "");
+              const lot = group?.usaLotId || (selectedWorkspaceIds.includes(id) && usaLotId ? usaLotId : "");
               onPost(id, lot);
             }}
             onDraft={onDraft}
