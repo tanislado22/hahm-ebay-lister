@@ -6,7 +6,8 @@ import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { resizeImage } from "@/lib/resize";
 import { exactGuatemalaSku, guatemalaDuplicateSkuMessage } from "@/lib/markets/guatemala";
 import { guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
-import { buildSku, skuForVintedPrepare } from "@/lib/sku";
+import { partitionVintedPrepare, vintedPrepareResultMessage, workspaceGroupVisible } from "@/lib/archive/manual-sku";
+import { buildSku } from "@/lib/sku";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
 import { OwnerAccess } from "./OwnerAccess";
@@ -104,6 +105,9 @@ export default function Home() {
   const [archiving, setArchiving] = useState(false);
   const [ebayConnected, setEbayConnected] = useState(false);
   const [vintedPreparing, setVintedPreparing] = useState(false);
+  const [vintedNotice, setVintedNotice] = useState<{ scope: "all" | string; text: string; error: boolean; queue: boolean } | null>(null);
+  const [skuNotes, setSkuNotes] = useState<Record<string, { text: string; error: boolean }>>({});
+  const [focusJobId, setFocusJobId] = useState("");
   const [workMode, setWorkMode] = useState<"store" | "client">("store");
   const [clientName, setClientName] = useState("");
   const [clients, setClients] = useState<
@@ -212,19 +216,21 @@ const selectedClientSaveReadyRef = useRef(false);
     }
 
     const savedSelectedClientId = localStorage.getItem("selectedClientId");
-
-if (savedSelectedClientId) {
-
-  setSelectedClientId(savedSelectedClientId);
-
-}
-const savedWorkMode = localStorage.getItem("workMode");
-
-if (savedWorkMode === "store" || savedWorkMode === "client") {
-
-  setWorkMode(savedWorkMode);
-
-}
+    const savedWorkMode = localStorage.getItem("workMode");
+    const params = new URLSearchParams(window.location.search);
+    const trabajo = params.get("trabajo") || "";
+    if (trabajo) setFocusJobId(trabajo);
+    const urlMode = params.get("workMode");
+    const urlClient = params.get("clientId") || "";
+    if (urlMode === "client" && urlClient) {
+      setWorkMode("client");
+      setSelectedClientId(urlClient);
+    } else if (urlMode === "store") {
+      setWorkMode("store");
+    } else {
+      if (savedSelectedClientId) setSelectedClientId(savedSelectedClientId);
+      if (savedWorkMode === "store" || savedWorkMode === "client") setWorkMode(savedWorkMode);
+    }
     clientsLoadedRef.current = true;
 
   }, []);
@@ -422,7 +428,7 @@ if (!selectedClientSaveReadyRef.current) {
 
           if (!data?.group) continue;
 
-          if (Array.isArray(data.group.photoIds) && data.group.photoIds.length > 0) {
+          if (workspaceGroupVisible(data.group)) {
             const restored = data.group as ItemGroup;
             if (guatemalaActiveRef.current) {
               restored.sku = exactGuatemalaSku(restored.sku);
@@ -1513,16 +1519,62 @@ const draftAll = async () => {
   window.dispatchEvent(new CustomEvent("sold-comps-all"));
 
 };
+  const saveMissingSku = async (groupId: string, sku: string) => {
+    const group = groupsRef.current.find((item) => item.id === groupId);
+    if (!group) return;
+    try {
+      const response = await fetch("/api/archivo/sku", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...accessHeaders() },
+        body: JSON.stringify({
+          jobId: group.id,
+          ebayItemId: group.listingId || "",
+          sku,
+          workMode,
+          clientId: workMode === "client" ? selectedClientId : null,
+        }),
+      });
+      const data = (await response.json()) as { ok?: boolean; error?: string; message?: string; sku?: string };
+      if (!response.ok || !data.ok || !data.sku) {
+        setSkuNotes((prev) => ({ ...prev, [groupId]: { text: data.error || "Could not save the SKU.", error: true } }));
+        return;
+      }
+      renameSku(groupId, data.sku);
+      setSkuNotes((prev) => ({ ...prev, [groupId]: { text: data.message || `SKU ${data.sku} saved.`, error: false } }));
+    } catch {
+      setSkuNotes((prev) => ({ ...prev, [groupId]: { text: "Could not save the SKU. The eBay listing was not changed.", error: true } }));
+    }
+  };
   const prepareVintedGroups = async (groupIds: string[], selectedSku?: string) => {
-    if (guatemalaActiveRef.current) return;
-    const selected = groupIds
+    const scope = groupIds.length === 1 ? groupIds[0] : "all";
+    if (guatemalaActiveRef.current) {
+      setVintedNotice({ scope, text: "Tienda Guatemala no se prepara para Vinted.", error: true, queue: false });
+      return;
+    }
+    const found = groupIds
       .map((id) => groupsRef.current.find((group) => group.id === id))
-      .filter((group): group is ItemGroup => Boolean(group?.listing && group.vintedStatus !== "published"))
-      .map((group) => ({
-        ...group,
-        sku: skuForVintedPrepare(groupIds.length === 1 && selectedSku !== undefined ? selectedSku : group.sku),
-      }))
-      .filter((group) => group.sku.length > 0);
+      .filter((group): group is ItemGroup => Boolean(group));
+    const partition = partitionVintedPrepare(found.map((group) => ({
+      id: group.id,
+      label: group.listing?.title || group.name || group.id,
+      sku: groupIds.length === 1 && selectedSku !== undefined ? selectedSku : group.sku,
+      title: group.listing?.title || "",
+      vintedStatus: group.vintedStatus,
+      hasListing: Boolean(group.listing),
+    })));
+    if (partition.ready.length === 0) {
+      setVintedNotice({
+        scope,
+        text: vintedPrepareResultMessage(0, partition.blocked),
+        error: true,
+        queue: false,
+      });
+      return;
+    }
+    const skuById = new Map(partition.ready.map((item) => [item.id, item.sku]));
+    const selected = found
+      .filter((group) => skuById.has(group.id))
+      .map((group) => ({ ...group, sku: skuById.get(group.id) || group.sku }));
     const items = selected.map((group) => ({
       sku: group.sku,
       groupId: group.id,
@@ -1530,11 +1582,8 @@ const draftAll = async () => {
       ebayItemId: group.listingId ?? null,
       publishedOnEbay: group.postStatus === "posted",
     }));
-    if (items.length === 0) {
-      alert("Each item needs a written listing and a SKU. Published Vinted items are left as they are.");
-      return;
-    }
     setVintedPreparing(true);
+    setVintedNotice(null);
     try {
       const clientId = workMode === "client" ? selectedClientId : null;
       for (const group of selected) {
@@ -1558,12 +1607,12 @@ const draftAll = async () => {
         clientId: workMode === "client" ? selectedClientId : null,
         items,
       });
-      const data = (await readJson(res)) as { ok?: boolean; error?: string };
+      const data = (await readJson(res)) as { ok?: boolean; error?: string; prepared?: number };
       if (!res.ok || !data.ok) throw new Error(data.error || "Could not prepare Vinted items.");
-      const skus = new Set(items.map((item) => item.sku));
+      const preparedIds = new Set(selected.map((group) => group.id));
       setGroups((prev) =>
         prev.map((group) =>
-          skus.has(group.sku) ? { ...group, vintedStatus: "ready" } : group
+          preparedIds.has(group.id) ? { ...group, vintedStatus: "ready" } : group
         )
       );
       if (items.length === 1) {
@@ -1574,8 +1623,14 @@ const draftAll = async () => {
           /* storage unavailable */
         }
       }
+      setVintedNotice({
+        scope,
+        text: vintedPrepareResultMessage(data.prepared ?? selected.length, partition.blocked),
+        error: false,
+        queue: true,
+      });
     } catch (error) {
-      alert((error as Error).message);
+      setVintedNotice({ scope, text: (error as Error).message, error: true, queue: false });
     } finally {
       setVintedPreparing(false);
     }
@@ -1612,9 +1667,14 @@ const draftAll = async () => {
     }
   };
   const usableGroups = useMemo(
-    () => groups.filter((g) => g.photoIds.length > 0),
+    () => groups.filter((group) => workspaceGroupVisible(group)),
     [groups]
   );
+  useEffect(() => {
+    if (!focusJobId || step !== "listings") return;
+    const node = document.getElementById(`trabajo-${focusJobId}`);
+    node?.scrollIntoView({ block: "center" });
+  }, [focusJobId, step, groups]);
 
   return (
     <main className="wrap">
@@ -2161,7 +2221,11 @@ const draftAll = async () => {
           onPrepareAll={prepareAllVinted}
           onPrepareVinted={(groupId, sku) => void prepareVintedGroups([groupId], sku)}
           onMarkVintedPublished={(groupId, url) => void markVintedPublished(groupId, url)}
+          onSaveMissingSku={saveMissingSku}
           vintedPreparing={vintedPreparing}
+          vintedNotice={vintedNotice}
+          skuNotes={skuNotes}
+          focusJobId={focusJobId}
           guatemala={guatemalaActiveRef.current}
           inventoryClientId={
             guatemalaActiveRef.current ? selectedClientId ?? undefined : undefined

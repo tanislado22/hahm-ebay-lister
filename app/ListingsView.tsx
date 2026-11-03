@@ -85,7 +85,11 @@ interface ListingsViewProps {
   onPrepareAll: () => void;
   onPrepareVinted: (groupId: string, sku: string) => void;
   onMarkVintedPublished: (groupId: string, url: string) => void;
+  onSaveMissingSku?: (groupId: string, sku: string) => Promise<void> | void;
   vintedPreparing: boolean;
+  vintedNotice?: { scope: "all" | string; text: string; error: boolean; queue: boolean } | null;
+  skuNotes?: Record<string, { text: string; error: boolean }>;
+  focusJobId?: string;
   guatemala?: boolean;
   skuNotice?: string;
   inventoryClientId?: string;
@@ -116,7 +120,11 @@ export function ListingsView({
   onPrepareAll,
   onPrepareVinted,
   onMarkVintedPublished,
+  onSaveMissingSku,
   vintedPreparing,
+  vintedNotice,
+  skuNotes,
+  focusJobId,
   guatemala = false,
   skuNotice,
   inventoryClientId,
@@ -242,10 +250,16 @@ export function ListingsView({
           type="button"
           className="btn btn-primary"
           onClick={onPrepareAll}
-          disabled={vintedPreparing || readyToPrepare === 0}
+          disabled={vintedPreparing || done === 0}
         >
           {vintedPreparing ? "Preparing…" : "Prepare All for Vinted"}
         </button>
+        {vintedNotice?.scope === "all" ? (
+          <p className={vintedNotice.error ? "note note-error" : "note"} role={vintedNotice.error ? "alert" : "status"}>
+            {vintedNotice.text}
+            {vintedNotice.queue ? <> {" "}<a href="/vinted">Vinted queue</a></> : null}
+          </p>
+        ) : null}
         <a className="btn btn-ghost" href="/vinted">
           Vinted queue
         </a>
@@ -387,6 +401,13 @@ export function ListingsView({
             onArchive={onArchive}
             onPrepareVinted={onPrepareVinted}
             onMarkVintedPublished={onMarkVintedPublished}
+            onSaveMissingSku={onSaveMissingSku}
+            skuNote={skuNotes?.[group.id]?.text}
+            skuNoteError={skuNotes?.[group.id]?.error}
+            prepareNote={vintedNotice?.scope === group.id ? vintedNotice.text : undefined}
+            prepareQueue={vintedNotice?.scope === group.id ? vintedNotice.queue : false}
+            vintedPreparing={vintedPreparing}
+            forceOpen={focusJobId === group.id}
             guatemala={guatemala}
             inventoryClientId={inventoryClientId}
           />

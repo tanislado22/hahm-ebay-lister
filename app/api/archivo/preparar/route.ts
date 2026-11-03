@@ -29,16 +29,17 @@ export async function POST(req: NextRequest) {
     if (!result.ok) return NextResponse.json(result, { status: result.error.includes("no está") ? 404 : 400 });
     const place = result.already
       ? "Ya estaba en el área de trabajo y no se duplicó."
-      : "Volvió al área de trabajo con el mismo identificador y sigue publicado en eBay.";
+      : "Volvió al área de trabajo con el mismo identificador y sigue publicado.";
     return NextResponse.json({
       ok: true,
       jobId: result.jobId,
       sku: result.sku,
       review: result.review,
-      message: `${place} Quedó preparado para Vinted con el SKU ${result.sku}. No se publicó otra vez en eBay y sigue como “${VINTED_REVIEW_LABEL[result.review]}”. El vínculo se guarda cuando pegues el enlace del anuncio.`,
+      queueHref: "/vinted",
+      message: `${place} Quedó preparado para Vinted con el SKU ${result.sku}. No se publicó en Vinted y sigue como “${VINTED_REVIEW_LABEL[result.review]}”. El vínculo se guarda cuando pegues el enlace del anuncio.`,
     });
   } catch (error) {
     console.error("[archivo] preparar", error);
-    return NextResponse.json({ ok: false, error: "No se pudo preparar el artículo para Vinted. No se publicó en eBay." }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "No se pudo preparar el artículo para Vinted. No se publicó en Vinted." }, { status: 500 });
   }
 }

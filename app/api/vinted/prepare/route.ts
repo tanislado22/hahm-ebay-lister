@@ -3,7 +3,7 @@ import { guardApiRequest } from "@/lib/api-guard";
 import { setVintedCurrentSku, upsertVintedReady } from "@/lib/inventory/links";
 import { workspaceKey } from "@/lib/inventory/workspace";
 import { prepareVintedFields } from "@/lib/vinted/prepare";
-import { skuForVintedPrepare } from "@/lib/sku";
+import { vintedPrepareBlock } from "@/lib/archive/manual-sku";
 import { buildReadySnapshot } from "@/lib/vinted/snapshot";
 import { photosForGroupId, replaceVintedReadySnapshot } from "@/lib/vinted/snapshot-store";
 import type { ListingResult } from "@/lib/types";
@@ -55,9 +55,19 @@ export async function POST(req: NextRequest) {
   try {
     let prepared = 0;
     let currentSku = "";
+    const blocked: string[] = [];
     for (const item of items) {
-      const sku = skuForVintedPrepare(item.sku);
-      if (!sku || !item.listing?.title) continue;
+      const block = vintedPrepareBlock({
+        sku: item.sku || "",
+        title: item.listing?.title || "",
+        locale: "en",
+      });
+      if (!block.ok) {
+        blocked.push(block.error);
+        continue;
+      }
+      const sku = block.sku;
+      if (!item.listing) continue;
       if (items.length === 1) {
         const photos = item.groupId ? await photosForGroupId(item.groupId) : [];
         const snapshot = buildReadySnapshot({ sku, listing: item.listing, photos });
@@ -77,7 +87,7 @@ export async function POST(req: NextRequest) {
     }
     if (prepared === 0) {
       return NextResponse.json(
-        { ok: false, error: "Each item needs a SKU and a written listing." },
+        { ok: false, error: blocked[0] || "Each item needs a SKU and a written listing." },
         { status: 400 }
       );
     }

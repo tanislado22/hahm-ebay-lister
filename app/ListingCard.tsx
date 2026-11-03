@@ -11,6 +11,7 @@ import { coerceGuatemalaCompReport, guatemalaCompReportIsCurrent, guatemalaPrice
 import "./guatemala-card.css";
 import { GUATEMALA_INVENTORY_MESSAGES } from "@/lib/markets/guatemala-inventory";
 import type { GuatemalaCompReport, ItemGroup, ListingResult, Photo } from "@/lib/types";
+import { skuFieldEditable } from "@/lib/archive/manual-sku";
 import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
 import { buildStoredZip, vintedPhotoFileName, vintedPhotoZipName } from "@/lib/vinted/photo-zip";
 
@@ -87,6 +88,13 @@ onDelete: (groupId: string) => void;
 onArchive?: (groupId: string) => void;
 onPrepareVinted: (groupId: string, sku: string) => void;
 onMarkVintedPublished: (groupId: string, url: string) => void;
+onSaveMissingSku?: (groupId: string, sku: string) => Promise<void> | void;
+skuNote?: string;
+skuNoteError?: boolean;
+prepareNote?: string;
+prepareQueue?: boolean;
+vintedPreparing?: boolean;
+forceOpen?: boolean;
 guatemala?: boolean;
 inventoryClientId?: string;
 lotSelected?: boolean;
@@ -108,12 +116,27 @@ export function ListingCard({
   onArchive,
   onPrepareVinted,
   onMarkVintedPublished,
+  onSaveMissingSku,
+  skuNote,
+  skuNoteError = false,
+  prepareNote,
+  prepareQueue = false,
+  vintedPreparing = false,
+  forceOpen = false,
   guatemala = false,
   lotSelected = false,
   onToggleLotSelect,
   inventoryClientId,
 }: ListingCardProps) {
   const [open, setOpen] = useState(true);
+  const [skuDraft, setSkuDraft] = useState(group.sku);
+  const [savingSku, setSavingSku] = useState(false);
+  useEffect(() => {
+    setSkuDraft(group.sku);
+  }, [group.sku]);
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
   const listing = group.listing;
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [zoomedPhoto, setZoomedPhoto] = useState<Photo | null>(null);
@@ -552,7 +575,7 @@ const keyword = [
 }, [soldCompsRequest, group.status, listing?.title, listing?.brand, listing?.size, guatemala]);
 
   return (
-    <article className={`listing-card status-${group.status}`}>
+    <article className={`listing-card status-${group.status}`} id={`trabajo-${group.id}`}>
       {onToggleLotSelect ? (
         <label onClick={(event) => event.stopPropagation()}>
           <input type="checkbox" checked={lotSelected} onChange={() => onToggleLotSelect(group.id)} />
@@ -905,13 +928,37 @@ const keyword = [
                 type="text"
                 inputMode="text"
                 className="size-input"
-                value={group.sku}
-                disabled={group.postStatus === "posted"}
+                value={!guatemala && group.postStatus === "posted" && !group.sku.trim() ? skuDraft : group.sku}
+                disabled={guatemala ? group.postStatus === "posted" : !skuFieldEditable(group.postStatus, group.sku)}
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}
-                onChange={(e) => onRenameSku(group.id, e.target.value)}
+                onChange={(e) => {
+                  if (!guatemala && group.postStatus === "posted" && !group.sku.trim()) setSkuDraft(e.target.value);
+                  else onRenameSku(group.id, e.target.value);
+                }}
               />
+              {!guatemala && group.postStatus === "posted" && !group.sku.trim() ? (
+                <>
+                  <p className="comps-line">This eBay listing has no SKU. Type one and save it. A SKU is not generated, and the eBay listing is not changed.</p>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={savingSku}
+                    onClick={() => {
+                      setSavingSku(true);
+                      void Promise.resolve(onSaveMissingSku?.(group.id, skuDraft)).finally(() => setSavingSku(false));
+                    }}
+                  >
+                    {savingSku ? "Saving…" : "Save SKU"}
+                  </button>
+                  {skuNote ? (
+                    <p className={skuNoteError ? "post-result err" : "post-result"} role={skuNoteError ? "alert" : "status"}>
+                      {skuNote}
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
             </div>
             <div className={`stat editable${priceMissing ? " needs-attention" : ""}`}>
               <label className="k" htmlFor={`price-${group.id}`}>
@@ -1374,11 +1421,23 @@ const keyword = [
                 <button
                   type="button"
                   className="btn btn-ghost"
+                  disabled={vintedPreparing}
                   onClick={() => onPrepareVinted(group.id, group.sku)}
                 >
-                  Prepare for Vinted
+                  {vintedPreparing ? "Preparing…" : "Prepare for Vinted"}
                 </button>
               )}
+              {prepareNote ? (
+                <p className={prepareQueue ? "post-result" : "post-result err"} role={prepareQueue ? "status" : "alert"}>
+                  {prepareNote}
+                  {prepareQueue ? (
+                    <>
+                      {" "}
+                      <a href="/vinted">Vinted queue</a>
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
               <button
                 type="button"
                 className="btn btn-ghost"

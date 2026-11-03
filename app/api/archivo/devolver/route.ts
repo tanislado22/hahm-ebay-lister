@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import { restoreArchiveToWorkspace } from "@/lib/archive/store";
+import { workspaceItemHref } from "@/lib/archive/manual-sku";
 import { archiveAccountKey } from "@/lib/archive/workspace";
 import { clientIsGuatemala } from "@/lib/markets/client-market";
 
@@ -26,13 +27,16 @@ export async function POST(req: NextRequest) {
   try {
     const result = await restoreArchiveToWorkspace(accountKey, body.id);
     if (!result.ok) return NextResponse.json(result, { status: 404 });
+    const workMode = body.workMode === "client" ? "client" : "store";
+    const clientId = workMode === "client" && typeof body.clientId === "string" ? body.clientId : null;
     return NextResponse.json({
       ok: true,
       jobId: result.jobId,
       already: result.already,
+      href: workspaceItemHref(result.jobId, workMode, clientId),
       message: result.already
         ? "Ese artículo ya está en el área de trabajo."
-        : "Volvió al área de trabajo con su número de anuncio y el estado de publicado. Recarga esa página para verlo.",
+        : "Volvió al área de trabajo con su número de anuncio y el estado de publicado.",
     });
   } catch (error) {
     console.error("[archivo] devolver", error);

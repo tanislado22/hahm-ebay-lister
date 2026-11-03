@@ -69,6 +69,13 @@ export default function ArchivePage() {
   const [lots, setLots] = useState<{ id: string; name: string }[]>([]);
   const [lotId, setLotId] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [skuDraft, setSkuDraft] = useState("");
+  const [savingSku, setSavingSku] = useState(false);
+  const [skuNotice, setSkuNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [prepareNotice, setPrepareNotice] = useState<{ text: string; error: boolean; queue: boolean } | null>(null);
+  const [prepareBusy, setPrepareBusy] = useState(false);
+  const [restoreNotice, setRestoreNotice] = useState<{ text: string; error: boolean; href?: string } | null>(null);
+  const [restoreBusy, setRestoreBusy] = useState(false);
 
   const queryString = () => {
     const params = new URLSearchParams();
@@ -147,6 +154,10 @@ export default function ArchivePage() {
     }
     setDetail(data.article);
     setVintedUrl(data.article.vintedListingUrl || "");
+    setSkuDraft("");
+    setSkuNotice(null);
+    setPrepareNotice(null);
+    setRestoreNotice(null);
   };
 
   const saveVinted = async (action: "link" | "unlink" | "pending" | "unverified") => {
@@ -180,10 +191,35 @@ export default function ArchivePage() {
     }
   };
 
+  const saveSku = async () => {
+    if (!detail) return;
+    setSavingSku(true);
+    setSkuNotice(null);
+    try {
+      const response = await fetch("/api/archivo/sku", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...accessHeaders() },
+        body: JSON.stringify({ id: detail.id, sku: skuDraft, workMode, clientId: clientId || null }),
+      });
+      const data = (await response.json()) as { ok?: boolean; error?: string; message?: string; sku?: string };
+      if (!response.ok || !data.ok || !data.sku) {
+        setSkuNotice({ text: data.error || "No se pudo guardar el SKU.", error: true });
+        return;
+      }
+      setDetail({ ...detail, sku: data.sku });
+      setSkuDraft("");
+      setSkuNotice({ text: data.message || `El SKU ${data.sku} quedó guardado.`, error: false });
+      setReloadToken((current) => current + 1);
+    } catch {
+      setSkuNotice({ text: "No se pudo guardar el SKU. No se modificó el anuncio en eBay.", error: true });
+    } finally {
+      setSavingSku(false);
+    }
+  };
+
   const prepareVinted = async (id: string) => {
-    setSavingVinted(true);
-    setMessage("");
-    setError("");
+    setPrepareBusy(true);
+    setPrepareNotice(null);
     try {
       const response = await fetch("/api/archivo/preparar", {
         method: "POST",
@@ -192,31 +228,43 @@ export default function ArchivePage() {
       });
       const data = (await response.json()) as { ok?: boolean; error?: string; message?: string; review?: VintedReview };
       if (!response.ok || !data.ok) {
-        setError(data.error || "No se pudo preparar el artículo para Vinted.");
+        setPrepareNotice({ text: data.error || "No se pudo preparar el artículo para Vinted.", error: true, queue: false });
         return;
       }
       if (data.review && detail?.id === id) setDetail({ ...detail, vintedReview: data.review });
-      setMessage(data.message || "Quedó preparado para Vinted.");
+      setPrepareNotice({
+        text: data.message || "Quedó preparado para Vinted. No se publicó en Vinted.",
+        error: false,
+        queue: true,
+      });
       setReloadToken((current) => current + 1);
+    } catch {
+      setPrepareNotice({ text: "No se pudo preparar el artículo para Vinted. No se publicó en Vinted.", error: true, queue: false });
     } finally {
-      setSavingVinted(false);
+      setPrepareBusy(false);
     }
   };
 
   const restore = async (id: string) => {
-    setMessage("");
-    setError("");
-    const response = await fetch("/api/archivo/devolver", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...accessHeaders() },
-      body: JSON.stringify({ id, workMode, clientId: clientId || null }),
-    });
-    const data = (await response.json()) as { ok?: boolean; error?: string; message?: string };
-    if (!response.ok || !data.ok) {
-      setError(data.error || "No se pudo devolver el artículo.");
-      return;
+    setRestoreBusy(true);
+    setRestoreNotice(null);
+    try {
+      const response = await fetch("/api/archivo/devolver", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...accessHeaders() },
+        body: JSON.stringify({ id, workMode, clientId: clientId || null }),
+      });
+      const data = (await response.json()) as { ok?: boolean; error?: string; message?: string; href?: string };
+      if (!response.ok || !data.ok) {
+        setRestoreNotice({ text: data.error || "No se pudo devolver el artículo.", error: true });
+        return;
+      }
+      setRestoreNotice({ text: data.message || "Volvió al área de trabajo.", error: false, href: data.href });
+    } catch {
+      setRestoreNotice({ text: "No se pudo devolver el artículo.", error: true });
+    } finally {
+      setRestoreBusy(false);
     }
-    setMessage(data.message || "Volvió al área de trabajo.");
   };
 
   const runImport = async (mode: "sample" | "all") => {
@@ -433,7 +481,36 @@ export default function ArchivePage() {
       {detail ? (
         <section className="panel" aria-live="polite">
           <h2>{detail.title || "Sin título"}</h2>
-          <p>SKU: {detail.sku || "eBay no envió SKU"}</p>
+          {detail.sku ? (
+            <p>SKU: {detail.sku}</p>
+          ) : (
+            <form
+              className="archive-search"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void saveSku();
+              }}
+            >
+              <label htmlFor="archive-sku">SKU</label>
+              <input
+                id="archive-sku"
+                value={skuDraft}
+                onChange={(event) => setSkuDraft(event.target.value)}
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              <button type="submit" className="btn btn-primary" disabled={savingSku}>
+                {savingSku ? "Guardando…" : "Guardar SKU"}
+              </button>
+              <p className="note">eBay no envió SKU. Escríbelo y guárdalo aquí. No se genera uno automático y el anuncio de eBay no se modifica.</p>
+            </form>
+          )}
+          {skuNotice ? (
+            <p className={skuNotice.error ? "note note-error" : "note"} role={skuNotice.error ? "alert" : "status"}>
+              {skuNotice.text}
+            </p>
+          ) : null}
           <p>Precio: {detail.price ? `${detail.price} ${detail.currency}` : "No disponible"}</p>
           <p>
             Estado: {detail.listingStatus || (detail.ebayItemId ? "Publicado. eBay no envió otro estado en esta copia." : "Sin estado")}
@@ -489,10 +566,16 @@ export default function ArchivePage() {
                 Marcar como sin verificar
               </button>
             ) : null}
-            <button type="button" className="btn btn-ghost" disabled={savingVinted} onClick={() => void prepareVinted(detail.id)}>
-              Preparar para Vinted
+            <button type="button" className="btn btn-ghost" disabled={prepareBusy} onClick={() => void prepareVinted(detail.id)}>
+              {prepareBusy ? "Preparando…" : "Preparar para Vinted"}
             </button>
           </div>
+          {prepareNotice ? (
+            <p className={prepareNotice.error ? "note note-error" : "note"} role={prepareNotice.error ? "alert" : "status"}>
+              {prepareNotice.text}
+              {prepareNotice.queue ? <> {" "}<a href="/vinted">Vinted queue</a></> : null}
+            </p>
+          ) : null}
           <p className="archive-description">{detail.plainDescription || "eBay no envió descripción."}</p>
           {detail.variants.length > 0 ? (
             <ul>
@@ -510,9 +593,15 @@ export default function ArchivePage() {
               <img key={photo.id} src={photo.url} alt="" />
             ))}
           </div>
-          <button type="button" className="btn btn-primary" onClick={() => void restore(detail.id)}>
-            Devolver al área de trabajo
+          <button type="button" className="btn btn-primary" disabled={restoreBusy} onClick={() => void restore(detail.id)}>
+            {restoreBusy ? "Devolviendo…" : "Devolver al área de trabajo"}
           </button>
+          {restoreNotice ? (
+            <p className={restoreNotice.error ? "note note-error" : "note"} role={restoreNotice.error ? "alert" : "status"}>
+              {restoreNotice.text}
+              {restoreNotice.href ? <> {" "}<a className="btn btn-ghost" href={restoreNotice.href}>Abrir en el área de trabajo</a></> : null}
+            </p>
+          ) : null}
         </section>
       ) : null}
     </main>
