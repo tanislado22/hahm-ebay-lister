@@ -86,6 +86,9 @@ interface ListingCardProps {
 onRemovePhoto: (photoId: string) => void;
 onDelete: (groupId: string) => void;
 onArchive?: (groupId: string) => void;
+catalogConfirmed?: boolean;
+archiveBusy?: boolean;
+onInventorySaved?: (groupId: string) => void;
 onPrepareVinted: (groupId: string, sku: string) => void;
 onMarkVintedPublished: (groupId: string, url: string) => void;
 onSaveMissingSku?: (groupId: string, sku: string) => Promise<void> | void;
@@ -114,6 +117,9 @@ export function ListingCard({
   onRemovePhoto,
   onDelete,
   onArchive,
+  catalogConfirmed = false,
+  archiveBusy = false,
+  onInventorySaved,
   onPrepareVinted,
   onMarkVintedPublished,
   onSaveMissingSku,
@@ -250,6 +256,7 @@ useEffect(() => {
           ? GUATEMALA_INVENTORY_MESSAGES.already
           : GUATEMALA_INVENTORY_MESSAGES.saved
       );
+      onInventorySaved?.(group.id);
     } catch {
       setInventoryError(true);
       setInventoryNote("No se pudo guardar la prenda.");
@@ -1486,6 +1493,24 @@ const keyword = [
           }}
         >
           Archivar
+        </button>
+      ) : null}
+      {guatemala && catalogConfirmed && onArchive ? (
+        <button
+          type="button"
+          className="btn btn-ghost"
+          disabled={archiveBusy}
+          onClick={() => {
+            if (
+              window.confirm(
+                "Archivar quita esta ficha del área de trabajo. La prenda conserva su SKU, fotos, precio, lote y ventas. Si está disponible, sigue en el catálogo."
+              )
+            ) {
+              onArchive(group.id);
+            }
+          }}
+        >
+          {archiveBusy ? "Archivando…" : "Archivar"}
         </button>
       ) : null}
       <button

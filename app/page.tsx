@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { accessHeaders, apiPost } from "@/lib/api-client";
+import { accessHeaders, apiGet, apiPost } from "@/lib/api-client";
+import { WORKSPACE_ARCHIVE_MESSAGES } from "@/lib/markets/guatemala-workspace-archive";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { resizeImage } from "@/lib/resize";
 import { exactGuatemalaSku, guatemalaDuplicateSkuMessage } from "@/lib/markets/guatemala";
@@ -103,6 +104,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [archiveNote, setArchiveNote] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
+  const [catalogConfirmedIds, setCatalogConfirmedIds] = useState<string[]>([]);
   const [ebayConnected, setEbayConnected] = useState(false);
   const [vintedPreparing, setVintedPreparing] = useState(false);
   const [vintedNotice, setVintedNotice] = useState<{ scope: "all" | string; text: string; error: boolean; queue: boolean } | null>(null);
@@ -616,6 +618,14 @@ setStep(
 
               throw new Error(`Failed to save job ${group.id}`);
 
+            }
+
+            if (skipJobSaveRef.current.has(group.id)) {
+              await fetch("/api/jobs", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: group.id }),
+              });
             }
 
           }
@@ -1144,6 +1154,75 @@ const archiveGroups = async (targets: ItemGroup[]) => {
     setArchiving(false);
   }
 };
+
+  const refreshCatalogConfirmed = useCallback(async () => {
+    const clientId = selectedClientIdRef.current;
+    if (workMode !== "client" || !clientId || !guatemalaActiveRef.current) {
+      setCatalogConfirmedIds([]);
+      return;
+    }
+    try {
+      const response = await apiGet(
+        `/api/markets/guatemala/workspace/archivar?clientId=${encodeURIComponent(clientId)}`
+      );
+      const body = (await response.json()) as { ok?: boolean; confirmedJobIds?: unknown };
+      if (!response.ok || !body.ok || !Array.isArray(body.confirmedJobIds)) return;
+      setCatalogConfirmedIds(body.confirmedJobIds.filter((id): id is string => typeof id === "string"));
+    } catch {
+      /* The cards stay as they are until the next check. */
+    }
+  }, [workMode]);
+
+  useEffect(() => {
+    if (step !== "listings") return;
+    void refreshCatalogConfirmed();
+  }, [step, workMode, selectedClientId, clients, refreshCatalogConfirmed]);
+
+  const archiveGuatemalaWorkspace = async (jobId?: string) => {
+    const clientId = selectedClientIdRef.current;
+    if (!guatemalaActiveRef.current || !clientId) return;
+    const requested = jobId?.trim() ?? "";
+    const held = new Set(requested ? [requested] : catalogConfirmedIds);
+    for (const id of held) skipJobSaveRef.current.add(id);
+    setArchiving(true);
+    setArchiveNote(null);
+    try {
+      const response = await apiPost("/api/markets/guatemala/workspace/archivar", {
+        clientId,
+        ...(requested ? { jobId: requested } : {}),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        archivedIds?: unknown;
+      };
+      if (!response.ok || !data.ok) {
+        for (const id of held) skipJobSaveRef.current.delete(id);
+        setArchiveNote(data.error || WORKSPACE_ARCHIVE_MESSAGES.failed);
+        return;
+      }
+      const archivedIds = Array.isArray(data.archivedIds)
+        ? data.archivedIds.filter((id): id is string => typeof id === "string")
+        : [];
+      const archived = new Set(archivedIds);
+      for (const id of held) {
+        if (!archived.has(id)) skipJobSaveRef.current.delete(id);
+      }
+      for (const id of archived) skipJobSaveRef.current.add(id);
+      if (archived.size > 0) {
+        groupsRef.current = groupsRef.current.filter((item) => !archived.has(item.id));
+        setGroups((prev) => prev.filter((item) => !archived.has(item.id)));
+        setCatalogConfirmedIds((prev) => prev.filter((id) => !archived.has(id)));
+      }
+      setArchiveNote(data.message || WORKSPACE_ARCHIVE_MESSAGES.none);
+    } catch {
+      for (const id of held) skipJobSaveRef.current.delete(id);
+      setArchiveNote(WORKSPACE_ARCHIVE_MESSAGES.failed);
+    } finally {
+      setArchiving(false);
+    }
+  };
 
   const addGroup = () =>
     setGroups((prev) => [
@@ -2207,12 +2286,24 @@ const draftAll = async () => {
           onDelete={deleteGroup}
           onDeleteAll={deleteAll}
           onArchive={(groupId) => {
+            if (guatemalaActiveRef.current) {
+              void archiveGuatemalaWorkspace(groupId);
+              return;
+            }
             const group = groupsRef.current.find((item) => item.id === groupId);
             if (group) void archiveGroups([group]);
           }}
-          onArchivePublished={() => void archiveGroups(groupsRef.current)}
+          onArchivePublished={() => {
+            if (guatemalaActiveRef.current) {
+              void archiveGuatemalaWorkspace();
+              return;
+            }
+            void archiveGroups(groupsRef.current);
+          }}
           archiveNote={archiveNote}
           archiving={archiving}
+          catalogConfirmedIds={catalogConfirmedIds}
+          onInventorySaved={() => void refreshCatalogConfirmed()}
 
 
           onPostAll={postAll}

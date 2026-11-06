@@ -79,6 +79,8 @@ interface ListingsViewProps {
   onArchivePublished?: () => void;
   archiveNote?: string | null;
   archiving?: boolean;
+  catalogConfirmedIds?: string[];
+  onInventorySaved?: (groupId: string) => void;
   onPostAll: () => void;
   onDraftAll: () => void;
   onSoldCompsAll: () => void;
@@ -114,6 +116,8 @@ export function ListingsView({
   onArchivePublished,
   archiveNote,
   archiving = false,
+  catalogConfirmedIds = [],
+  onInventorySaved,
   onPostAll,
   onDraftAll,
   onSoldCompsAll,
@@ -377,6 +381,29 @@ export function ListingsView({
           {lotAssignNote ? <p className="note" role="status">{lotAssignNote}</p> : null}
         </div>
       ) : null}
+      {guatemala && onArchivePublished ? (
+        <div className="post-all-bar">
+          <span>
+            Archivar todo quita las fichas cuya publicación en el catálogo ya está confirmada. El inventario, el catálogo y el conteo del lote se conservan.
+          </span>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={catalogConfirmedIds.length === 0 || archiving}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Archivar todo quita del área de trabajo las fichas con publicación confirmada en el catálogo, sea cual sea la cantidad. No hay que seleccionarlas. Los borradores y las publicaciones pendientes o fallidas se quedan. Las prendas sin foto no entran en esta acción."
+                )
+              ) {
+                onArchivePublished();
+              }
+            }}
+          >
+            {archiving ? "Archivando…" : "Archivar todo"}
+          </button>
+        </div>
+      ) : null}
       <div className="listing-list">
         {groups.map((group) => (
           <ListingCard
@@ -399,6 +426,9 @@ export function ListingsView({
             onRemovePhoto={onRemovePhoto}
             onDelete={onDelete}
             onArchive={onArchive}
+            catalogConfirmed={catalogConfirmedIds.includes(group.id)}
+            archiveBusy={archiving}
+            onInventorySaved={onInventorySaved}
             onPrepareVinted={onPrepareVinted}
             onMarkVintedPublished={onMarkVintedPublished}
             onSaveMissingSku={onSaveMissingSku}
