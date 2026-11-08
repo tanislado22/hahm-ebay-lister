@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { STAFF_COOKIE } from "@/lib/markets/guatemala-staff";
 import { staffSessionFromToken } from "@/lib/markets/guatemala-staff-store";
+import { InstallAppButton } from "../pwa/install-button";
 import { LogoutButton } from "./logout";
 import { StaffReturnHome } from "./return-home";
 import { UnsavedChangesProvider } from "../return-home";
@@ -47,6 +48,7 @@ export default async function StaffLayout({ children }: { children: React.ReactN
           <a className="btn btn-primary" href="/guatemala/panel/lotes">
             Lotes de compra
           </a>
+          <InstallAppButton />
           <LogoutButton />
         </nav>
         {children}

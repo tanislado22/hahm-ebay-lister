@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { InstallAppButton } from "../pwa/install-button";
 import "../inventario/inventory.css";
 import "../panel/panel.css";
 
@@ -101,6 +102,7 @@ export default function StaffEntryPage() {
             {pending ? "Entrando…" : mode === "entrar" ? "Entrar" : "Crear contraseña y entrar"}
           </button>
         </form>
+        <InstallAppButton />
       </section>
     </main>
   );

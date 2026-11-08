@@ -16,6 +16,8 @@ import {
   type InventoryPhoto,
 } from "@/lib/markets/guatemala-inventory";
 import { publishReviewBlockers } from "@/lib/markets/guatemala-publish";
+import { STAFF_SALE_NOT_SAVED, acceptedSaleUpdate, saleMayBeSubmitted } from "@/lib/markets/guatemala-pwa";
+import { useOnlineStatus } from "../pwa/shell";
 import { QuickAddForm, UnpublishedEditor } from "./draft";
 import "./inventory.css";
 import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
@@ -97,6 +99,7 @@ export function InventoryScreen({
   const params = useSearchParams();
   const router = useRouter();
   const staffMode = Boolean(lockedClientId);
+  const online = useOnlineStatus();
   const clientId = lockedClientId || params.get("clientId") || "";
   const itemId = params.get("item") ?? "";
   const filter = inventoryListFilter(params.get("estado"));
@@ -266,6 +269,11 @@ export function InventoryScreen({
 
   async function confirmSale() {
     if (!detail || !chargedPrice || savingSaleRef.current) return;
+    const gate = saleMayBeSubmitted(navigator.onLine);
+    if (!gate.ok) {
+      setSaleError(gate.error);
+      return;
+    }
     savingSaleRef.current = true;
     setSavingSale(true);
     setSaleError("");
@@ -280,8 +288,9 @@ export function InventoryScreen({
         available?: number;
         item?: { sku: string; status: string; priceGtq: string; sale: SaleInfo };
       };
-      if (!response.ok || !body.ok || !body.item) {
-        setSaleError(body.error || "No se pudo registrar la venta.");
+      const saved = acceptedSaleUpdate(response.ok, body);
+      if (!saved) {
+        setSaleError(body.error || STAFF_SALE_NOT_SAVED);
         if (response.status === 409) {
           setSaleStep(null);
           const again = await storeRequest(
@@ -295,14 +304,14 @@ export function InventoryScreen({
       setAvailable(body.available ?? available);
       setDetail({
         ...detail,
-        sku: body.item.sku,
-        status: body.item.status,
-        priceGtq: body.item.priceGtq,
-        sale: body.item.sale,
+        sku: saved.sku,
+        status: saved.status,
+        priceGtq: saved.priceGtq,
+        sale: saved.sale as SaleInfo,
       });
       setSaleStep(null);
     } catch {
-      setSaleError("No se pudo registrar la venta.");
+      setSaleError(STAFF_SALE_NOT_SAVED);
     } finally {
       savingSaleRef.current = false;
       setSavingSale(false);
@@ -711,6 +720,11 @@ export function InventoryScreen({
                   className="gt-sale-box"
                   onSubmit={(event) => {
                     event.preventDefault();
+                    const gate = saleMayBeSubmitted(navigator.onLine);
+                    if (!gate.ok) {
+                      setSaleError(gate.error);
+                      return;
+                    }
                     if (!chargedPrice) {
                       setSaleError("Escribe un precio cobrado mayor que cero.");
                       return;
@@ -754,7 +768,7 @@ export function InventoryScreen({
                   <p>Precio cobrado {formatStoredQuetzales(chargedPrice)}</p>
                   {saleError ? <p className="note note-error" role="alert">{saleError}</p> : null}
                   <div className="gt-inventory-actions">
-                    <button type="button" className="btn btn-primary" disabled={savingSale} onClick={() => void confirmSale()}>
+                    <button type="button" className="btn btn-primary" disabled={savingSale || !online} onClick={() => void confirmSale()}>
                       {savingSale ? "Guardando…" : "Confirmar venta"}
                     </button>
                     <button
