@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { ensureInventoryTables, getSql } from "@/lib/db";
 import { exactSku } from "@/lib/archive/text";
-import { lotForMatch, matchSaleToItem, type SaleCandidate } from "@/lib/usa-lots/match";
+import { ebayListingId, lotForMatch, matchSaleToItem, planStoredSaleLinks, type SaleCandidate } from "@/lib/usa-lots/match";
 import { averageUnitCents, applyAverageCosts, buildLotReport, exclusiveShare, heldPieceCount, saleProfit, type SaleMoney } from "@/lib/usa-lots/profit";
 import { saleLinesToStore, type ParsedSaleLine } from "@/lib/usa-lots/parse-order";
 
@@ -445,16 +445,24 @@ export async function transferItemToGuatemala(accountKey: string, itemId: string
 export async function loadSaleCandidates(accountKey: string): Promise<SaleCandidate[]> {
   await ensureUsaLots();
   const sql = getSql();
-  const lots = await sql`SELECT id, sku, ebay_item_id, lot_id FROM usa_lot_items WHERE account_key = ${accountKey}`;
+  const lots = await sql`SELECT id, sku, ebay_item_id, lot_id, unit_cost_cents, cost_estimated FROM usa_lot_items WHERE account_key = ${accountKey}`;
   const archives = await sql`SELECT id, sku, ebay_item_id, usa_lot_id FROM article_archive WHERE account_key = ${accountKey}`;
   const fromLots = lots.map((row) => {
     const record = row as Record<string, unknown>;
-    return { id: String(record.id), sku: exactSku(record.sku), ebayItemId: String(record.ebay_item_id ?? ""), lotId: String(record.lot_id ?? ""), source: "lot" as const };
+    return {
+      id: String(record.id),
+      sku: exactSku(record.sku),
+      ebayItemId: ebayListingId(String(record.ebay_item_id ?? "")),
+      lotId: String(record.lot_id ?? ""),
+      source: "lot" as const,
+      unitCostCents: centsOrNull(record.unit_cost_cents),
+      costEstimated: Boolean(record.cost_estimated),
+    };
   });
   const lotItemIds = new Set(fromLots.map((item) => item.ebayItemId).filter(Boolean));
   const fromArchive = archives.flatMap((row) => {
     const record = row as Record<string, unknown>;
-    const ebayItemId = String(record.ebay_item_id ?? "");
+    const ebayItemId = ebayListingId(String(record.ebay_item_id ?? ""));
     if (ebayItemId && lotItemIds.has(ebayItemId)) return [];
     return [{ id: String(record.id), sku: exactSku(record.sku), ebayItemId, lotId: String(record.usa_lot_id ?? ""), source: "archive" as const }];
   });
@@ -514,6 +522,48 @@ export async function saveParsedSales(accountKey: string, lines: ParsedSaleLine[
     saved += 1;
   }
   return { saved };
+}
+
+export async function relinkOpenSales(accountKey: string): Promise<{ linked: number }> {
+  await ensureUsaLots();
+  const candidates = await loadSaleCandidates(accountKey);
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, ebay_item_id, sku, title, link_status, link_locked, lot_id, item_ref, unit_cost_cents
+    FROM usa_ebay_sales
+    WHERE account_key = ${accountKey} AND link_locked = FALSE
+  `;
+  const plan = planStoredSaleLinks(rows.map((row) => {
+    const record = row as Record<string, unknown>;
+    const status = String(record.link_status ?? "unmatched");
+    return {
+      id: String(record.id),
+      ebayItemId: String(record.ebay_item_id ?? ""),
+      sku: String(record.sku ?? ""),
+      title: String(record.title ?? ""),
+      linkStatus: status === "lotted" || status === "unassigned" || status === "transfer" ? status : "unmatched",
+      linkLocked: Boolean(record.link_locked),
+      lotId: String(record.lot_id ?? ""),
+      itemId: String(record.item_ref ?? ""),
+      unitCostCents: centsOrNull(record.unit_cost_cents),
+    };
+  }), candidates);
+  for (const update of plan) {
+    await sql`
+      UPDATE usa_ebay_sales SET
+        lot_id = ${update.lotId},
+        item_ref = ${update.itemId},
+        link_status = ${update.linkStatus},
+        unit_cost_cents = COALESCE(unit_cost_cents, ${update.fillUnitCostCents}),
+        cost_estimated = CASE
+          WHEN unit_cost_cents IS NULL AND ${update.fillUnitCostCents} IS NOT NULL THEN ${update.fillCostEstimated}
+          ELSE cost_estimated
+        END,
+        updated_at = NOW()
+      WHERE id = ${update.saleId} AND account_key = ${accountKey} AND link_locked = FALSE
+    `;
+  }
+  return { linked: plan.length };
 }
 
 export async function correctSaleLink(input: {
@@ -597,6 +647,7 @@ export async function readLotReport(accountKey: string, lotId: string) {
         profit: sale.profit,
         quantity,
         recordedCostCents: unitCostCents != null && quantity != null && quantity >= 1 ? unitCostCents * quantity : null,
+        ebayItemId: String(sale.record.ebay_item_id ?? ""),
       };
     }),
   });

@@ -132,6 +132,11 @@ export function saleLinesToStore(lines: ParsedSaleLine[]): ParsedSaleLine[] {
   return lines.filter((line) => line.cancelled || PAID_STATUSES.has(line.paymentStatus));
 }
 
+export function mergeSaleLines(primary: ParsedSaleLine[], extra: ParsedSaleLine[]): ParsedSaleLine[] {
+  const seen = new Set(primary.map((line) => `${line.orderId}:${line.lineItemId}`));
+  return [...primary, ...extra.filter((line) => !seen.has(`${line.orderId}:${line.lineItemId}`))];
+}
+
 export function isReadOnlyOrderRequest(method: string, path: string): boolean {
   return method.toUpperCase() === "GET" && /\/sell\/fulfillment\/v1\/order(?:\/|$|\?)/.test(path);
 }

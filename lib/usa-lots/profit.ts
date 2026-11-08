@@ -62,7 +62,7 @@ export function saleProfit(sale: SaleMoney): ProfitResult {
     profitCents: profit,
     recoveredCents: recovered,
     provisional,
-    label: income == null ? "Sin ingreso" : provisional ? "Ganancia provisional" : "Ganancia",
+    label: item == null ? "Sin ingreso" : provisional ? "Ganancia provisional" : "Ganancia",
     missing,
   };
 }
@@ -104,6 +104,7 @@ export interface LotSaleSnapshot {
   profit: ProfitResult;
   quantity?: number | null;
   recordedCostCents?: number | null;
+  ebayItemId?: string;
 }
 
 export interface LotReport {
@@ -190,11 +191,7 @@ export function buildLotReport(input: {
   const linkedTransfers = input.items.filter((item) => item.disposition === "guatemala-transfer").length;
   const guatemalaPieces = Number.isInteger(input.guatemalaPieces) && (input.guatemalaPieces ?? 0) > 0 ? input.guatemalaPieces ?? 0 : 0;
   const transferred = heldPieceCount(guatemalaPieces, linkedTransfers);
-  const soldIds = new Set(
-    sales
-      .filter((sale) => !sale.cancelled && sale.itemId)
-      .map((sale) => sale.itemId as string)
-  );
+  const soldIds = soldItemIds(input.items, sales);
   const sold = input.items.filter((item) => soldIds.has(item.id) && item.disposition !== "guatemala-transfer").length;
   const sellableCount = input.sellableCount != null && input.sellableCount >= 1 ? input.sellableCount : null;
   const countIncomplete = sellableCount == null;
@@ -259,6 +256,27 @@ export function buildLotReport(input: {
     guatemalaShippingUnitCents: shipping.unitCents,
     guatemalaShippingPendingCents: (input.guatemalaShippingCents ?? 0) > 0 ? shipping.pendingCents : 0,
   };
+}
+
+function listingDigits(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function soldItemIds(items: LotItemSnapshot[], sales: LotSaleSnapshot[]): Set<string> {
+  const ids = new Set<string>();
+  for (const sale of sales) {
+    if (sale.cancelled) continue;
+    if (sale.itemId) {
+      const linked = items.find((item) => item.id === sale.itemId);
+      if (linked && linked.disposition !== "guatemala-transfer") ids.add(linked.id);
+      if (linked) continue;
+    }
+    const ebayId = listingDigits(sale.ebayItemId ?? "");
+    if (!ebayId) continue;
+    const hits = items.filter((item) => listingDigits(item.ebayItemId) === ebayId && item.disposition !== "guatemala-transfer");
+    if (hits.length === 1) ids.add(hits[0].id);
+  }
+  return ids;
 }
 
 function respectedCosts(items: LotItemSnapshot[], sales: LotSaleSnapshot[]): { count: number; cents: number }[] {

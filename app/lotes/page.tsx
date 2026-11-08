@@ -177,7 +177,7 @@ export default function LotsPage() {
           headers: { "Content-Type": "application/json", ...accessHeaders() },
           body: JSON.stringify({ workMode, clientId: clientId || null }),
         });
-        const data = await response.json() as { ok?: boolean; error?: string; saved?: number; retryable?: boolean };
+        const data = await response.json() as { ok?: boolean; error?: string; saved?: number; linked?: number; retryable?: boolean };
         if (data.retryable) {
           await new Promise((resolve) => setTimeout(resolve, 3000));
           continue;
@@ -186,7 +186,8 @@ export default function LotsPage() {
           setError(data.error || "La sincronización manual no pudo continuar.");
           break;
         }
-        setMessage(`Respaldo manual: se leyeron ${data.saved ?? 0} líneas. La tarea programada sigue sin necesidad de dejar esta página abierta.`);
+        const linkedNote = data.linked ? ` Se vincularon ${data.linked} ventas que estaban sin asociar.` : "";
+        setMessage(`Respaldo manual: se leyeron ${data.saved ?? 0} líneas.${linkedNote} La tarea programada sigue sin necesidad de dejar esta página abierta.`);
         break;
       }
       await load(selected);

@@ -5,14 +5,14 @@ import { EBAY_SCOPES, FULFILLMENT_READONLY_SCOPE } from "@/lib/ebay/config";
 import { buildAuthorizeUrl, refreshAccessToken } from "@/lib/ebay/oauth";
 import { connectionFromToken } from "@/lib/ebay/session";
 import { feeFromTransactions } from "@/lib/usa-lots/finances";
-import { applyIncomingSale, lotForMatch, matchSaleToItem } from "@/lib/usa-lots/match";
+import { applyIncomingSale, lotForMatch, matchSaleToItem, planStoredSaleLinks } from "@/lib/usa-lots/match";
 import { cronAuthorized } from "@/lib/ebay/cron-auth";
 import { describeEbayFailure, emailFromXml, needsNotificationConfig, notificationCollectionUrl, notificationConfigUrl, notificationEndpoint, validAlertEmail } from "@/lib/usa-lots/notify-api";
 import { subscribeSaleNotifications } from "@/lib/usa-lots/subscribe";
 import { challengeResponse, selectPaidSaleTopics, verifyEbayNotification } from "@/lib/usa-lots/notifications";
-import { isReadOnlyOrderRequest, parseFulfillmentOrders, saleLinesToStore } from "@/lib/usa-lots/parse-order";
+import { isReadOnlyOrderRequest, mergeSaleLines, parseFulfillmentOrders, saleLinesToStore } from "@/lib/usa-lots/parse-order";
 import { allocateSharedCents, applyAverageCosts, averageUnitCents, buildLotReport, saleProfit } from "@/lib/usa-lots/profit";
-import { describeSaleSync, feeGapFromStatus, FINANCES_SCOPE, nextOrderWindow, NOTIFICATION_SCOPE } from "@/lib/usa-lots/sync-plan";
+import { describeSaleSync, feeGapFromStatus, FINANCES_SCOPE, nextOrderWindow, NOTIFICATION_SCOPE, readsRecentOrdersDuring } from "@/lib/usa-lots/sync-plan";
 
 const archived = {
   id: "archive-1",
@@ -239,6 +239,125 @@ describe("USA purchase lots", () => {
       58 + 46
     );
     expect(split.items.map((item) => item.unitCostCents)).toEqual([58, 104, null, null]);
+  });
+
+  test("links paid order 01-15420-99914 to SKU 3006 once and keeps the gain provisional", () => {
+    const lot = { id: "lote-1000", sku: "3006", ebayItemId: "880094115816", lotId: "compra-1000", source: "lot" as const, unitCostCents: 59, costEstimated: false };
+    const archive = { id: "archivo-3006", sku: "3006", ebayItemId: "880094115816", lotId: "", source: "archive" as const };
+    const parsed = saleLinesToStore(parseFulfillmentOrders([{
+      orderId: "01-15420-99914",
+      orderPaymentStatus: "PAID",
+      creationDate: "2026-11-08T18:00:00.000Z",
+      lineItems: [{
+        lineItemId: "linea-3006",
+        legacyItemId: "880094115816",
+        sku: "3006",
+        title: "Prenda parecida",
+        quantity: 1,
+        lineItemCost: { value: "12.00", currency: "USD" },
+      }],
+    }]));
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.itemCents).toBe(1200);
+    const match = lotForMatch(matchSaleToItem({
+      ebayItemId: parsed[0]?.ebayItemId ?? "",
+      sku: parsed[0]?.sku ?? "",
+      variantSku: "",
+      title: parsed[0]?.title ?? "",
+      items: [archive, lot],
+    }));
+    expect(match).toEqual({ linkStatus: "lotted", lotId: "compra-1000", itemId: "lote-1000" });
+    const stored = {
+      id: "venta-3006",
+      ebayItemId: "880094115816",
+      sku: "3006",
+      title: "Otra camisa",
+      linkStatus: "unmatched" as const,
+      linkLocked: false,
+      lotId: "",
+      itemId: "",
+      unitCostCents: null,
+    };
+    const first = planStoredSaleLinks([stored], [archive, lot]);
+    expect(first).toEqual([{
+      saleId: "venta-3006",
+      lotId: "compra-1000",
+      itemId: "lote-1000",
+      linkStatus: "lotted",
+      fillUnitCostCents: 59,
+      fillCostEstimated: false,
+    }]);
+    const second = planStoredSaleLinks([{ ...stored, linkStatus: "lotted", lotId: "compra-1000", itemId: "lote-1000", unitCostCents: 59 }], [archive, lot]);
+    expect(second).toEqual([]);
+    const incoming = { id: "venta-nueva", orderId: "01-15420-99914", lineItemId: "linea-3006", lotId: "compra-1000", linkLocked: false, incomeCents: 1200 };
+    const repeated = applyIncomingSale(applyIncomingSale([], incoming), { ...incoming, id: "venta-duplicada", incomeCents: 1200 });
+    expect(repeated).toHaveLength(1);
+    expect(repeated[0]?.incomeCents).toBe(1200);
+    const ambiguous = matchSaleToItem({
+      ebayItemId: "",
+      sku: "3006",
+      variantSku: "",
+      title: "Mismo título",
+      items: [lot, { ...lot, id: "otra", ebayItemId: "111" }],
+    });
+    expect(ambiguous.kind).toBe("ambiguous");
+    expect(matchSaleToItem({ ebayItemId: "", sku: "", variantSku: "", title: "Prenda parecida", items: [lot] }).kind).toBe("unmatched");
+    const profit = saleProfit({
+      itemCents: 1200,
+      buyerShippingCents: null,
+      taxRemittedCents: null,
+      feeCents: null,
+      sellerShippingCents: null,
+      refundCents: 0,
+      otherCents: 0,
+      unitCostCents: 59,
+      quantity: 1,
+      costEstimated: false,
+      cancelled: false,
+    });
+    expect(profit.profitCents).toBeNull();
+    expect(profit.label).toBe("Ganancia provisional");
+    expect(profit.missing).toEqual(expect.arrayContaining(["comisión de eBay", "envío pagado por ti", "envío cobrado al comprador"]));
+    const lotInput = {
+      purchaseCents: 90000,
+      extraCents: 11500,
+      sellableCount: 1723,
+      publishedCount: 1,
+      guatemalaPieces: 770,
+      guatemalaShippingCents: 36000,
+      items: [
+        { id: "lote-1000", ebayItemId: "880094115816", disposition: "" as const, unitCostCents: 59, costEstimated: false, manual: true },
+      ],
+      sales: [{
+        itemId: "archivo-3006",
+        ebayItemId: "880094115816",
+        cancelled: false,
+        linkStatus: "lotted" as const,
+        quantity: 1,
+        recordedCostCents: 59,
+        profit,
+      }],
+    };
+    const report = buildLotReport(lotInput);
+    expect(report.sold).toBe(1);
+    expect(report.remaining).toBe(952);
+    expect(report.usPieces).toBe(953);
+    expect(report.transferred).toBe(770);
+    expect(report.soldProfitCents).toBeNull();
+    expect(report.soldProfitProvisional).toBe(true);
+    expect(lotInput.purchaseCents).toBe(90000);
+    expect(lotInput.extraCents).toBe(11500);
+    expect(lotInput.sellableCount).toBe(1723);
+    expect(lotInput.guatemalaPieces).toBe(770);
+    expect(lotInput.items[0]?.unitCostCents).toBe(59);
+    const again = buildLotReport(lotInput);
+    expect(again.sold).toBe(report.sold);
+    expect(again.recoveredCents).toBe(report.recoveredCents);
+    expect(mergeSaleLines(parsed, parsed)).toHaveLength(1);
+    expect(readsRecentOrdersDuring("backfill")).toBe(true);
+    expect(readsRecentOrdersDuring("watch")).toBe(false);
+    const historical = planStoredSaleLinks([{ ...stored, unitCostCents: 80 }], [lot]);
+    expect(historical[0]?.fillUnitCostCents).toBeNull();
   });
 
   test("separates sold profit from investment recovery and does not count a Guatemala transfer as a sale", () => {

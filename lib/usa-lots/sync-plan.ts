@@ -37,6 +37,17 @@ export function nextOrderWindow(input: { now: number; cursorEnd: number | null; 
   };
 }
 
+export function recentOrderWindow(now: number): { start: string; end: string } {
+  return {
+    start: new Date(now - WATCH_MS).toISOString(),
+    end: new Date(now).toISOString(),
+  };
+}
+
+export function readsRecentOrdersDuring(phase: "backfill" | "watch"): boolean {
+  return phase === "backfill";
+}
+
 export function feeGapFromStatus(status: number): string {
   if (status === 401 || status === 403) {
     return `Falta el permiso ${FINANCES_SCOPE}. Las comisiones y el envío pagado por ti no están en el pedido y no se tomaron como cero.`;

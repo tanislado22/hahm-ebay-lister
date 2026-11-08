@@ -3,12 +3,13 @@ import { listEbayConnections } from "@/lib/ebay/client-connections";
 import { accessTokenFromCookie } from "@/lib/ebay/session";
 import { clientIsGuatemala } from "@/lib/markets/client-market";
 import { feeFromTransactions } from "@/lib/usa-lots/finances";
-import { isReadOnlyOrderRequest, parseFulfillmentOrders, saleLinesToStore } from "@/lib/usa-lots/parse-order";
-import { feeGapFromStatus, nextOrderWindow } from "@/lib/usa-lots/sync-plan";
+import { isReadOnlyOrderRequest, mergeSaleLines, parseFulfillmentOrders, saleLinesToStore } from "@/lib/usa-lots/parse-order";
+import { feeGapFromStatus, nextOrderWindow, readsRecentOrdersDuring, recentOrderWindow } from "@/lib/usa-lots/sync-plan";
 import {
   finishSaleNotice,
   postponeSaleNotice,
   readSyncState,
+  relinkOpenSales,
   saveParsedSales,
   saveSyncState,
   takeSaleNotices,
@@ -136,7 +137,7 @@ async function oldestConnection(connections: Connection[], accountKey?: string):
   return chosen;
 }
 
-export async function advanceUsaSaleSync(accountKeyOrOptions?: string | { accountKey?: string; source?: SyncSource }): Promise<{ ok: true; accountKey: string; saved: number; retryable: boolean } | { ok: false; error: string; retryable: boolean }> {
+export async function advanceUsaSaleSync(accountKeyOrOptions?: string | { accountKey?: string; source?: SyncSource }): Promise<{ ok: true; accountKey: string; saved: number; linked: number; retryable: boolean } | { ok: false; error: string; retryable: boolean }> {
   const accountKey = typeof accountKeyOrOptions === "string" ? accountKeyOrOptions : accountKeyOrOptions?.accountKey;
   const source: SyncSource = typeof accountKeyOrOptions === "string" ? "manual" : accountKeyOrOptions?.source ?? "manual";
   const connections = await usableConnections(accountKey);
@@ -158,6 +159,7 @@ export async function advanceUsaSaleSync(accountKeyOrOptions?: string | { accoun
   try {
     token = await tokenFor(connection);
   } catch (error) {
+    await relinkOpenSales(connection.connectionKey);
     await saveSyncState({
       accountKey: connection.connectionKey,
       phase: state.phase === "watch" ? "watch" : "backfill",
@@ -184,6 +186,7 @@ export async function advanceUsaSaleSync(accountKeyOrOptions?: string | { accoun
   const url = nextUrl || `${FULFILLMENT}/order?filter=${encodeURIComponent(`creationdate:[${window.start}..${window.end}]`)}&limit=50`;
   const read = await ebayGet(token, url);
   if (read.error) {
+    await relinkOpenSales(connection.connectionKey);
     await saveSyncState({
       accountKey: connection.connectionKey,
       phase,
@@ -207,11 +210,20 @@ export async function advanceUsaSaleSync(accountKeyOrOptions?: string | { accoun
     phase = window.phase;
     cursorEnd = window.nextCursorEnd ? new Date(window.nextCursorEnd).toISOString() : null;
   }
-  const lines = parseFulfillmentOrders(orders);
+  let lines = parseFulfillmentOrders(orders);
+  if (readsRecentOrdersDuring(state.phase === "watch" ? "watch" : "backfill")) {
+    const recent = recentOrderWindow(Date.now());
+    const recentRead = await ebayGet(token, `${FULFILLMENT}/order?filter=${encodeURIComponent(`creationdate:[${recent.start}..${recent.end}]`)}&limit=50`);
+    if (!recentRead.error) {
+      const recentOrders = Array.isArray(recentRead.body?.orders) ? recentRead.body.orders : [];
+      lines = mergeSaleLines(parseFulfillmentOrders(recentOrders), lines);
+    }
+  }
   const feeState = lines.length
     ? await feesFor(token, [...new Set(lines.map((line) => line.orderId))])
     : { fees: [], feeNote: state.feeNote, feeBlocked: state.feeBlocked };
   const saved = await saveParsedSales(connection.connectionKey, lines, feeState.fees);
+  const linked = await relinkOpenSales(connection.connectionKey);
   await saveSyncState({
     accountKey: connection.connectionKey,
     phase,
@@ -224,5 +236,5 @@ export async function advanceUsaSaleSync(accountKeyOrOptions?: string | { accoun
     source,
     saved: saved.saved + savedTotal,
   });
-  return { ok: true, accountKey: connection.connectionKey, saved: saved.saved + savedTotal, retryable: false };
+  return { ok: true, accountKey: connection.connectionKey, saved: saved.saved + savedTotal, linked: linked.linked, retryable: false };
 }
