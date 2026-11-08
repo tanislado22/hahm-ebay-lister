@@ -6,6 +6,12 @@ export function usdToCents(value: string): number | null {
   return Number.isSafeInteger(cents) ? cents : null;
 }
 
+export function centsToInput(cents: number | null | undefined): string {
+  if (cents == null || !Number.isFinite(cents)) return "";
+  const abs = Math.abs(Math.trunc(cents));
+  return `${Math.trunc(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
+}
+
 export function centsToUsd(cents: number | null | undefined): string {
   if (cents == null || !Number.isFinite(cents)) return "Pendiente";
   const sign = cents < 0 ? "-" : "";

@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { ensureInventoryTables, getSql } from "@/lib/db";
 import { exactSku } from "@/lib/archive/text";
 import { lotForMatch, matchSaleToItem, type SaleCandidate } from "@/lib/usa-lots/match";
-import { averageUnitCents, applyAverageCosts, buildLotReport, saleProfit, type SaleMoney } from "@/lib/usa-lots/profit";
+import { averageUnitCents, applyAverageCosts, buildLotReport, exclusiveShare, heldPieceCount, saleProfit, type SaleMoney } from "@/lib/usa-lots/profit";
 import { saleLinesToStore, type ParsedSaleLine } from "@/lib/usa-lots/parse-order";
 
 export async function ensureUsaLots(): Promise<void> {
@@ -112,6 +112,8 @@ export async function ensureUsaLots(): Promise<void> {
   await sql`ALTER TABLE usa_sale_sync ADD COLUMN IF NOT EXISTS last_success_source TEXT NOT NULL DEFAULT ''`;
   await sql`ALTER TABLE usa_sale_sync ADD COLUMN IF NOT EXISTS last_saved INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE usa_sale_notices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  await sql`ALTER TABLE usa_purchase_lots ADD COLUMN IF NOT EXISTS guatemala_piece_count INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE usa_purchase_lots ADD COLUMN IF NOT EXISTS guatemala_shipping_cents INTEGER NOT NULL DEFAULT 0`;
 }
 
 function centsOrNull(value: unknown): number | null {
@@ -143,11 +145,85 @@ export async function createUsaLot(input: {
   return { ok: true, id };
 }
 
-export async function listUsaLots(accountKey: string): Promise<{ id: string; name: string; purchasedOn: string; purchaseCents: number; extraCents: number; sellableCount: number | null }[]> {
+export async function updateUsaLot(input: {
+  accountKey: string;
+  lotId: string;
+  name: string;
+  purchasedOn: string;
+  purchaseCents: number;
+  extraCents: number;
+  sellableCount: number | null;
+}): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  const name = input.name.trim();
+  if (!input.lotId.trim()) return { ok: false, error: "Ese lote no pertenece a esta cuenta." };
+  if (!name) return { ok: false, error: "Escribe el nombre del lote." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.purchasedOn)) return { ok: false, error: "La fecha del lote no es válida." };
+  if (!Number.isInteger(input.purchaseCents) || input.purchaseCents < 0) return { ok: false, error: "El costo de compra tiene que ser un monto en USD." };
+  if (!Number.isInteger(input.extraCents) || input.extraCents < 0) return { ok: false, error: "Los gastos adicionales tienen que ser un monto en USD." };
+  if (input.sellableCount != null && (!Number.isInteger(input.sellableCount) || input.sellableCount < 1)) {
+    return { ok: false, error: "El conteo de piezas tiene que ser un número entero, o déjalo vacío si todavía está incompleto." };
+  }
   await ensureUsaLots();
   const sql = getSql();
   const rows = await sql`
-    SELECT id, name, purchased_on, purchase_cents, extra_cents, sellable_count
+    UPDATE usa_purchase_lots SET
+      name = ${name},
+      purchased_on = ${input.purchasedOn},
+      purchase_cents = ${input.purchaseCents},
+      extra_cents = ${input.extraCents},
+      sellable_count = ${input.sellableCount},
+      updated_at = NOW()
+    WHERE id = ${input.lotId} AND account_key = ${input.accountKey}
+    RETURNING id
+  `;
+  if (!rows.length) return { ok: false, error: "Ese lote no pertenece a esta cuenta." };
+  return { ok: true, id: String((rows[0] as { id: string }).id) };
+}
+
+export async function setGuatemalaReservation(input: {
+  accountKey: string;
+  lotId: string;
+  pieces: number;
+  shippingCents: number;
+}): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  if (!Number.isInteger(input.pieces) || input.pieces < 0) {
+    return { ok: false, error: "Las piezas para Guatemala tienen que ser un número entero, o cero si todavía no apartas ninguna." };
+  }
+  if (!Number.isInteger(input.shippingCents) || input.shippingCents < 0) {
+    return { ok: false, error: "El envío a Guatemala tiene que ser un monto en USD." };
+  }
+  if (input.shippingCents > 0 && input.pieces < 1) {
+    return { ok: false, error: "Indica cuántas piezas van a Guatemala antes de registrar el envío." };
+  }
+  await ensureUsaLots();
+  const sql = getSql();
+  const lots = await sql`
+    SELECT sellable_count FROM usa_purchase_lots
+    WHERE id = ${input.lotId} AND account_key = ${input.accountKey}
+    LIMIT 1
+  `;
+  if (!lots.length) return { ok: false, error: "Ese lote no pertenece a esta cuenta." };
+  const sellable = centsOrNull((lots[0] as { sellable_count?: unknown }).sellable_count);
+  if (sellable != null && input.pieces > sellable) {
+    return { ok: false, error: "Las piezas para Guatemala no pueden superar el total vendible del lote." };
+  }
+  const rows = await sql`
+    UPDATE usa_purchase_lots SET
+      guatemala_piece_count = ${input.pieces},
+      guatemala_shipping_cents = ${input.shippingCents},
+      updated_at = NOW()
+    WHERE id = ${input.lotId} AND account_key = ${input.accountKey}
+    RETURNING id
+  `;
+  if (!rows.length) return { ok: false, error: "Ese lote no pertenece a esta cuenta." };
+  return { ok: true, id: String((rows[0] as { id: string }).id) };
+}
+
+export async function listUsaLots(accountKey: string): Promise<{ id: string; name: string; purchasedOn: string; purchaseCents: number; extraCents: number; sellableCount: number | null; guatemalaPieces: number; guatemalaShippingCents: number }[]> {
+  await ensureUsaLots();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, name, purchased_on, purchase_cents, extra_cents, sellable_count, guatemala_piece_count, guatemala_shipping_cents
     FROM usa_purchase_lots
     WHERE account_key = ${accountKey}
     ORDER BY purchased_on DESC, name ASC
@@ -161,6 +237,8 @@ export async function listUsaLots(accountKey: string): Promise<{ id: string; nam
       purchaseCents: Number(record.purchase_cents),
       extraCents: Number(record.extra_cents),
       sellableCount: centsOrNull(record.sellable_count),
+      guatemalaPieces: centsOrNull(record.guatemala_piece_count) ?? 0,
+      guatemalaShippingCents: centsOrNull(record.guatemala_shipping_cents) ?? 0,
     };
   });
 }
@@ -309,21 +387,31 @@ export async function setManualItemCost(accountKey: string, itemId: string, unit
 export async function spreadAverageCost(accountKey: string, lotId: string): Promise<{ ok: true; estimated: boolean; updated: number } | { ok: false; error: string }> {
   await ensureUsaLots();
   const sql = getSql();
-  const lots = await sql`SELECT purchase_cents, extra_cents, sellable_count FROM usa_purchase_lots WHERE id = ${lotId} AND account_key = ${accountKey} LIMIT 1`;
+  const lots = await sql`SELECT purchase_cents, extra_cents, sellable_count, guatemala_piece_count, guatemala_shipping_cents FROM usa_purchase_lots WHERE id = ${lotId} AND account_key = ${accountKey} LIMIT 1`;
   if (!lots.length) return { ok: false, error: "Ese lote no pertenece a esta cuenta." };
-  const lot = lots[0] as { purchase_cents: number; extra_cents: number; sellable_count: number | null };
+  const lot = lots[0] as { purchase_cents: number; extra_cents: number; sellable_count: number | null; guatemala_piece_count: number | null; guatemala_shipping_cents: number | null };
   const sellable = centsOrNull(lot.sellable_count);
   const unit = averageUnitCents(Number(lot.purchase_cents), Number(lot.extra_cents), sellable);
-  const items = await sql`SELECT id, cost_locked, cost_source FROM usa_lot_items WHERE account_key = ${accountKey} AND lot_id = ${lotId}`;
+  const items = await sql`SELECT id, cost_locked, cost_source, disposition FROM usa_lot_items WHERE account_key = ${accountKey} AND lot_id = ${lotId}`;
   const sold = await sql`SELECT item_ref FROM usa_ebay_sales WHERE account_key = ${accountKey} AND lot_id = ${lotId} AND cancelled = FALSE AND item_ref <> ''`;
   const soldIds = new Set(sold.map((row) => String((row as { item_ref: string }).item_ref)));
+  const linkedTransfers = items.filter((row) => String((row as { disposition?: string }).disposition ?? "") === "guatemala-transfer").length;
+  const guatemalaPieces = heldPieceCount(centsOrNull(lot.guatemala_piece_count) ?? 0, linkedTransfers);
+  const shippingUnit = exclusiveShare(centsOrNull(lot.guatemala_shipping_cents) ?? 0, guatemalaPieces).unitCents ?? 0;
   const planned = applyAverageCosts(
     items.map((row) => {
-      const record = row as { id: string; cost_locked: boolean; cost_source: string };
-      return { id: String(record.id), locked: Boolean(record.cost_locked), sold: soldIds.has(String(record.id)), source: String(record.cost_source) };
+      const record = row as { id: string; cost_locked: boolean; cost_source: string; disposition?: string };
+      return {
+        id: String(record.id),
+        locked: Boolean(record.cost_locked),
+        sold: soldIds.has(String(record.id)),
+        source: String(record.cost_source),
+        disposition: String(record.disposition ?? "") === "guatemala-transfer" ? "guatemala-transfer" as const : "" as const,
+      };
     }),
     unit,
-    sellable
+    sellable,
+    unit == null ? null : unit + shippingUnit
   );
   if (planned.error) return { ok: false, error: planned.error };
   let updated = 0;
@@ -489,19 +577,28 @@ export async function readLotReport(accountKey: string, lotId: string) {
     extraCents: Number(lot.extra_cents),
     sellableCount: centsOrNull(lot.sellable_count),
     publishedCount: itemRows.filter((item) => String(item.ebay_item_id ?? "") !== "").length,
+    guatemalaPieces: centsOrNull(lot.guatemala_piece_count) ?? 0,
+    guatemalaShippingCents: centsOrNull(lot.guatemala_shipping_cents) ?? 0,
     items: itemRows.map((item) => ({
       id: String(item.id),
       ebayItemId: String(item.ebay_item_id ?? ""),
-      disposition: String(item.disposition ?? "") === "guatemala-transfer" ? "guatemala-transfer" : "",
+      disposition: String(item.disposition ?? "") === "guatemala-transfer" ? "guatemala-transfer" as const : "" as const,
       unitCostCents: centsOrNull(item.unit_cost_cents),
       costEstimated: Boolean(item.cost_estimated),
+      manual: String(item.cost_source ?? "") === "manual" || item.cost_locked === true,
     })),
-    sales: saleRows.map((sale) => ({
-      itemId: String(sale.record.item_ref ?? "") || null,
-      cancelled: Boolean(sale.record.cancelled),
-      linkStatus: String(sale.record.link_status ?? "unmatched") as "lotted" | "unassigned" | "unmatched" | "transfer",
-      profit: sale.profit,
-    })),
+    sales: saleRows.map((sale) => {
+      const unitCostCents = centsOrNull(sale.record.unit_cost_cents);
+      const quantity = centsOrNull(sale.record.quantity);
+      return {
+        itemId: String(sale.record.item_ref ?? "") || null,
+        cancelled: Boolean(sale.record.cancelled),
+        linkStatus: String(sale.record.link_status ?? "unmatched") as "lotted" | "unassigned" | "unmatched" | "transfer",
+        profit: sale.profit,
+        quantity,
+        recordedCostCents: unitCostCents != null && quantity != null && quantity >= 1 ? unitCostCents * quantity : null,
+      };
+    }),
   });
   return {
     lot: {
@@ -511,6 +608,8 @@ export async function readLotReport(accountKey: string, lotId: string) {
       purchaseCents: Number(lot.purchase_cents),
       extraCents: Number(lot.extra_cents),
       sellableCount: centsOrNull(lot.sellable_count),
+      guatemalaPieces: centsOrNull(lot.guatemala_piece_count) ?? 0,
+      guatemalaShippingCents: centsOrNull(lot.guatemala_shipping_cents) ?? 0,
     },
     report,
     items: itemRows.map((item) => ({

@@ -13,9 +13,11 @@ import {
   listUsaLots,
   readLotReport,
   readSyncState,
+  setGuatemalaReservation,
   setManualItemCost,
   spreadAverageCost,
   transferItemToGuatemala,
+  updateUsaLot,
 } from "@/lib/usa-lots/store";
 
 export const dynamic = "force-dynamic";
@@ -90,6 +92,42 @@ export async function POST(req: NextRequest) {
         sellableCount,
       });
       return NextResponse.json(created, { status: created.ok ? 200 : 400 });
+    }
+    if (action === "update") {
+      const purchase = usdToCents(String(body.purchase || ""));
+      const extra = usdToCents(String(body.extra || "0"));
+      const countText = String(body.sellableCount ?? "").trim();
+      const sellableCount = countText ? Number(countText) : null;
+      if (purchase == null || extra == null) return NextResponse.json({ ok: false, error: "Escribe los montos en USD, por ejemplo 250.00." }, { status: 400 });
+      if (countText && (!Number.isInteger(sellableCount) || (sellableCount ?? 0) < 1)) {
+        return NextResponse.json({ ok: false, error: "El conteo de piezas tiene que ser un número entero, o déjalo vacío si todavía está incompleto." }, { status: 400 });
+      }
+      const updated = await updateUsaLot({
+        accountKey: account.key,
+        lotId: String(body.lotId || ""),
+        name: String(body.name || ""),
+        purchasedOn: String(body.purchasedOn || ""),
+        purchaseCents: purchase,
+        extraCents: extra,
+        sellableCount,
+      });
+      return NextResponse.json(updated.ok ? { ...updated, message: "Se guardaron los cambios en el mismo lote." } : updated, { status: updated.ok ? 200 : 400 });
+    }
+    if (action === "guatemala") {
+      const piecesText = String(body.pieces ?? "").trim();
+      const pieces = piecesText ? Number(piecesText) : 0;
+      const shipping = usdToCents(String(body.shipping || "0"));
+      if (!Number.isInteger(pieces) || pieces < 0) {
+        return NextResponse.json({ ok: false, error: "Las piezas para Guatemala tienen que ser un número entero, o cero si todavía no apartas ninguna." }, { status: 400 });
+      }
+      if (shipping == null) return NextResponse.json({ ok: false, error: "El envío a Guatemala tiene que ser un monto en USD." }, { status: 400 });
+      const reserved = await setGuatemalaReservation({
+        accountKey: account.key,
+        lotId: String(body.lotId || ""),
+        pieces,
+        shippingCents: shipping,
+      });
+      return NextResponse.json(reserved.ok ? { ...reserved, message: "Quedaron registradas las piezas para Guatemala en este lote, sin crear artículos." } : reserved, { status: reserved.ok ? 200 : 400 });
     }
     if (action === "assign") {
       const items = Array.isArray(body.items) ? body.items.flatMap((item) => {

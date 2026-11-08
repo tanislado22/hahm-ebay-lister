@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { OwnerAccess } from "@/app/OwnerAccess";
 import { accessHeaders } from "@/lib/api-client";
-import { centsToUsd } from "@/lib/usa-lots/money";
+import { centsToInput, centsToUsd } from "@/lib/usa-lots/money";
 
 interface LotRow {
   id: string;
@@ -12,6 +12,8 @@ interface LotRow {
   purchaseCents: number;
   extraCents: number;
   sellableCount: number | null;
+  guatemalaPieces?: number;
+  guatemalaShippingCents?: number;
 }
 
 interface OpenSale {
@@ -57,6 +59,14 @@ interface Detail {
     surplusCents: number | null;
     unsoldCostCents: number | null;
     pending: string[];
+    averageUnitCents: number | null;
+    averageDisplayCents: number | null;
+    pendingAssignCents: number | null;
+    usPieces: number | null;
+    linkedTransfers: number;
+    guatemalaPieces: number;
+    guatemalaShippingCents: number;
+    guatemalaShippingUnitCents: number | null;
   };
   items: { id: string; sku: string; ebayItemId: string; title: string; unitCostCents: number | null; costEstimated: boolean; disposition: string }[];
   sales: SaleRow[];
@@ -78,6 +88,14 @@ export default function LotsPage() {
   const [purchase, setPurchase] = useState("");
   const [extra, setExtra] = useState("0");
   const [sellableCount, setSellableCount] = useState("");
+  const [editingId, setEditingId] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editPurchase, setEditPurchase] = useState("");
+  const [editExtra, setEditExtra] = useState("");
+  const [editCount, setEditCount] = useState("");
+  const [gtPieces, setGtPieces] = useState("");
+  const [gtShipping, setGtShipping] = useState("0.00");
 
   const account = () => {
     const params = new URLSearchParams();
@@ -113,6 +131,23 @@ export default function LotsPage() {
   useEffect(() => {
     void load("");
   }, [workMode, clientId]);
+
+  useEffect(() => {
+    if (!detail) return;
+    setGtPieces(detail.lot.guatemalaPieces ? String(detail.lot.guatemalaPieces) : "");
+    setGtShipping(centsToInput(detail.lot.guatemalaShippingCents ?? 0));
+  }, [detail]);
+
+  const openEdit = (lot: LotRow) => {
+    setEditingId(lot.id);
+    setEditName(lot.name);
+    setEditDate(lot.purchasedOn);
+    setEditPurchase(centsToInput(lot.purchaseCents));
+    setEditExtra(centsToInput(lot.extraCents));
+    setEditCount(lot.sellableCount == null ? "" : String(lot.sellableCount));
+    setError("");
+    setMessage("");
+  };
 
   const post = async (body: Record<string, unknown>) => {
     setError("");
@@ -216,11 +251,46 @@ export default function LotsPage() {
           <input id="lot-count" value={sellableCount} onChange={(event) => setSellableCount(event.target.value)} inputMode="numeric" />
           <button type="submit" className="btn btn-primary">Crear lote</button>
         </form>
-        <div className="result-actions">
+        <div className="lot-list">
           {lots.map((lot) => (
-            <button key={lot.id} type="button" className={selected === lot.id ? "btn btn-primary" : "btn btn-ghost"} onClick={() => { setSelected(lot.id); void load(lot.id); }}>
-              {lot.name}
-            </button>
+            <div key={lot.id} className="lot-row">
+              <button type="button" className={selected === lot.id ? "btn btn-primary" : "btn btn-ghost"} onClick={() => { setSelected(lot.id); void load(lot.id); }}>
+                {lot.name}
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => openEdit(lot)}>Editar lote</button>
+              {editingId === lot.id ? (
+                <form className="archive-search lot-edit" onSubmit={(event) => {
+                  event.preventDefault();
+                  void post({
+                    action: "update",
+                    lotId: lot.id,
+                    name: editName,
+                    purchasedOn: editDate,
+                    purchase: editPurchase,
+                    extra: editExtra,
+                    sellableCount: editCount,
+                  }).then((ok) => {
+                    if (!ok) return;
+                    setEditingId("");
+                    setSelected(lot.id);
+                    void load(lot.id);
+                  });
+                }}>
+                  <label htmlFor={`edit-name-${lot.id}`}>Nombre</label>
+                  <input id={`edit-name-${lot.id}`} value={editName} onChange={(event) => setEditName(event.target.value)} />
+                  <label htmlFor={`edit-date-${lot.id}`}>Fecha</label>
+                  <input id={`edit-date-${lot.id}`} type="date" value={editDate} onChange={(event) => setEditDate(event.target.value)} />
+                  <label htmlFor={`edit-purchase-${lot.id}`}>Costo de compra USD</label>
+                  <input id={`edit-purchase-${lot.id}`} value={editPurchase} onChange={(event) => setEditPurchase(event.target.value)} inputMode="decimal" />
+                  <label htmlFor={`edit-extra-${lot.id}`}>Gastos adicionales USD</label>
+                  <input id={`edit-extra-${lot.id}`} value={editExtra} onChange={(event) => setEditExtra(event.target.value)} inputMode="decimal" />
+                  <label htmlFor={`edit-count-${lot.id}`}>Cantidad total de piezas vendibles</label>
+                  <input id={`edit-count-${lot.id}`} value={editCount} onChange={(event) => setEditCount(event.target.value)} inputMode="numeric" />
+                  <button type="submit" className="btn btn-primary">Guardar cambios</button>
+                  <button type="button" className="btn btn-ghost" onClick={() => setEditingId("")}>Cancelar</button>
+                </form>
+              ) : null}
+            </div>
           ))}
         </div>
       </section>
@@ -229,14 +299,45 @@ export default function LotsPage() {
           <h2>{detail.lot.name}</h2>
           <p>{detail.lot.purchasedOn} · compra {centsToUsd(detail.lot.purchaseCents)} · gastos {centsToUsd(detail.lot.extraCents)} · moneda USD</p>
           <p>Total invertido: {centsToUsd(detail.report.investedCents)}</p>
-          <p>Registrados: {detail.report.registered}. Publicados: {detail.report.published}. Vendidos: {detail.report.sold}. Trasladados: {detail.report.transferred}. Restantes: {detail.report.remaining == null ? "conteo incompleto" : detail.report.remaining}{detail.report.remainingEstimated ? " (estimado)" : ""}.</p>
+          {detail.report.averageDisplayCents != null && detail.lot.sellableCount ? (
+            <p>
+              Costo promedio: {detail.report.averageDisplayCents * detail.lot.sellableCount === detail.report.investedCents ? "" : "aproximadamente "}
+              {centsToUsd(detail.report.averageDisplayCents)} por prenda ({centsToUsd(detail.report.investedCents)} ÷ {detail.lot.sellableCount}).
+            </p>
+          ) : null}
+          {detail.report.usPieces != null ? (
+            <p>Para Estados Unidos: {detail.report.usPieces} prendas. El envío a Guatemala no aumenta su costo.</p>
+          ) : null}
+          {detail.report.transferred > 0 ? (
+            <p>
+              Para Guatemala: {detail.report.transferred} prendas. Conservan su parte del costo original.
+              {detail.report.guatemalaShippingCents > 0 ? ` El envío de ${centsToUsd(detail.report.guatemalaShippingCents)} corresponde solo a esas prendas.` : ""}
+            </p>
+          ) : null}
+          {detail.report.linkedTransfers > 0 && (detail.lot.guatemalaPieces ?? 0) > 0 ? (
+            <p>Los {detail.report.linkedTransfers} artículos apartados están dentro de las piezas destinadas a Guatemala y no se descuentan otra vez.</p>
+          ) : null}
+          <p>Registrados: {detail.report.registered}. Publicados: {detail.report.published}. Vendidos: {detail.report.sold}. Destinados a Guatemala: {detail.report.transferred}. Restantes en Estados Unidos: {detail.report.remaining == null ? "conteo incompleto" : detail.report.remaining}{detail.report.remainingEstimated ? " (estimado)" : ""}.</p>
           <p>{detail.report.soldProfitProvisional ? "Ganancia provisional" : "Ganancia"} de lo vendido: {centsToUsd(detail.report.soldProfitCents)}. Este número resta el costo de las unidades vendidas una sola vez.</p>
           <p>Dinero recuperado neto de gastos de venta: {centsToUsd(detail.report.recoveredCents)}{detail.report.recoveredProvisional ? " (provisional)" : ""}. No resta otra vez el costo del lote.</p>
           <p>{detail.report.surplusCents != null ? `Excedente recuperado: ${centsToUsd(detail.report.surplusCents)}.` : `Inversión pendiente de recuperar: ${centsToUsd(detail.report.investmentLeftCents)}.`}</p>
           <p>Costo del inventario restante: {centsToUsd(detail.report.unsoldCostCents)}</p>
           {detail.report.pending.length > 0 ? <ul>{detail.report.pending.map((item) => <li key={item}>{item}</li>)}</ul> : null}
+          <form className="archive-search" onSubmit={(event) => {
+            event.preventDefault();
+            void post({ action: "guatemala", lotId: detail.lot.id, pieces: gtPieces, shipping: gtShipping }).then((ok) => { if (ok) void load(detail.lot.id); });
+          }}>
+            <h3>Destinar piezas a Guatemala</h3>
+            <p className="note">Registra el número de piezas sin crear un artículo por cada una. Siguen dentro del total vendible y conservan su parte del costo de este lote. El envío a Guatemala no se carga a las prendas que quedan en Estados Unidos.</p>
+            <label htmlFor="gt-pieces">Piezas destinadas a Guatemala</label>
+            <input id="gt-pieces" value={gtPieces} onChange={(event) => setGtPieces(event.target.value)} inputMode="numeric" placeholder="770" />
+            <label htmlFor="gt-shipping">Envío a Guatemala USD</label>
+            <input id="gt-shipping" value={gtShipping} onChange={(event) => setGtShipping(event.target.value)} inputMode="decimal" />
+            <button type="submit" className="btn btn-primary">Guardar piezas para Guatemala</button>
+          </form>
           <button type="button" className="btn btn-ghost" onClick={() => void post({ action: "average", lotId: detail.lot.id }).then((ok) => { if (ok) void load(detail.lot.id); })}>Repartir promedio</button>
-          <p className="note">El promedio solo cambia artículos sin costo manual y sin una venta ya registrada. Si el conteo está incompleto, el costo queda estimado.</p>
+          <p className="note">El promedio usa el total vendible, incluidas las piezas destinadas a Guatemala. No cambia un costo manual ni el costo ya guardado en una venta. El envío a Guatemala no entra en las prendas de Estados Unidos.</p>
+          <p className="note">Apartar un artículo no lo quita del total vendible ni pasa su costo a las demás prendas. Si ya registraste un número de piezas para Guatemala, ese artículo cuenta dentro de ese número.</p>
           <ul>
             {detail.items.map((item) => (
               <li key={item.id}>

@@ -127,10 +127,118 @@ describe("USA purchase lots", () => {
     );
     expect(blocked.items.every((item) => item.unitCostCents == null)).toBe(true);
     const open = applyAverageCosts([{ id: "c", locked: false, sold: false, source: "estimated" }], 1050, 4);
-    expect(open.estimated).toBe(true);
-    expect(open.items[0]).toMatchObject({ unitCostCents: 1050, costEstimated: true });
+    expect(open.estimated).toBe(false);
+    expect(open.items[0]).toMatchObject({ unitCostCents: 1050, costEstimated: false });
     const missing = applyAverageCosts([{ id: "d", locked: false, sold: false, source: "estimated" }], null, null);
     expect(missing.error).toContain("No se inventó una cantidad");
+  });
+
+  test("keeps the full purchase in the lot and gives Guatemala only its share plus its own shipping", () => {
+    const plain = buildLotReport({
+      purchaseCents: 90000,
+      extraCents: 11500,
+      sellableCount: 1723,
+      publishedCount: 0,
+      guatemalaPieces: 770,
+      guatemalaShippingCents: 36000,
+      items: [],
+      sales: [],
+    });
+    expect(plain.investedCents).toBe(101500);
+    expect(plain.transferred).toBe(770);
+    expect(plain.usPieces).toBe(953);
+    expect(plain.remaining).toBe(953);
+    expect(plain.registered).toBe(0);
+    expect(plain.averageUnitCents).toBe(58);
+    expect(plain.averageDisplayCents).toBe(59);
+    expect(plain.pendingAssignCents).toBe(1566);
+    expect(plain.guatemalaShippingUnitCents).toBe(46);
+    expect(averageUnitCents(90000, 11500 + 36000, 1723)).toBe(79);
+
+    const items = [
+      { id: "us-1", ebayItemId: "111", disposition: "" as const, unitCostCents: 500, costEstimated: false, manual: true },
+      { id: "gt-1", ebayItemId: "", disposition: "guatemala-transfer" as const, unitCostCents: 58, costEstimated: false },
+    ];
+    const report = buildLotReport({
+      purchaseCents: 90000,
+      extraCents: 11500,
+      sellableCount: 1723,
+      publishedCount: 1,
+      guatemalaPieces: 770,
+      guatemalaShippingCents: 36000,
+      items,
+      sales: [{
+        itemId: "sold-old",
+        cancelled: false,
+        linkStatus: "lotted",
+        quantity: 1,
+        recordedCostCents: 80,
+        profit: saleProfit({
+          itemCents: 2000,
+          buyerShippingCents: 0,
+          taxRemittedCents: 0,
+          feeCents: 200,
+          sellerShippingCents: 0,
+          refundCents: 0,
+          otherCents: 0,
+          unitCostCents: 80,
+          quantity: 1,
+          costEstimated: false,
+          cancelled: false,
+        }),
+      }],
+    });
+    expect(report.investedCents).toBe(101500);
+    expect(report.registered).toBe(2);
+    expect(report.transferred).toBe(770);
+    expect(report.linkedTransfers).toBe(1);
+    expect(report.usPieces).toBe(953);
+    expect(report.remaining).toBe(953);
+    expect(report.averageDisplayCents).toBe(59);
+    expect(report.averageUnitCents).toBe(58);
+    expect(averageUnitCents(90000, 11500, 1723)).toBe(58);
+    expect(averageUnitCents(90000, 11500 + 36000, 1723)).not.toBe(58);
+    expect(report.guatemalaShippingCents).toBe(36000);
+    expect(report.guatemalaShippingUnitCents).toBe(46);
+    expect(report.pendingAssignCents).toBe(1102);
+    expect(report.pending.join(" ")).toContain("Diferencia pendiente de asignar: $11.02");
+    expect(report.pending.join(" ")).toContain("No se suman al costo de Estados Unidos");
+
+    const linkedLater = buildLotReport({
+      purchaseCents: 90000,
+      extraCents: 11500,
+      sellableCount: 1723,
+      publishedCount: 1,
+      guatemalaPieces: 770,
+      guatemalaShippingCents: 36000,
+      items: [
+        ...items,
+        ...Array.from({ length: 9 }, (_, index) => ({
+          id: `gt-${index + 2}`,
+          ebayItemId: "",
+          disposition: "guatemala-transfer" as const,
+          unitCostCents: 58,
+          costEstimated: false,
+        })),
+      ],
+      sales: [],
+    });
+    expect(linkedLater.registered).toBe(11);
+    expect(linkedLater.transferred).toBe(770);
+    expect(linkedLater.usPieces).toBe(953);
+
+    const split = applyAverageCosts(
+      [
+        { id: "us", locked: false, sold: false, source: "estimated", disposition: "" as const },
+        { id: "gt", locked: false, sold: false, source: "estimated", disposition: "guatemala-transfer" as const },
+        { id: "manual", locked: true, sold: false, source: "manual", disposition: "" as const },
+        { id: "sold", locked: false, sold: true, source: "average", disposition: "" as const },
+      ],
+      58,
+      1723,
+      58 + 46
+    );
+    expect(split.items.map((item) => item.unitCostCents)).toEqual([58, 104, null, null]);
   });
 
   test("separates sold profit from investment recovery and does not count a Guatemala transfer as a sale", () => {

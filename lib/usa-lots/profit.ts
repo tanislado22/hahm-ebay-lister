@@ -1,3 +1,5 @@
+import { centsToUsd } from "@/lib/usa-lots/money";
+
 export const SHARED_COST_RULE =
   "Los gastos compartidos del pedido se reparten según el precio de cada artículo. El resto de los centavos va al artículo de mayor precio.";
 
@@ -92,6 +94,7 @@ export interface LotItemSnapshot {
   disposition: "" | "guatemala-transfer";
   unitCostCents: number | null;
   costEstimated: boolean;
+  manual?: boolean;
 }
 
 export interface LotSaleSnapshot {
@@ -99,6 +102,8 @@ export interface LotSaleSnapshot {
   cancelled: boolean;
   linkStatus: "lotted" | "unassigned" | "unmatched" | "transfer";
   profit: ProfitResult;
+  quantity?: number | null;
+  recordedCostCents?: number | null;
 }
 
 export interface LotReport {
@@ -117,6 +122,56 @@ export interface LotReport {
   surplusCents: number | null;
   unsoldCostCents: number | null;
   pending: string[];
+  averageUnitCents: number | null;
+  averageDisplayCents: number | null;
+  pendingAssignCents: number | null;
+  usPieces: number | null;
+  linkedTransfers: number;
+  guatemalaPieces: number;
+  guatemalaShippingCents: number;
+  guatemalaShippingUnitCents: number | null;
+  guatemalaShippingPendingCents: number | null;
+}
+
+export function heldPieceCount(bulkCount: number, linkedCount: number): number {
+  const bulk = Number.isInteger(bulkCount) && bulkCount > 0 ? bulkCount : 0;
+  const linked = Number.isInteger(linkedCount) && linkedCount > 0 ? linkedCount : 0;
+  return Math.max(bulk, linked);
+}
+
+export function displayedAverageCents(investedCents: number, sellableCount: number | null): number | null {
+  if (sellableCount == null || sellableCount < 1 || !Number.isInteger(investedCents)) return null;
+  return Math.round(investedCents / sellableCount);
+}
+
+export function assignmentBalance(input: {
+  investedCents: number;
+  sellableCount: number | null;
+  respected: { count: number; cents: number }[];
+}): { unitCents: number | null; displayCents: number | null; pendingCents: number | null } {
+  if (input.sellableCount == null || input.sellableCount < 1 || !Number.isInteger(input.investedCents)) {
+    return { unitCents: null, displayCents: null, pendingCents: null };
+  }
+  const unitCents = Math.floor(input.investedCents / input.sellableCount);
+  const displayCents = Math.round(input.investedCents / input.sellableCount);
+  let respectedCount = 0;
+  let respectedCents = 0;
+  for (const piece of input.respected) {
+    if (!Number.isInteger(piece.count) || piece.count < 1) continue;
+    if (!Number.isInteger(piece.cents) || piece.cents < 0) continue;
+    respectedCount += piece.count;
+    respectedCents += piece.cents;
+  }
+  const flexible = input.sellableCount - respectedCount;
+  const assigned = flexible >= 0 ? respectedCents + unitCents * flexible : respectedCents;
+  return { unitCents, displayCents, pendingCents: input.investedCents - assigned };
+}
+
+export function exclusiveShare(totalCents: number, pieces: number): { unitCents: number | null; pendingCents: number } {
+  if (!Number.isInteger(totalCents) || totalCents < 0) return { unitCents: null, pendingCents: 0 };
+  if (!Number.isInteger(pieces) || pieces < 1) return { unitCents: null, pendingCents: totalCents };
+  const unitCents = Math.floor(totalCents / pieces);
+  return { unitCents, pendingCents: totalCents - unitCents * pieces };
 }
 
 export function buildLotReport(input: {
@@ -124,21 +179,27 @@ export function buildLotReport(input: {
   extraCents: number;
   sellableCount: number | null;
   publishedCount: number;
+  guatemalaPieces?: number;
+  guatemalaShippingCents?: number;
   items: LotItemSnapshot[];
   sales: LotSaleSnapshot[];
 }): LotReport {
   const sales = input.sales.filter((sale) => sale.linkStatus === "lotted");
   const investedCents = input.purchaseCents + input.extraCents;
   const registered = input.items.length;
-  const transferred = input.items.filter((item) => item.disposition === "guatemala-transfer").length;
+  const linkedTransfers = input.items.filter((item) => item.disposition === "guatemala-transfer").length;
+  const guatemalaPieces = Number.isInteger(input.guatemalaPieces) && (input.guatemalaPieces ?? 0) > 0 ? input.guatemalaPieces ?? 0 : 0;
+  const transferred = heldPieceCount(guatemalaPieces, linkedTransfers);
   const soldIds = new Set(
     sales
       .filter((sale) => !sale.cancelled && sale.itemId)
       .map((sale) => sale.itemId as string)
   );
   const sold = input.items.filter((item) => soldIds.has(item.id) && item.disposition !== "guatemala-transfer").length;
-  const countIncomplete = input.sellableCount == null || registered < input.sellableCount;
-  const remaining = countIncomplete ? null : Math.max(0, registered - sold - transferred);
+  const sellableCount = input.sellableCount != null && input.sellableCount >= 1 ? input.sellableCount : null;
+  const countIncomplete = sellableCount == null;
+  const remaining = sellableCount == null ? null : Math.max(0, sellableCount - sold - transferred);
+  const usPieces = sellableCount == null ? null : Math.max(0, sellableCount - transferred);
   const pending: string[] = [];
   if (countIncomplete) pending.push("El conteo de piezas vendibles está incompleto.");
   const profitKnown = sales.every((sale) => sale.profit.profitCents != null);
@@ -150,10 +211,27 @@ export function buildLotReport(input: {
     ? sales.reduce((total, sale) => total + (sale.profit.recoveredCents ?? 0), 0)
     : null;
   for (const sale of sales) pending.push(...sale.profit.missing.map((item) => `Venta: ${item}`));
+  const respected = respectedCosts(input.items, sales);
+  const balance = assignmentBalance({ investedCents, sellableCount: input.sellableCount, respected });
+  if (balance.pendingCents != null && balance.pendingCents !== 0) {
+    const amount = centsToUsd(Math.abs(balance.pendingCents));
+    pending.push(
+      balance.pendingCents > 0
+        ? `Diferencia pendiente de asignar: ${amount}. Los costos manuales y los de ventas ya registradas se quedan como están.`
+        : `Los costos ya asignados superan lo invertido por ${amount}. No se modificaron los costos manuales ni los de ventas registradas.`
+    );
+  }
+  const shipping = exclusiveShare(input.guatemalaShippingCents ?? 0, transferred);
+  if ((input.guatemalaShippingCents ?? 0) > 0 && shipping.pendingCents > 0) {
+    pending.push(`Del envío a Guatemala quedan ${centsToUsd(shipping.pendingCents)} sin asignar a esas prendas. No se suman al costo de Estados Unidos.`);
+  }
   const unsold = input.items.filter((item) => item.disposition !== "guatemala-transfer" && !soldIds.has(item.id));
-  const unsoldKnown = unsold.every((item) => item.unitCostCents != null && !item.costEstimated);
+  const unregisteredRemaining = remaining == null ? 0 : Math.max(0, remaining - unsold.length);
+  const unsoldKnown = unregisteredRemaining === 0 && unsold.every((item) => item.unitCostCents != null && !item.costEstimated);
   const unsoldCostCents = unsoldKnown ? unsold.reduce((total, item) => total + (item.unitCostCents ?? 0), 0) : null;
-  if (!unsoldKnown) pending.push("Falta el costo de parte del inventario restante.");
+  if (unsold.some((item) => item.unitCostCents == null || item.costEstimated)) {
+    pending.push("Falta el costo de parte del inventario restante.");
+  }
   const investmentLeftCents = recoveredCents == null ? null : investedCents - recoveredCents;
   return {
     investedCents,
@@ -171,13 +249,54 @@ export function buildLotReport(input: {
     surplusCents: investmentLeftCents != null && investmentLeftCents < 0 ? -investmentLeftCents : null,
     unsoldCostCents,
     pending: [...new Set(pending)],
+    averageUnitCents: balance.unitCents,
+    averageDisplayCents: balance.displayCents,
+    pendingAssignCents: balance.pendingCents,
+    usPieces,
+    linkedTransfers,
+    guatemalaPieces,
+    guatemalaShippingCents: Number.isInteger(input.guatemalaShippingCents) && (input.guatemalaShippingCents ?? 0) > 0 ? input.guatemalaShippingCents ?? 0 : 0,
+    guatemalaShippingUnitCents: shipping.unitCents,
+    guatemalaShippingPendingCents: (input.guatemalaShippingCents ?? 0) > 0 ? shipping.pendingCents : 0,
   };
 }
 
-export function applyAverageCosts<T extends { id: string; locked: boolean; sold: boolean; source: string }>(
+function respectedCosts(items: LotItemSnapshot[], sales: LotSaleSnapshot[]): { count: number; cents: number }[] {
+  const saleByItem = new Map<string, { count: number; cents: number }>();
+  const loose: { count: number; cents: number }[] = [];
+  for (const sale of sales) {
+    if (sale.cancelled || sale.recordedCostCents == null || !Number.isInteger(sale.recordedCostCents)) continue;
+    const quantity = sale.quantity == null ? 1 : sale.quantity;
+    if (!Number.isInteger(quantity) || quantity < 1) continue;
+    if (!sale.itemId) {
+      loose.push({ count: quantity, cents: sale.recordedCostCents });
+      continue;
+    }
+    const previous = saleByItem.get(sale.itemId);
+    saleByItem.set(sale.itemId, {
+      count: (previous?.count ?? 0) + quantity,
+      cents: (previous?.cents ?? 0) + sale.recordedCostCents,
+    });
+  }
+  const respected: { count: number; cents: number }[] = [];
+  for (const item of items) {
+    const recorded = saleByItem.get(item.id);
+    if (recorded) {
+      respected.push(recorded);
+      saleByItem.delete(item.id);
+      continue;
+    }
+    if (item.manual && item.unitCostCents != null) respected.push({ count: 1, cents: item.unitCostCents });
+  }
+  respected.push(...saleByItem.values(), ...loose);
+  return respected;
+}
+
+export function applyAverageCosts<T extends { id: string; locked: boolean; sold: boolean; source: string; disposition?: "" | "guatemala-transfer" }>(
   items: T[],
   unitCents: number | null,
-  sellableCount: number | null
+  sellableCount: number | null,
+  transferUnitCents: number | null = null
 ): { items: (T & { unitCostCents: number | null; costEstimated: boolean })[]; estimated: boolean; error: string } {
   if (sellableCount == null || sellableCount < 1 || unitCents == null) {
     return {
@@ -186,15 +305,15 @@ export function applyAverageCosts<T extends { id: string; locked: boolean; sold:
       error: "Indica cuántas piezas vendibles tiene el lote antes de repartir el promedio. No se inventó una cantidad.",
     };
   }
-  const estimated = items.length < sellableCount;
   return {
-    estimated,
+    estimated: false,
     error: "",
     items: items.map((item) => {
       if (item.locked || item.sold || item.source === "manual") {
         return { ...item, unitCostCents: null, costEstimated: false };
       }
-      return { ...item, unitCostCents: unitCents, costEstimated: estimated };
+      const share = item.disposition === "guatemala-transfer" && transferUnitCents != null ? transferUnitCents : unitCents;
+      return { ...item, unitCostCents: share, costEstimated: false };
     }),
   };
 }
