@@ -13,7 +13,7 @@ import {
   cameraFailureMessage,
   cameraMayRetry,
   garmentQrText,
-  parseGarmentQr,
+  readScannedLabel,
   releaseScan,
   scanLotLabel,
   scanSaleDecision,
@@ -234,16 +234,19 @@ export function ScanScreen({
   }
 
   async function onDecoded(text: string) {
-    const parsed = parseGarmentQr(text);
-    if (!parsed.ok) {
-      setScanError(parsed.error);
+    const read = readScannedLabel(text);
+    if (!read.ok) {
+      setScanError(read.error);
       return;
     }
-    const next = beginScan(lockRef.current, parsed.itemId);
+    const lockKey = read.kind === "code" ? read.itemId : `sku:${read.sku}`;
+    const next = beginScan(lockRef.current, lockKey);
     if (!next) return;
     lockRef.current = next;
     window.setTimeout(() => {
-      void stopCamera().then(() => load({ codigo: garmentQrText(parsed.itemId) }, true));
+      void stopCamera().then(() =>
+        load(read.kind === "code" ? { codigo: garmentQrText(read.itemId) } : { sku: read.sku }, true)
+      );
     }, 0);
   }
 

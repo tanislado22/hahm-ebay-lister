@@ -1,31 +1,33 @@
 /**
  * Etiqueta QR de Tienda Guatemala.
  *
- * Contenido exacto que debe imprimirse en cada etiqueta:
+ * El QR puede contener uno de estos dos textos, sin precio, enlace ni sesión:
  *   VSA1:<identificador de la prenda>
+ *   <SKU de la prenda>
  *
- * Ejemplo:
+ * Ejemplos:
  *   VSA1:550e8400-e29b-41d4-a716-446655440000
+ *   L1-0001
  *
- * El identificador es el id de esa prenda en el inventario de Guatemala.
- * Es único aunque el mismo SKU exista en otro lote. No imprimir solo el SKU,
- * el precio, un enlace ni una sesión. El texto no abre el panel ni registra
- * una venta: para consultar o vender hace falta la sesión del propietario
- * o de un encargado.
+ * El identificador distingue una prenda aunque el SKU se repita. El SKU se
+ * busca tal como está guardado en el inventario de Guatemala: se quitan solo
+ * los espacios de los extremos y se conservan los ceros iniciales. Si ese SKU
+ * está en varios lotes, hay que elegir la prenda. El texto no abre el panel
+ * ni registra una venta.
  */
 
 export const GARMENT_QR_PREFIX = "VSA1";
 
 export const GARMENT_QR_SPEC =
-  "Imprime en el QR exactamente VSA1: seguido del identificador de la prenda, sin espacios ni enlace. Ejemplo: VSA1:550e8400-e29b-41d4-a716-446655440000. Ese identificador distingue la prenda aunque el SKU se repita en otro lote. No imprimas solo el SKU, el precio ni una sesión.";
+  "El QR puede traer el identificador de la prenda, por ejemplo VSA1:550e8400-e29b-41d4-a716-446655440000, o solo el SKU tal como está en la prenda, por ejemplo L1-0001. Se conservan los ceros iniciales. Si el SKU está en varios lotes, elige la prenda. Escanear no registra la venta.";
 
 const ITEM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QR_TEXT = new RegExp(`^${GARMENT_QR_PREFIX}:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`, "i");
 
 export const QR_MESSAGES = {
-  badCode: "Ese QR no es una etiqueta de Tienda Guatemala. Debe decir VSA1: y el identificador de la prenda.",
+  badCode: "Ese QR no es una etiqueta válida. Usa VSA1: y el identificador, o el SKU tal como está en la prenda.",
   unknownCode: "No hay una prenda con ese código en el inventario de Guatemala.",
-  unknownSku: "No hay una prenda con ese SKU en el inventario de Guatemala.",
+  unknownSku: "No se encontró una prenda con este SKU",
   needCodeOrSku: "Escanea una etiqueta o escribe un SKU.",
   sold: "Esta prenda ya fue vendida. No se puede registrar otra venta.",
   withdrawn: "Esta prenda está retirada. No se puede registrar una venta.",
@@ -60,6 +62,8 @@ export type ScanQuery =
   | { ok: true; kind: "sku"; sku: string }
   | { ok: false; status: 400; error: string };
 
+export type ScannedLabel = ScanQuery;
+
 export interface ScanLock {
   code: string | null;
   saving: boolean;
@@ -76,19 +80,24 @@ export function parseGarmentQr(raw: unknown): { ok: true; itemId: string } | { o
   return { ok: true, itemId: match[1].toLowerCase() };
 }
 
-export function scanQuery(input: { codigo?: unknown; sku?: unknown }): ScanQuery {
-  const codigo = typeof input.codigo === "string" ? input.codigo.trim() : "";
-  const sku = typeof input.sku === "string" ? input.sku.trim() : "";
-  if (codigo) {
-    const parsed = parseGarmentQr(codigo);
+/** A scanned label is either the VSA1 identifier or the garment SKU itself. */
+export function readScannedLabel(raw: unknown): ScannedLabel {
+  if (typeof raw !== "string") return { ok: false, status: 400, error: QR_MESSAGES.badCode };
+  const text = raw.trim();
+  if (!text) return { ok: false, status: 400, error: QR_MESSAGES.badCode };
+  if (text.toUpperCase().startsWith(`${GARMENT_QR_PREFIX}:`)) {
+    const parsed = parseGarmentQr(text);
     if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
     return { ok: true, kind: "code", itemId: parsed.itemId };
   }
-  if (sku) {
-    const parsed = parseGarmentQr(sku);
-    if (parsed.ok) return { ok: true, kind: "code", itemId: parsed.itemId };
-    return { ok: true, kind: "sku", sku };
-  }
+  return { ok: true, kind: "sku", sku: text };
+}
+
+export function scanQuery(input: { codigo?: unknown; sku?: unknown }): ScanQuery {
+  const codigo = typeof input.codigo === "string" ? input.codigo : "";
+  const sku = typeof input.sku === "string" ? input.sku : "";
+  if (codigo.trim()) return readScannedLabel(codigo);
+  if (sku.trim()) return readScannedLabel(sku);
   return { ok: false, status: 400, error: QR_MESSAGES.needCodeOrSku };
 }
 

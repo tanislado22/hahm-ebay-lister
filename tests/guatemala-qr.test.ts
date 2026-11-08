@@ -13,6 +13,7 @@ import {
   garmentQrText,
   parseGarmentQr,
   presentGuatemalaScan,
+  readScannedLabel,
   releaseScan,
   scanLotLabel,
   scanQuery,
@@ -63,22 +64,64 @@ describe("etiqueta QR de Tienda Guatemala", () => {
     expect(text).not.toContain("precio");
     expect(text).not.toContain("sesion");
     expect(parseGarmentQr(`  ${text.toUpperCase()}  `)).toEqual({ ok: true, itemId: playera });
-    expect(parseGarmentQr("3001").ok).toBe(false);
-    expect(parseGarmentQr("Playera").ok).toBe(false);
-    expect(parseGarmentQr("https://tienda.example/guatemala/panel").ok).toBe(false);
+    expect(parseGarmentQr("L1-0001").ok).toBe(false);
     expect(parseGarmentQr(`VSA2:${playera}`).ok).toBe(false);
     expect(parseGarmentQr(`VSA1:${playera}?venta=1`).ok).toBe(false);
+    expect(GARMENT_QR_SPEC).toContain("L1-0001");
   });
 
-  it("busca por el código o, si la cámara falla, por el SKU exacto", () => {
-    expect(scanQuery({ codigo: garmentQrText(playera), sku: "3001" })).toEqual({
+  it("acepta un QR que solo contiene el SKU y lo conserva tal cual", () => {
+    expect(readScannedLabel(garmentQrText(playera))).toEqual({ ok: true, kind: "code", itemId: playera });
+    expect(readScannedLabel("  L1-0001  ")).toEqual({ ok: true, kind: "sku", sku: "L1-0001" });
+    expect(readScannedLabel("0001")).toEqual({ ok: true, kind: "sku", sku: "0001" });
+    expect(readScannedLabel("l1-0001")).toEqual({ ok: true, kind: "sku", sku: "l1-0001" });
+    expect(readScannedLabel("L1 0001")).toEqual({ ok: true, kind: "sku", sku: "L1 0001" });
+    expect(readScannedLabel("   ").ok).toBe(false);
+    expect(scanQuery({ codigo: "  L1-0001  ", sku: "" })).toEqual({ ok: true, kind: "sku", sku: "L1-0001" });
+    expect(scanQuery({ codigo: garmentQrText(playera), sku: "L1-0001" })).toEqual({
       ok: true,
       kind: "code",
       itemId: playera,
     });
-    expect(scanQuery({ codigo: "", sku: "3001" })).toEqual({ ok: true, kind: "sku", sku: "3001" });
-    expect(scanQuery({ codigo: "3001", sku: "" })).toMatchObject({ ok: false, status: 400 });
+    expect(scanQuery({ codigo: "", sku: "0001" })).toEqual({ ok: true, kind: "sku", sku: "0001" });
     expect(scanQuery({ codigo: "", sku: "" })).toMatchObject({ ok: false, status: 400 });
+
+    const found = presentGuatemalaScan("sku", [
+      garment({ id: playera, sku: "L1-0001", title: "Blusa", lotNumber: 1, lotName: "Primera", priceGtq: "25.00" }),
+    ]);
+    expect(found).toEqual({
+      ok: true,
+      choice: "one",
+      garment: garment({
+        id: playera,
+        sku: "L1-0001",
+        title: "Blusa",
+        lotNumber: 1,
+        lotName: "Primera",
+        priceGtq: "25.00",
+      }),
+    });
+    expect(presentGuatemalaScan("sku", [])).toEqual({
+      ok: false,
+      status: 404,
+      error: "No se encontró una prenda con este SKU",
+    });
+
+    const repeated = presentGuatemalaScan("sku", [
+      garment({ id: playera, sku: "L1-0001", lotNumber: 1, lotName: "Primera" }),
+      garment({ id: otra, sku: "L1-0001", lotNumber: 4, lotName: "Segunda", title: "Vestido" }),
+    ]);
+    expect(repeated.ok && repeated.choice === "many" && repeated.garments).toBeTruthy();
+    if (repeated.ok && repeated.choice === "many") {
+      expect(repeated.garments.map((item) => item.id)).toEqual([playera, otra]);
+      expect(repeated.garments.map((item) => scanLotLabel(item.lotNumber, item.lotName))).toEqual([
+        "Lote 1 · Primera",
+        "Lote 4 · Segunda",
+      ]);
+    }
+
+    const store = readFileSync(`${root}/lib/markets/guatemala-inventory-store.ts`, "utf8");
+    expect(store).toContain("AND item.sku = ${query.sku}");
   });
 
   it("no elige solo cuando el mismo SKU está en dos lotes y conserva la prenda sin foto", () => {
@@ -102,7 +145,7 @@ describe("etiqueta QR de Tienda Guatemala", () => {
     });
     expect(scanLotLabel(null, null)).toBe("Sin lote");
     expect(presentGuatemalaScan("code", [])).toEqual({ ok: false, status: 404, error: QR_MESSAGES.unknownCode });
-    expect(presentGuatemalaScan("sku", [])).toEqual({ ok: false, status: 404, error: QR_MESSAGES.unknownSku });
+    expect(QR_MESSAGES.unknownSku).toBe("No se encontró una prenda con este SKU");
   });
 
   it("no vende al escanear, pide una sola confirmación y rechaza la segunda venta", () => {
