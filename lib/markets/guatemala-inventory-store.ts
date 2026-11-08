@@ -45,6 +45,7 @@ import {
   parseSalesReportPeriod,
   type SalesReportPeriod,
 } from "@/lib/markets/guatemala-sales-report";
+import { prepareSalePayment, salePaymentMethod } from "@/lib/markets/guatemala-sale-payment";
 import { listGuatemalaExpenses } from "@/lib/markets/guatemala-expenses-store";
 import { summarizeGuatemalaProfit, type ProfitSummary } from "@/lib/markets/guatemala-expenses";
 import {
@@ -212,6 +213,18 @@ async function createGuatemalaInventoryTables(): Promise<void> {
   await sql`
     ALTER TABLE guatemala_inventory_sales
     ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS payment_method TEXT
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS cash_received_gtq NUMERIC(12, 2)
+  `;
+  await sql`
+    ALTER TABLE guatemala_inventory_sales
+    ADD COLUMN IF NOT EXISTS change_gtq NUMERIC(12, 2)
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS guatemala_sale_corrections (
@@ -1337,7 +1350,8 @@ async function saleFor(clientId: string, itemId: string): Promise<GuatemalaSaleS
     SELECT id, sku, published_price_gtq::text AS published_price_gtq,
       charged_price_gtq::text AS charged_price_gtq,
       current_charged_price_gtq::text AS current_charged_price_gtq,
-      sold_at, is_test, voided_at, sold_by_role, sold_by_username
+      sold_at, is_test, voided_at, sold_by_role, sold_by_username,
+      payment_method, cash_received_gtq::text AS cash_received_gtq, change_gtq::text AS change_gtq
     FROM guatemala_inventory_sales
     WHERE item_id = ${itemId} AND client_id = ${clientId}
     ORDER BY (voided_at IS NULL) DESC, sold_at DESC
@@ -1366,6 +1380,9 @@ async function saleFor(clientId: string, itemId: string): Promise<GuatemalaSaleS
     voidedAt: row.voided_at ? isoTimestamp(row.voided_at) : null,
     soldByRole: row.sold_by_role === "encargado" || row.sold_by_role === "propietario" ? row.sold_by_role : null,
     soldByUsername: row.sold_by_username ? String(row.sold_by_username) : null,
+    paymentMethod: salePaymentMethod(row.payment_method),
+    cashReceivedGtq: row.cash_received_gtq ? normalizePriceText(row.cash_received_gtq) : null,
+    changeGtq: row.change_gtq != null && row.change_gtq !== "" ? normalizePriceText(row.change_gtq) : null,
     corrections: corrections.map((correction) => ({
       id: String(correction.id),
       action: correction.action === "anular" ? "anular" : "corregir",
@@ -1395,6 +1412,8 @@ export async function confirmGuatemalaSale(input: {
   clientId?: unknown;
   itemId?: unknown;
   chargedPrice?: unknown;
+  paymentMethod?: unknown;
+  cashReceived?: unknown;
   soldBy?: SaleActor | null;
 }): Promise<
   | {
@@ -1413,6 +1432,13 @@ export async function confirmGuatemalaSale(input: {
   if (!chargedPriceGtq) {
     return { ok: false, status: 400, error: GUATEMALA_SALE_MESSAGES.priceInvalid };
   }
+  const preparedPayment = prepareSalePayment({
+    method: input.paymentMethod,
+    chargedPrice: chargedPriceGtq,
+    cashReceived: input.cashReceived,
+  });
+  if (!preparedPayment.ok) return preparedPayment;
+  const payment = preparedPayment.payment;
   await ensureGuatemalaInventoryTables();
   if (!(await clientIsGuatemala(clientId))) {
     return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
@@ -1436,16 +1462,20 @@ export async function confirmGuatemalaSale(input: {
       inserted_sale AS (
         INSERT INTO guatemala_inventory_sales (
           id, item_id, client_id, sku, published_price_gtq, charged_price_gtq, sold_at,
-          sold_by_role, sold_by_account_id, sold_by_username
+          sold_by_role, sold_by_account_id, sold_by_username,
+          payment_method, cash_received_gtq, change_gtq
         )
         SELECT ${saleId}, sold_item.id, sold_item.client_id, sold_item.sku,
-          sold_item.price_gtq, ${chargedPriceGtq}::numeric, NOW(),
-          ${soldByRole}, ${soldByAccountId}, ${soldByUsername}
+          sold_item.price_gtq, ${payment.incomeGtq}::numeric, NOW(),
+          ${soldByRole}, ${soldByAccountId}, ${soldByUsername},
+          ${payment.method}, ${payment.cashReceivedGtq}::numeric, ${payment.changeGtq}::numeric
         FROM sold_item
         RETURNING item_id, sku, published_price_gtq::text AS published_price_gtq,
-          charged_price_gtq::text AS charged_price_gtq, sold_at, sold_by_role, sold_by_username
+          charged_price_gtq::text AS charged_price_gtq, sold_at, sold_by_role, sold_by_username,
+          payment_method, cash_received_gtq::text AS cash_received_gtq, change_gtq::text AS change_gtq
       )
-      SELECT item_id, sku, published_price_gtq, charged_price_gtq, sold_at, sold_by_role, sold_by_username
+      SELECT item_id, sku, published_price_gtq, charged_price_gtq, sold_at, sold_by_role, sold_by_username,
+        payment_method, cash_received_gtq, change_gtq
       FROM inserted_sale
     `;
   } catch (error) {
@@ -1480,6 +1510,9 @@ export async function confirmGuatemalaSale(input: {
         ? saved.sold_by_role
         : null,
     soldByUsername: saved.sold_by_username ? String(saved.sold_by_username) : null,
+    paymentMethod: salePaymentMethod(saved.payment_method),
+    cashReceivedGtq: saved.cash_received_gtq ? normalizePriceText(saved.cash_received_gtq) : null,
+    changeGtq: saved.change_gtq != null && saved.change_gtq !== "" ? normalizePriceText(saved.change_gtq) : null,
   };
   return {
     ok: true,

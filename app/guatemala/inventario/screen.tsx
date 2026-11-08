@@ -17,6 +17,14 @@ import {
 } from "@/lib/markets/guatemala-inventory";
 import { publishReviewBlockers } from "@/lib/markets/guatemala-publish";
 import { STAFF_SALE_NOT_SAVED, acceptedSaleUpdate, saleMayBeSubmitted } from "@/lib/markets/guatemala-pwa";
+import {
+  SALE_PAYMENT_MESSAGES,
+  cashTender,
+  changeDueLabel,
+  prepareSalePayment,
+  saleMayBeConfirmed,
+  type SalePaymentMethod,
+} from "@/lib/markets/guatemala-sale-payment";
 import { useOnlineStatus } from "../pwa/shell";
 import { QuickAddForm, UnpublishedEditor } from "./draft";
 import "./inventory.css";
@@ -45,6 +53,9 @@ interface SaleInfo {
   voidedAt?: string | null;
   soldByRole?: "propietario" | "encargado" | null;
   soldByUsername?: string | null;
+  paymentMethod?: SalePaymentMethod | null;
+  cashReceivedGtq?: string | null;
+  changeGtq?: string | null;
   corrections?: SaleCorrectionInfo[];
 }
 
@@ -116,6 +127,8 @@ export function InventoryScreen({
   const [duplicateNotice, setDuplicateNotice] = useState("");
   const [saleStep, setSaleStep] = useState<"form" | "confirm" | null>(null);
   const [chargedDraft, setChargedDraft] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<SalePaymentMethod>("efectivo");
+  const [cashDraft, setCashDraft] = useState("");
   const [saleError, setSaleError] = useState("");
   const [savingSale, setSavingSale] = useState(false);
   const savingSaleRef = useRef(false);
@@ -266,9 +279,24 @@ export function InventoryScreen({
   }
 
   const chargedPrice = quetzalPriceText(chargedDraft);
+  const preparedPayment = chargedPrice
+    ? prepareSalePayment({ method: paymentMethod, chargedPrice, cashReceived: cashDraft })
+    : null;
+  const saleReady = preparedPayment != null && saleMayBeConfirmed(preparedPayment);
+
+  function resetSaleForm() {
+    setSaleStep(null);
+    setSaleError("");
+    setPaymentMethod("efectivo");
+    setCashDraft("");
+  }
 
   async function confirmSale() {
-    if (!detail || !chargedPrice || savingSaleRef.current) return;
+    if (!detail || !chargedPrice || !preparedPayment || savingSaleRef.current) return;
+    if (!preparedPayment.ok) {
+      setSaleError(preparedPayment.error);
+      return;
+    }
     const gate = saleMayBeSubmitted(navigator.onLine);
     if (!gate.ok) {
       setSaleError(gate.error);
@@ -280,7 +308,12 @@ export function InventoryScreen({
     try {
       const response = await storeRequest(
         `/api/markets/guatemala/inventory/${encodeURIComponent(detail.id)}/sale`,
-        { clientId, chargedPrice }
+        {
+          clientId,
+          chargedPrice,
+          paymentMethod: preparedPayment.payment.method,
+          cashReceived: preparedPayment.payment.cashReceivedGtq,
+        }
       );
       const body = (await response.json()) as {
         ok?: boolean;
@@ -552,6 +585,31 @@ export function InventoryScreen({
                       <dt>Vendida</dt>
                       <dd>{formatGuatemalaMoment(detail.sale.soldAt)}</dd>
                     </div>
+                    {detail.sale.paymentMethod === "efectivo" ? (
+                      <>
+                        <div>
+                          <dt>Método de pago</dt>
+                          <dd>Efectivo</dd>
+                        </div>
+                        {detail.sale.cashReceivedGtq ? (
+                          <div>
+                            <dt>Efectivo recibido</dt>
+                            <dd>{formatStoredQuetzales(detail.sale.cashReceivedGtq)}</dd>
+                          </div>
+                        ) : null}
+                        {detail.sale.changeGtq != null ? (
+                          <div>
+                            <dt>Cambio entregado</dt>
+                            <dd>{formatStoredQuetzales(detail.sale.changeGtq)}</dd>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : detail.sale.paymentMethod === "transferencia" ? (
+                      <div>
+                        <dt>Método de pago</dt>
+                        <dd>Transferencia</dd>
+                      </div>
+                    ) : null}
                     {detail.sale.soldByRole === "encargado" && detail.sale.soldByUsername ? (
                       <div>
                         <dt>Registrada por</dt>
@@ -711,7 +769,16 @@ export function InventoryScreen({
                 </div>
               ) : null}
               {detail.status === "disponible" && saleStep === null ? (
-                <button type="button" className="btn btn-primary gt-sale-start" onClick={() => setSaleStep("form")}>
+                <button
+                  type="button"
+                  className="btn btn-primary gt-sale-start"
+                  onClick={() => {
+                    setSaleError("");
+                    setPaymentMethod("efectivo");
+                    setCashDraft("");
+                    setSaleStep("form");
+                  }}
+                >
                   Registrar venta
                 </button>
               ) : null}
@@ -725,8 +792,8 @@ export function InventoryScreen({
                       setSaleError(gate.error);
                       return;
                     }
-                    if (!chargedPrice) {
-                      setSaleError("Escribe un precio cobrado mayor que cero.");
+                    if (!chargedPrice || !preparedPayment?.ok) {
+                      setSaleError(preparedPayment && !preparedPayment.ok ? preparedPayment.error : "Escribe un precio cobrado mayor que cero.");
                       return;
                     }
                     setSaleError("");
@@ -751,10 +818,11 @@ export function InventoryScreen({
                       onChange={(event) => setChargedDraft(event.target.value)}
                     />
                   </div>
+                  <SaleTender chargedPrice={chargedPrice} method={paymentMethod} cashDraft={cashDraft} onCashDraft={setCashDraft} onMethod={setPaymentMethod} />
                   {saleError ? <p className="note note-error" role="alert">{saleError}</p> : null}
                   <div className="gt-inventory-actions">
-                    <button type="submit" className="btn btn-primary">Continuar</button>
-                    <button type="button" className="btn btn-ghost" onClick={() => { setSaleStep(null); setSaleError(""); }}>
+                    <button type="submit" className="btn btn-primary" disabled={!saleReady}>Continuar</button>
+                    <button type="button" className="btn btn-ghost" onClick={resetSaleForm}>
                       Cancelar
                     </button>
                   </div>
@@ -766,19 +834,17 @@ export function InventoryScreen({
                   <p>SKU {detail.sku}</p>
                   <p>{detail.published === false ? "Precio" : "Precio publicado"} {formatStoredQuetzales(detail.priceGtq)}</p>
                   <p>Precio cobrado {formatStoredQuetzales(chargedPrice)}</p>
+                  <SaleTender chargedPrice={chargedPrice} method={paymentMethod} cashDraft={cashDraft} onCashDraft={setCashDraft} onMethod={setPaymentMethod} />
                   {saleError ? <p className="note note-error" role="alert">{saleError}</p> : null}
                   <div className="gt-inventory-actions">
-                    <button type="button" className="btn btn-primary" disabled={savingSale || !online} onClick={() => void confirmSale()}>
+                    <button type="button" className="btn btn-primary" disabled={savingSale || !online || !saleReady} onClick={() => void confirmSale()}>
                       {savingSale ? "Guardando…" : "Confirmar venta"}
                     </button>
                     <button
                       type="button"
                       className="btn btn-ghost"
                       disabled={savingSale}
-                      onClick={() => {
-                        setSaleStep(null);
-                        setSaleError("");
-                      }}
+                      onClick={resetSaleForm}
                     >
                       Cancelar
                     </button>
@@ -1155,6 +1221,63 @@ function statusClass(status: string, published?: boolean): string {
   if (status === "retirada") return " is-withdrawn";
   if (published === false) return " is-unpublished";
   return "";
+}
+
+function SaleTender({
+  chargedPrice,
+  method,
+  cashDraft,
+  onCashDraft,
+  onMethod,
+}: {
+  chargedPrice: string | null;
+  method: SalePaymentMethod;
+  cashDraft: string;
+  onCashDraft: (value: string) => void;
+  onMethod: (method: SalePaymentMethod) => void;
+}) {
+  const tender = chargedPrice && method === "efectivo" ? cashTender(chargedPrice, cashDraft) : null;
+  return (
+    <div className="gt-sale-tender">
+      <div className="gt-sale-methods" role="group" aria-label="Método de pago">
+        <button type="button" className="gt-filter" aria-pressed={method === "efectivo"} onClick={() => onMethod("efectivo")}>
+          Efectivo
+        </button>
+        <button type="button" className="gt-filter" aria-pressed={method === "transferencia"} onClick={() => onMethod("transferencia")}>
+          Transferencia
+        </button>
+      </div>
+      {chargedPrice ? <p>Total de la compra {formatStoredQuetzales(chargedPrice)}</p> : null}
+      {method === "efectivo" ? (
+        <>
+          <label htmlFor="cash-received">Efectivo recibido</label>
+          <div className="gt-sale-price">
+            <span aria-hidden="true">Q</span>
+            <input
+              id="cash-received"
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              placeholder="0.00"
+              value={cashDraft}
+              onChange={(event) => onCashDraft(event.target.value)}
+            />
+          </div>
+          {tender?.state === "covered" ? (
+            <p className="gt-change-due" aria-live="polite">{changeDueLabel(tender.changeGtq)}</p>
+          ) : null}
+          {tender?.state === "short" ? (
+            <p className="gt-change-short" role="alert">{SALE_PAYMENT_MESSAGES.short(tender.missingGtq)}</p>
+          ) : null}
+          {tender?.state === "invalid" ? (
+            <p className="note note-error" role="alert">{SALE_PAYMENT_MESSAGES.cashInvalid}</p>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 function publicationActionLabel(action: string): string {

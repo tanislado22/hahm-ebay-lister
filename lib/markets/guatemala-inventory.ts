@@ -1,5 +1,6 @@
 import { exactGuatemalaSku } from "@/lib/markets/guatemala";
 import { GARMENT_KIND_CHOICES } from "@/lib/markets/guatemala-price-match";
+import { prepareSalePayment, type SalePaymentMethod } from "@/lib/markets/guatemala-sale-payment";
 
 export const GUATEMALA_INVENTORY_STATUS = "disponible" as const;
 export const GUATEMALA_SOLD_STATUS = "vendida" as const;
@@ -149,6 +150,9 @@ export interface GuatemalaSaleSnapshot {
   voidedAt?: string | null;
   soldByRole?: "propietario" | "encargado" | null;
   soldByUsername?: string | null;
+  paymentMethod?: SalePaymentMethod | null;
+  cashReceivedGtq?: string | null;
+  changeGtq?: string | null;
   corrections?: SaleCorrectionView[];
 }
 
@@ -514,6 +518,9 @@ export interface RecordedSale {
   soldByAccountId?: string | null;
   soldByUsername?: string | null;
   voidedAt?: string | null;
+  paymentMethod?: SalePaymentMethod | null;
+  cashReceivedGtq?: string | null;
+  changeGtq?: string | null;
 }
 
 export interface SaleBook {
@@ -536,6 +543,8 @@ export function applyGuatemalaSale(
     clientAllowed: boolean;
     now?: Date;
     soldBy?: SaleActor | null;
+    paymentMethod?: unknown;
+    cashReceived?: unknown;
   }
 ): { book: SaleBook; result: SaleApplyResult } {
   if (!input.clientAllowed) {
@@ -550,6 +559,17 @@ export function applyGuatemalaSale(
       book,
       result: { ok: false, status: 400, error: GUATEMALA_SALE_MESSAGES.priceInvalid },
     };
+  }
+  const payment =
+    input.paymentMethod === undefined
+      ? null
+      : prepareSalePayment({
+          method: input.paymentMethod,
+          chargedPrice: chargedPriceGtq,
+          cashReceived: input.cashReceived,
+        });
+  if (payment && !payment.ok) {
+    return { book, result: { ok: false, status: payment.status, error: payment.error } };
   }
   const item = book.items.find(
     (entry) => entry.id === input.itemId && entry.clientId === input.clientId
@@ -578,6 +598,9 @@ export function applyGuatemalaSale(
     soldByRole: input.soldBy?.role ?? null,
     soldByAccountId: input.soldBy?.accountId ?? null,
     soldByUsername: input.soldBy?.username ?? null,
+    paymentMethod: payment && payment.ok ? payment.payment.method : null,
+    cashReceivedGtq: payment && payment.ok ? payment.payment.cashReceivedGtq : null,
+    changeGtq: payment && payment.ok ? payment.payment.changeGtq : null,
   };
   const next: SaleBook = {
     items: book.items.map((entry) =>

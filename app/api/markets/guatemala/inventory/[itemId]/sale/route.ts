@@ -9,9 +9,14 @@ export async function POST(
   context: { params: Promise<{ itemId: string }> }
 ) {
   const { itemId } = await context.params;
-  let body: { clientId?: unknown; chargedPrice?: unknown };
+  let body: { clientId?: unknown; chargedPrice?: unknown; paymentMethod?: unknown; cashReceived?: unknown };
   try {
-    body = (await request.json()) as { clientId?: unknown; chargedPrice?: unknown };
+    body = (await request.json()) as {
+      clientId?: unknown;
+      chargedPrice?: unknown;
+      paymentMethod?: unknown;
+      cashReceived?: unknown;
+    };
   } catch {
     return NextResponse.json({ ok: false, error: "No se pudo leer la venta." }, { status: 400 });
   }
@@ -22,6 +27,8 @@ export async function POST(
       clientId: access.clientId,
       itemId,
       chargedPrice: body?.chargedPrice,
+      paymentMethod: body?.paymentMethod,
+      cashReceived: body?.cashReceived,
       soldBy: access.actor,
     });
     if (!result.ok) {
