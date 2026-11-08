@@ -14,7 +14,13 @@ import {
 } from "@/lib/markets/guatemala-catalog";
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import { GUATEMALA_LOT_MESSAGES } from "@/lib/markets/guatemala-lots";
-import { activeGuatemalaLot } from "@/lib/markets/guatemala-lots-store";
+import { activeGuatemalaLot, ensureGuatemalaLotTables } from "@/lib/markets/guatemala-lots-store";
+import {
+  normalizeScanStatus,
+  presentGuatemalaScan,
+  type ScanGarment,
+  type ScanLookup,
+} from "@/lib/markets/guatemala-qr";
 import {
   changePublication,
   isolatedPublicationSku,
@@ -936,6 +942,63 @@ export async function readGuatemalaInventoryItem(
   if (!row) return { ok: false, status: 404, error: GUATEMALA_SALE_MESSAGES.notFound };
   const stored = storedFromRow(row, await photosFor(itemId), await saleFor(clientId, itemId));
   return { ...stored, publicationEvents: await publicationEventsFor(clientId, itemId) };
+}
+
+export async function findGuatemalaScan(
+  clientId: string,
+  query: { itemId: string } | { sku: string }
+): Promise<ScanLookup | { ok: false; status: 403; error: string }> {
+  await ensureGuatemalaInventoryTables();
+  await ensureGuatemalaLotTables();
+  if (!(await clientIsGuatemala(clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const sql = getSql();
+  const rows =
+    "itemId" in query
+      ? await sql`
+          SELECT item.id, item.sku, item.title, item.price_gtq::text AS price_gtq,
+            item.status, item.published, item.lot_id, lot.lot_number, lot.name AS lot_name
+          FROM guatemala_inventory_items AS item
+          LEFT JOIN guatemala_purchase_lots AS lot
+            ON lot.id = item.lot_id AND lot.client_id = item.client_id
+          WHERE item.client_id = ${clientId} AND item.id = ${query.itemId}
+          LIMIT 1
+        `
+      : await sql`
+          SELECT item.id, item.sku, item.title, item.price_gtq::text AS price_gtq,
+            item.status, item.published, item.lot_id, lot.lot_number, lot.name AS lot_name
+          FROM guatemala_inventory_items AS item
+          LEFT JOIN guatemala_purchase_lots AS lot
+            ON lot.id = item.lot_id AND lot.client_id = item.client_id
+          WHERE item.client_id = ${clientId} AND item.sku = ${query.sku}
+          ORDER BY lot.lot_number ASC NULLS LAST, item.created_at ASC
+        `;
+  const garments = rows.map((row) => scanGarmentFromRow(row as Record<string, unknown>));
+  if (garments.length === 1) {
+    const only = garments[0];
+    if (only) {
+      const photo = (await photosFor(only.id)).find((item) => /^image\/(jpeg|png|webp)$/.test(item.mediaType));
+      if (photo) only.photo = { mediaType: photo.mediaType, data: photo.data };
+    }
+  }
+  return presentGuatemalaScan("itemId" in query ? "code" : "sku", garments);
+}
+
+function scanGarmentFromRow(row: Record<string, unknown>): ScanGarment {
+  const lotNumber = row.lot_number == null || row.lot_number === "" ? null : Number(row.lot_number);
+  return {
+    id: String(row.id),
+    sku: String(row.sku ?? ""),
+    title: String(row.title ?? ""),
+    priceGtq: normalizePriceText(row.price_gtq),
+    status: normalizeScanStatus(row.status),
+    published: publishedFlag(row.published),
+    lotId: row.lot_id ? String(row.lot_id) : null,
+    lotNumber: lotNumber != null && Number.isInteger(lotNumber) && lotNumber > 0 ? lotNumber : null,
+    lotName: row.lot_name ? String(row.lot_name) : null,
+    photo: null,
+  };
 }
 
 export async function withdrawGuatemalaPublication(

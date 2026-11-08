@@ -14,6 +14,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.69.0",
     "@neondatabase/serverless": "^1.0.1",
+    "html5-qrcode": "^2.3.8",
     "next": "^15.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
