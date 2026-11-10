@@ -36,6 +36,7 @@ interface ReportPayload {
   toLabel: string;
   count: number;
   totalChargedGtq: string;
+  skuLessPieces?: number;
   sales: ReportSale[];
   profit?: ProfitSummary;
 }
@@ -201,9 +202,14 @@ export function SalesReportScreen({
             <p className="gt-report-dates">
               Consultado: {report.fromLabel} al {report.toLabel}. Zona horaria {report.timezone}.
             </p>
-            <p className="gt-inventory-count">{soldGarmentLabel(report.count)}</p>
+            <p className="gt-inventory-count">
+              {soldGarmentLabel(report.sales.filter((sale) => sale.sku !== "Sin SKU").length)}
+            </p>
             {chargedTotal ? (
               <p className="gt-report-total">Total de ventas {formatStoredQuetzales(chargedTotal)}</p>
+            ) : null}
+            {report.skuLessPieces ? (
+              <p>Ventas sin SKU: {report.skuLessPieces} {report.skuLessPieces === 1 ? "pieza" : "piezas"}</p>
             ) : null}
             {report.profit ? (
               <>

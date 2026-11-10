@@ -17,105 +17,100 @@ type Request = (path: string, body?: unknown) => Promise<Response>;
 
 type SkuPick = { id: string; sku: string; title: string; lotLabel: string; status: string };
 
-export function QuantityGroupPanel({
+export function SkuLessSaleForm({
   clientId,
-  lots,
   request,
   onClose,
+  onSaved,
 }: {
   clientId: string;
-  lots: { id: string; lotNumber: number; name: string }[];
   request: Request;
   onClose: () => void;
+  onSaved: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [lotId, setLotId] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [groups, setGroups] = useState<QuantityGroupView[]>([]);
+  const [pieces, setPieces] = useState("1");
+  const [chargedDraft, setChargedDraft] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const requestIdRef = useRef("");
+  const count = pieceCount(pieces);
+  const chargedPrice = quetzalPriceText(chargedDraft);
 
-  const requestRef = useRef(request);
-  requestRef.current = request;
-  useEffect(() => {
-    void loadGroups(clientId, requestRef.current, setGroups);
-  }, [clientId]);
-
-  async function createGroup(event: React.FormEvent) {
-    event.preventDefault();
-    if (saving) return;
+  async function save() {
+    if (savingRef.current || !count || !chargedPrice) return;
+    const gate = saleMayBeSubmitted(navigator.onLine);
+    if (!gate.ok) {
+      setError(gate.error);
+      return;
+    }
+    if (!requestIdRef.current) requestIdRef.current = crypto.randomUUID();
+    savingRef.current = true;
     setSaving(true);
     setError("");
-    setNotice("");
     try {
-      const response = await request("/api/markets/guatemala/quantity-groups", {
+      const response = await request("/api/markets/guatemala/skuless-sales", {
         clientId,
-        name,
-        lotId,
-        quantity,
+        requestId: requestIdRef.current,
+        pieces: count,
+        chargedPrice,
       });
-      const body = (await response.json()) as { ok?: boolean; error?: string };
-      if (!response.ok || !body.ok) {
-        setError(body.error || "No se pudo crear el grupo.");
+      const body = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        chargedPriceGtq?: string;
+        skuLessPieces?: number;
+      };
+      if (!response.ok || !body.ok || !body.chargedPriceGtq) {
+        setError(body.error || STAFF_SALE_NOT_SAVED);
         return;
       }
-      setName("");
-      setQuantity("");
-      setNotice("Grupo creado. Las piezas quedan en ese lote y no se sumaron otra vez.");
-      await loadGroups(clientId, request, setGroups);
+      setNotice(
+        `Venta registrada por ${formatStoredQuetzales(body.chargedPriceGtq)}. Ventas sin SKU: ${body.skuLessPieces ?? count} piezas.`
+      );
+      setPieces("1");
+      setChargedDraft("");
+      requestIdRef.current = "";
+      onSaved();
     } catch {
-      setError("No se pudo crear el grupo.");
+      setError(STAFF_SALE_NOT_SAVED);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
 
   return (
     <section className="panel">
-      <h2>Crear grupo por cantidad</h2>
-      <p>Sirve para ropa sin sticker, foto ni SKU. Si esas piezas ya están en el conteo del lote, el grupo solo las organiza.</p>
-      <form className="gt-sale-box" onSubmit={(event) => void createGroup(event)}>
-        <label htmlFor="group-name">
-          Nombre del grupo
-          <input id="group-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Ropa de bebé · Lote 1" />
-        </label>
-        <label htmlFor="group-lot">
-          Lote
-          <select id="group-lot" value={lotId} onChange={(event) => setLotId(event.target.value)}>
-            <option value="">Selecciona el lote</option>
-            {lots.map((lot) => (
-              <option key={lot.id} value={lot.id}>
-                Lote {lot.lotNumber} · {lot.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label htmlFor="group-quantity">
-          Cantidad inicial
-          <input id="group-quantity" inputMode="numeric" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="100" />
-        </label>
-        {error ? <p className="note note-error" role="alert">{error}</p> : null}
-        {notice ? <p role="status">{notice}</p> : null}
-        <div className="gt-inventory-actions">
-          <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saving ? "Guardando…" : "Guardar grupo"}
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={onClose}>
-            Cerrar
-          </button>
-        </div>
-      </form>
-      {groups.length > 0 ? (
-        <div>
-          <h3>Grupos</h3>
-          {groups.map((group) => (
-            <p key={group.id}>
-              {group.name} · {group.lotNumber != null ? `Lote ${group.lotNumber}` : "Sin lote"} · {group.available} disponibles
-            </p>
-          ))}
-        </div>
-      ) : null}
+      <h2>Venta sin SKU</h2>
+      <p>Para prendas que no se ingresaron al inventario. No se asigna lote ni se descuentan existencias.</p>
+      <label htmlFor="skuless-pieces">
+        Piezas vendidas
+        <input id="skuless-pieces" inputMode="numeric" value={pieces} onChange={(event) => setPieces(event.target.value)} />
+      </label>
+      <label htmlFor="skuless-total">Total cobrado</label>
+      <div className="gt-sale-price">
+        <span aria-hidden="true">Q</span>
+        <input
+          id="skuless-total"
+          inputMode="decimal"
+          autoComplete="off"
+          value={chargedDraft}
+          onChange={(event) => setChargedDraft(event.target.value)}
+          placeholder="0.00"
+        />
+      </div>
+      {error ? <p className="note note-error" role="alert">{error}</p> : null}
+      {notice ? <p role="status">{notice}</p> : null}
+      <div className="gt-inventory-actions">
+        <button type="button" className="btn btn-primary" disabled={!count || !chargedPrice || saving} onClick={() => void save()}>
+          {saving ? "Guardando…" : "Guardar"}
+        </button>
+        <button type="button" className="btn btn-ghost" disabled={saving} onClick={onClose}>
+          Cerrar
+        </button>
+      </div>
     </section>
   );
 }
@@ -126,12 +121,14 @@ export function QuantitySalePanel({
   initialItems,
   onClose,
   onSaved,
+  onOpenSkuLess,
 }: {
   clientId: string;
   request: Request;
   initialItems: SkuPick[];
   onClose: () => void;
   onSaved: () => void;
+  onOpenSkuLess: () => void;
 }) {
   const [groups, setGroups] = useState<QuantityGroupView[]>([]);
   const [lines, setLines] = useState<{ groupId: string; quantity: string }[]>([]);
@@ -269,7 +266,11 @@ export function QuantitySalePanel({
 
   return (
     <section className="panel">
-      <h2>Vender por cantidad</h2>
+      <h2>Registrar venta</h2>
+      <button type="button" className="btn btn-ghost" onClick={onOpenSkuLess}>
+        Venta sin SKU
+      </button>
+      <h3>Vender por cantidad</h3>
       <p>Puedes cobrar piezas de uno o más grupos y prendas con SKU en una sola venta. Escanear o armar la venta no la guarda.</p>
       {groups.length === 0 ? <p>Todavía no hay grupos por cantidad.</p> : null}
       <label htmlFor="sale-group">

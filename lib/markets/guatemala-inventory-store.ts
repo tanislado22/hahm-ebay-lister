@@ -16,6 +16,7 @@ import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import { GUATEMALA_LOT_MESSAGES } from "@/lib/markets/guatemala-lots";
 import { activeGuatemalaLot, ensureGuatemalaLotTables } from "@/lib/markets/guatemala-lots-store";
 import { ensureGuatemalaQuantityTables, listCheckoutReportRows } from "@/lib/markets/guatemala-quantity-store";
+import { listSkuLessReportRows } from "@/lib/markets/guatemala-skuless-store";
 import {
   normalizeScanStatus,
   presentGuatemalaScan,
@@ -1785,6 +1786,7 @@ export async function listGuatemalaSalesReport(input: {
       includeTests: boolean;
       count: number;
       totalChargedGtq: string;
+      skuLessPieces: number;
       sales: SalesReportRow[];
       profit: ProfitSummary;
     }
@@ -1833,6 +1835,7 @@ export async function listGuatemalaSalesReport(input: {
     ORDER BY sale.sold_at DESC
   `;
   const checkouts = await listCheckoutReportRows(input.clientId, built.range.start, built.range.end);
+  const skuLessRows = await listSkuLessReportRows(input.clientId, built.range.start, built.range.end);
   const sales: SalesReportRow[] = rows.map((row) => ({
     itemId: String(row.item_id),
     sku: String(row.sku),
@@ -1848,6 +1851,21 @@ export async function listGuatemalaSalesReport(input: {
         ? { id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }
         : null,
   }));
+  const skuLessPieces = skuLessRows.reduce((sum, sale) => sum + sale.pieces, 0);
+  for (const sale of skuLessRows) {
+    sales.push({
+      itemId: sale.id,
+      sku: "Sin SKU",
+      title: `Venta sin SKU · ${sale.pieces} ${sale.pieces === 1 ? "pieza" : "piezas"}`,
+      publishedPriceGtq: sale.chargedPriceGtq,
+      chargedPriceGtq: sale.chargedPriceGtq,
+      soldAt: sale.soldAt,
+      isTest: false,
+      costGtq: null,
+      costIncludesPhotography: false,
+      cover: null,
+    });
+  }
   for (const checkout of checkouts) {
     sales.push({
       itemId: checkout.id,
@@ -1883,6 +1901,7 @@ export async function listGuatemalaSalesReport(input: {
       chargedPriceGtq: sale.chargedPriceGtq,
       costGtq: sale.costGtq,
       costIncludesPhotography: sale.costIncludesPhotography,
+      tracksCost: sale.sku !== "Sin SKU",
     })),
   });
   return {
@@ -1896,6 +1915,7 @@ export async function listGuatemalaSalesReport(input: {
     includeTests: input.includeTests,
     count: sales.length,
     totalChargedGtq: `${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, "0")}`,
+    skuLessPieces,
     sales,
     profit,
   };

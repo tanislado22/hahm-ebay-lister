@@ -22,7 +22,7 @@ import { GARMENT_QR_SPEC, garmentQrText } from "@/lib/markets/guatemala-qr";
 import { SaleTender } from "./tender";
 import { useOnlineStatus } from "../pwa/shell";
 import { QuickAddForm, UnpublishedEditor } from "./draft";
-import { QuantityGroupPanel, QuantitySalePanel } from "./quantity";
+import { QuantitySalePanel, SkuLessSaleForm } from "./quantity";
 import "./inventory.css";
 import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
 import { PurgePanel } from "./purge";
@@ -149,8 +149,8 @@ export function InventoryScreen({
   const [lotChoices, setLotChoices] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
   const [assignLotId, setAssignLotId] = useState("");
   const [quickAddOpen, setQuickAddOpen] = useState(false);
-  const [groupOpen, setGroupOpen] = useState(false);
   const [quantitySale, setQuantitySale] = useState<{ id: string; sku: string; title: string; lotLabel: string; status: string }[] | null>(null);
+  const [skuLessOpen, setSkuLessOpen] = useState(false);
   const [listVersion, setListVersion] = useState(0);
 
   useEffect(() => {
@@ -537,8 +537,13 @@ export function InventoryScreen({
         </p>
       ) : null}
 
-      {groupOpen ? (
-        <QuantityGroupPanel clientId={clientId} lots={lotChoices} request={storeRequest} onClose={() => setGroupOpen(false)} />
+      {skuLessOpen ? (
+        <SkuLessSaleForm
+          clientId={clientId}
+          request={storeRequest}
+          onClose={() => setSkuLessOpen(false)}
+          onSaved={() => setListVersion((current) => current + 1)}
+        />
       ) : null}
       {quantitySale ? (
         <QuantitySalePanel
@@ -547,6 +552,10 @@ export function InventoryScreen({
           initialItems={quantitySale}
           onClose={() => setQuantitySale(null)}
           onSaved={() => setListVersion((current) => current + 1)}
+          onOpenSkuLess={() => {
+            setQuantitySale(null);
+            setSkuLessOpen(true);
+          }}
         />
       ) : null}
 
@@ -823,6 +832,7 @@ export function InventoryScreen({
                     type="button"
                     className="btn btn-ghost"
                     onClick={() => {
+                      setSkuLessOpen(false);
                       setQuantitySale([
                         {
                           id: detail.id,
@@ -836,6 +846,17 @@ export function InventoryScreen({
                     }}
                   >
                     Vender por cantidad
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setQuantitySale(null);
+                      setSkuLessOpen(true);
+                      resetSaleForm();
+                    }}
+                  >
+                    Venta sin SKU
                   </button>
                   <p>SKU {detail.sku}</p>
                   <p>{detail.published === false ? "Precio" : "Precio publicado"} {formatStoredQuetzales(detail.priceGtq)}</p>
@@ -1112,10 +1133,7 @@ export function InventoryScreen({
               <button type="button" className="btn btn-primary" onClick={() => setQuickAddOpen((open) => !open)}>
                 Agregar sin fotos
               </button>
-              <button type="button" className="btn btn-primary" onClick={() => { setGroupOpen((open) => !open); setQuantitySale(null); }}>
-                Crear grupo por cantidad
-              </button>
-              <button type="button" className="btn btn-primary" onClick={() => { setQuantitySale([]); setGroupOpen(false); }}>
+              <button type="button" className="btn btn-primary" onClick={() => { setQuantitySale([]); setSkuLessOpen(false); }}>
                 Registrar venta
               </button>
             </div>

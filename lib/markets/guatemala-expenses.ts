@@ -248,6 +248,7 @@ export interface ProfitGarment {
   chargedPriceGtq: string;
   costGtq: string | null;
   costIncludesPhotography: boolean;
+  tracksCost?: boolean;
 }
 
 export interface ProfitExpense {
@@ -296,7 +297,7 @@ export function summarizeGuatemalaProfit(input: {
 }): ProfitSummary {
   const counted = input.garments.filter((garment) => garmentCountsTowardProfit(garment, input.includeTests));
   const withCost = counted.filter((garment) => garment.costGtq);
-  const missing = counted.filter((garment) => !garment.costGtq);
+  const missing = counted.filter((garment) => garment.tracksCost !== false && !garment.costGtq);
   const photographyAbsorbed = withCost.some((garment) => garment.costIncludesPhotography);
   const heldState = { absorbedBySoldCost: photographyAbsorbed };
   const excluded = input.expenses.filter((expense) => photographyExpenseHeldOut(expense, heldState));
