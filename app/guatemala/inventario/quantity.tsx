@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { formatStoredQuetzales, quetzalPriceText } from "@/lib/markets/guatemala-inventory";
 import { scanLotLabel, scanSaleDecision } from "@/lib/markets/guatemala-qr";
+import { addPricedPiece, removePricedPiece, skuLessCharge, type PricedPieceLine } from "@/lib/markets/guatemala-skuless";
+import { PriceQrScanner } from "./price-qr";
 import {
   QUANTITY_MESSAGES,
   pieceCount,
@@ -30,16 +32,16 @@ export function SkuLessSaleForm({
 }) {
   const [pieces, setPieces] = useState("1");
   const [chargedDraft, setChargedDraft] = useState("");
+  const [priceLines, setPriceLines] = useState<PricedPieceLine[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const requestIdRef = useRef("");
-  const count = pieceCount(pieces);
-  const chargedPrice = quetzalPriceText(chargedDraft);
+  const charge = skuLessCharge({ lines: priceLines, manualPieces: pieces, manualTotal: chargedDraft });
 
   async function save() {
-    if (savingRef.current || !count || !chargedPrice) return;
+    if (savingRef.current || !charge.ok) return;
     const gate = saleMayBeSubmitted(navigator.onLine);
     if (!gate.ok) {
       setError(gate.error);
@@ -53,8 +55,8 @@ export function SkuLessSaleForm({
       const response = await request("/api/markets/guatemala/skuless-sales", {
         clientId,
         requestId: requestIdRef.current,
-        pieces: count,
-        chargedPrice,
+        pieces: charge.pieces,
+        chargedPrice: charge.chargedPriceGtq,
       });
       const body = (await response.json()) as {
         ok?: boolean;
@@ -67,10 +69,11 @@ export function SkuLessSaleForm({
         return;
       }
       setNotice(
-        `Venta registrada por ${formatStoredQuetzales(body.chargedPriceGtq)}. Ventas sin SKU: ${body.skuLessPieces ?? count} piezas.`
+        `Venta registrada por ${formatStoredQuetzales(body.chargedPriceGtq)}. Ventas sin SKU: ${body.skuLessPieces ?? charge.pieces} piezas.`
       );
       setPieces("1");
       setChargedDraft("");
+      setPriceLines([]);
       requestIdRef.current = "";
       onSaved();
     } catch {
@@ -85,6 +88,14 @@ export function SkuLessSaleForm({
     <section className="panel">
       <h2>Venta sin SKU</h2>
       <p>Para prendas que no se ingresaron al inventario. No se asigna lote ni se descuentan existencias.</p>
+      <PriceQrScanner
+        lines={priceLines}
+        disabled={saving}
+        onAdd={(priceGtq) => setPriceLines((current) => addPricedPiece(current, priceGtq))}
+        onRemove={(priceGtq) => setPriceLines((current) => removePricedPiece(current, priceGtq))}
+      />
+      <h3>Prendas sin QR</h3>
+      <p>Escribe las piezas y el total cuando la prenda no tiene QR de precio. Si también hay etiquetas escaneadas, este total se suma a esa venta.</p>
       <label htmlFor="skuless-pieces">
         Piezas vendidas
         <input id="skuless-pieces" inputMode="numeric" value={pieces} onChange={(event) => setPieces(event.target.value)} />
@@ -104,7 +115,7 @@ export function SkuLessSaleForm({
       {error ? <p className="note note-error" role="alert">{error}</p> : null}
       {notice ? <p role="status">{notice}</p> : null}
       <div className="gt-inventory-actions">
-        <button type="button" className="btn btn-primary" disabled={!count || !chargedPrice || saving} onClick={() => void save()}>
+        <button type="button" className="btn btn-primary" disabled={!charge.ok || saving} onClick={() => void save()}>
           {saving ? "Guardando…" : "Guardar"}
         </button>
         <button type="button" className="btn btn-ghost" disabled={saving} onClick={onClose}>

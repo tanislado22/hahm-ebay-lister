@@ -1,28 +1,43 @@
+import { quetzalPriceText } from "@/lib/markets/guatemala-inventory";
+
 /**
- * Etiqueta QR de Tienda Guatemala.
+ * Etiquetas QR de Tienda Guatemala.
  *
- * El QR puede contener uno de estos dos textos, sin precio, enlace ni sesión:
+ * Una prenda del inventario usa uno de estos dos textos, sin precio, enlace ni sesión:
  *   VSA1:<identificador de la prenda>
  *   <SKU de la prenda>
+ *
+ * Un precio compartido, el mismo para todas las prendas de ese precio, usa:
+ *   VSAP:<quetzales>
+ *   Q<quetzales>
  *
  * Ejemplos:
  *   VSA1:550e8400-e29b-41d4-a716-446655440000
  *   L1-0001
+ *   VSAP:10
+ *   Q15
  *
  * El identificador distingue una prenda aunque el SKU se repita. El SKU se
  * busca tal como está guardado en el inventario de Guatemala: se quitan solo
  * los espacios de los extremos y se conservan los ceros iniciales. Si ese SKU
  * está en varios lotes, hay que elegir la prenda. El texto no abre el panel
- * ni registra una venta.
+ * ni registra una venta. El QR de precio no busca ni descuenta una prenda.
  */
 
 export const GARMENT_QR_PREFIX = "VSA1";
+export const PRICE_QR_PREFIX = "VSAP";
 
 export const GARMENT_QR_SPEC =
-  "El QR puede traer el identificador de la prenda, por ejemplo VSA1:550e8400-e29b-41d4-a716-446655440000, o solo el SKU tal como está en la prenda, por ejemplo L1-0001. Se conservan los ceros iniciales. Si el SKU está en varios lotes, elige la prenda. Escanear no registra la venta.";
+  "El QR puede traer el identificador de la prenda, por ejemplo VSA1:550e8400-e29b-41d4-a716-446655440000, o solo el SKU tal como está en la prenda, por ejemplo L1-0001. Se conservan los ceros iniciales. Si el SKU está en varios lotes, elige la prenda. Escanear no registra la venta. Una etiqueta VSAP:10 o Q10 es un precio compartido y se usa en Venta sin SKU.";
+
+export const PRICE_QR_SPEC =
+  "El QR de precio es el mismo para todas las prendas de ese precio. El texto es VSAP:10 o Q10. Cada escaneo suma una pieza a la venta abierta. Aleja la etiqueta antes de escanear otra del mismo precio. Este QR no identifica una prenda del inventario.";
 
 const ITEM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QR_TEXT = new RegExp(`^${GARMENT_QR_PREFIX}:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`, "i");
+const PRICE_PREFIX = new RegExp(`^${PRICE_QR_PREFIX}:(\\d+(?:\\.\\d{1,2})?)$`, "i");
+const PRICE_MARK = /^Q\s*(\d+(?:\.\d{1,2})?)$/i;
+const PRICE_ATTEMPT = new RegExp(`^(?:${PRICE_QR_PREFIX}:|Q\\s*\\d)`, "i");
 
 export const QR_MESSAGES = {
   badCode: "Ese QR no es una etiqueta válida. Usa VSA1: y el identificador, o el SKU tal como está en la prenda.",
@@ -37,6 +52,17 @@ export const QR_MESSAGES = {
   cameraMissing: "Este celular no tiene una cámara que se pueda usar. Busca la prenda por SKU.",
   cameraInsecure: "La cámara solo funciona con la página en HTTPS. Ábrela con https o busca la prenda por SKU.",
   cameraFailed: "No se pudo abrir la cámara. Puedes buscar la prenda por SKU.",
+} as const;
+
+export const PRICE_QR_MESSAGES = {
+  notGarment: "Esta etiqueta es un precio compartido, no una prenda. Úsala en Registrar venta → Venta sin SKU.",
+  notPrice: "Ese QR no es una etiqueta de precio. Usa VSAP:10 o Q10, o escribe las piezas y el total.",
+  garmentOnPrice: "Este QR identifica una prenda del inventario. Usa Escanear QR para vender esa prenda.",
+  cameraDenied:
+    "El navegador no tiene permiso para usar la cámara. Permite la cámara para este sitio y pulsa Escanear QR de precio de nuevo. En iPhone: Ajustes, Safari, Cámara, Permitir. En Android: el candado de la barra de direcciones, Permisos, Cámara, Permitir. También puedes escribir las piezas y el total.",
+  cameraMissing: "Este celular no tiene una cámara que se pueda usar. Escribe las piezas y el total.",
+  cameraInsecure: "La cámara solo funciona con la página en HTTPS. Ábrela con https o escribe las piezas y el total.",
+  cameraFailed: "No se pudo abrir la cámara. Puedes escribir las piezas y el total.",
 } as const;
 
 export interface ScanGarment {
@@ -80,17 +106,62 @@ export function parseGarmentQr(raw: unknown): { ok: true; itemId: string } | { o
   return { ok: true, itemId: match[1].toLowerCase() };
 }
 
-/** A scanned label is either the VSA1 identifier or the garment SKU itself. */
+/** A scanned garment label is either the VSA1 identifier or the garment SKU itself. */
 export function readScannedLabel(raw: unknown): ScannedLabel {
   if (typeof raw !== "string") return { ok: false, status: 400, error: QR_MESSAGES.badCode };
   const text = raw.trim();
   if (!text) return { ok: false, status: 400, error: QR_MESSAGES.badCode };
+  if (isSharedPriceQr(text)) return { ok: false, status: 400, error: PRICE_QR_MESSAGES.notGarment };
   if (text.toUpperCase().startsWith(`${GARMENT_QR_PREFIX}:`)) {
     const parsed = parseGarmentQr(text);
     if (!parsed.ok) return { ok: false, status: 400, error: parsed.error };
     return { ok: true, kind: "code", itemId: parsed.itemId };
   }
   return { ok: true, kind: "sku", sku: text };
+}
+
+export function isSharedPriceQr(raw: string): boolean {
+  return PRICE_ATTEMPT.test(raw.trim());
+}
+
+export function readPriceLabel(raw: unknown): { ok: true; priceGtq: string } | { ok: false; error: string } {
+  if (typeof raw !== "string") return { ok: false, error: PRICE_QR_MESSAGES.notPrice };
+  const text = raw.trim();
+  if (!text) return { ok: false, error: PRICE_QR_MESSAGES.notPrice };
+  if (!isSharedPriceQr(text)) return { ok: false, error: PRICE_QR_MESSAGES.garmentOnPrice };
+  const match = PRICE_PREFIX.exec(text) ?? PRICE_MARK.exec(text);
+  const priceGtq = match?.[1] ? quetzalPriceText(match[1]) : null;
+  if (!priceGtq) return { ok: false, error: PRICE_QR_MESSAGES.notPrice };
+  return { ok: true, priceGtq };
+}
+
+export interface PriceScanMemory {
+  text: string;
+  at: number;
+}
+
+/** The camera repeats the same code while the label stays in frame. One hold counts once. */
+export function takePriceScan(
+  memory: PriceScanMemory | null,
+  raw: string,
+  at: number,
+  gapMs = 900
+): { memory: PriceScanMemory; priceGtq: string | null; error: string | null } {
+  const text = raw.trim();
+  if (memory && memory.text === text && at - memory.at < gapMs) {
+    return { memory: { text, at }, priceGtq: null, error: null };
+  }
+  const read = readPriceLabel(text);
+  if (!read.ok) return { memory: { text, at }, priceGtq: null, error: read.error };
+  return { memory: { text, at }, priceGtq: read.priceGtq, error: null };
+}
+
+export function priceCameraFailureMessage(error: unknown): string {
+  const garmentMessage = cameraFailureMessage(error);
+  if (garmentMessage === QR_MESSAGES.cameraDenied) return PRICE_QR_MESSAGES.cameraDenied;
+  if (garmentMessage === QR_MESSAGES.cameraInsecure) return PRICE_QR_MESSAGES.cameraInsecure;
+  if (garmentMessage === QR_MESSAGES.cameraMissing) return PRICE_QR_MESSAGES.cameraMissing;
+  return PRICE_QR_MESSAGES.cameraFailed;
 }
 
 export function scanQuery(input: { codigo?: unknown; sku?: unknown }): ScanQuery {
