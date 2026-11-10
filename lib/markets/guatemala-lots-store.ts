@@ -1,6 +1,7 @@
 import { getSql } from "@/lib/db";
 import { clientIsGuatemala } from "@/lib/markets/client-market";
 import { ensureGuatemalaExpenseTables } from "@/lib/markets/guatemala-expenses-store";
+import { quantitySoldByLot } from "@/lib/markets/guatemala-quantity-store";
 import { GUATEMALA_INVENTORY_MESSAGES, type SaleActor } from "@/lib/markets/guatemala-inventory";
 import {
   activeLotTotalGtq,
@@ -223,6 +224,7 @@ async function loadLotBook(clientId: string): Promise<{
       status: String(row.status),
     }))
   );
+  const quantitySold = await quantitySoldByLot(clientId);
   const lots = lotRows.map((row) => {
     const id = String(row.id);
     const ownExpenses = expenses.filter((expense) => expense.lotId === id);
@@ -246,7 +248,7 @@ async function loadLotBook(clientId: string): Promise<{
       averageGtq: average.averageGtq,
       registeredCount: counts.registered,
       availableCount: counts.available,
-      soldCount: counts.sold,
+      soldCount: counts.sold + (quantitySold.get(id) ?? 0),
       createdByUsername: row.created_by_username ? String(row.created_by_username) : null,
       updatedByUsername: row.updated_by_username ? String(row.updated_by_username) : null,
       expenses: ownExpenses.map((expense) => ({

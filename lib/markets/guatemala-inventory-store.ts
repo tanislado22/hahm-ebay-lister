@@ -15,6 +15,7 @@ import {
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import { GUATEMALA_LOT_MESSAGES } from "@/lib/markets/guatemala-lots";
 import { activeGuatemalaLot, ensureGuatemalaLotTables } from "@/lib/markets/guatemala-lots-store";
+import { ensureGuatemalaQuantityTables, listCheckoutReportRows } from "@/lib/markets/guatemala-quantity-store";
 import {
   normalizeScanStatus,
   presentGuatemalaScan,
@@ -1803,6 +1804,7 @@ export async function listGuatemalaSalesReport(input: {
   }
   await markRecordedSku3002SaleAsTest();
   await markRecordedPrueba1SaleAsTest();
+  await ensureGuatemalaQuantityTables();
   const sql = getSql();
   const rows = await sql`
     SELECT sale.item_id, sale.sku, item.title,
@@ -1826,9 +1828,11 @@ export async function listGuatemalaSalesReport(input: {
       AND sale.sold_at >= ${built.range.start}
       AND sale.sold_at < ${built.range.end}
       AND sale.voided_at IS NULL
+      AND sale.checkout_id IS NULL
       AND (${input.includeTests} OR sale.is_test = FALSE)
     ORDER BY sale.sold_at DESC
   `;
+  const checkouts = await listCheckoutReportRows(input.clientId, built.range.start, built.range.end);
   const sales: SalesReportRow[] = rows.map((row) => ({
     itemId: String(row.item_id),
     sku: String(row.sku),
@@ -1844,6 +1848,21 @@ export async function listGuatemalaSalesReport(input: {
         ? { id: String(row.photo_id), mediaType: String(row.media_type), data: String(row.data) }
         : null,
   }));
+  for (const checkout of checkouts) {
+    sales.push({
+      itemId: checkout.id,
+      sku: "Cantidad",
+      title: checkout.title,
+      publishedPriceGtq: checkout.chargedPriceGtq,
+      chargedPriceGtq: checkout.chargedPriceGtq,
+      soldAt: checkout.soldAt,
+      isTest: false,
+      costGtq: null,
+      costIncludesPhotography: false,
+      cover: null,
+    });
+  }
+  sales.sort((left, right) => right.soldAt.localeCompare(left.soldAt));
   const cents = sales.reduce((sum, sale) => {
     const [whole, fraction] = sale.chargedPriceGtq.split(".");
     return sum + Number(whole) * 100 + Number((fraction ?? "00").slice(0, 2));
@@ -1894,6 +1913,7 @@ export async function listGuatemalaSaleReferences(clientId: string): Promise<
   }[]
 > {
   await ensureGuatemalaInventoryTables();
+  await ensureGuatemalaQuantityTables();
   await markRecordedSku3002SaleAsTest();
   await markRecordedPrueba1SaleAsTest();
   const sql = getSql();
@@ -1907,6 +1927,7 @@ export async function listGuatemalaSaleReferences(clientId: string): Promise<
     WHERE sale.client_id = ${clientId}
       AND sale.voided_at IS NULL
       AND sale.is_test = FALSE
+      AND sale.checkout_id IS NULL
     ORDER BY sale.sold_at DESC
     LIMIT 400
   `;

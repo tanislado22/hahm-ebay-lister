@@ -22,6 +22,7 @@ import { GARMENT_QR_SPEC, garmentQrText } from "@/lib/markets/guatemala-qr";
 import { SaleTender } from "./tender";
 import { useOnlineStatus } from "../pwa/shell";
 import { QuickAddForm, UnpublishedEditor } from "./draft";
+import { QuantityGroupPanel, QuantitySalePanel } from "./quantity";
 import "./inventory.css";
 import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
 import { PurgePanel } from "./purge";
@@ -148,6 +149,8 @@ export function InventoryScreen({
   const [lotChoices, setLotChoices] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
   const [assignLotId, setAssignLotId] = useState("");
   const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [quantitySale, setQuantitySale] = useState<{ id: string; sku: string; title: string; lotLabel: string; status: string }[] | null>(null);
   const [listVersion, setListVersion] = useState(0);
 
   useEffect(() => {
@@ -534,6 +537,19 @@ export function InventoryScreen({
         </p>
       ) : null}
 
+      {groupOpen ? (
+        <QuantityGroupPanel clientId={clientId} lots={lotChoices} request={storeRequest} onClose={() => setGroupOpen(false)} />
+      ) : null}
+      {quantitySale ? (
+        <QuantitySalePanel
+          clientId={clientId}
+          request={storeRequest}
+          initialItems={quantitySale}
+          onClose={() => setQuantitySale(null)}
+          onSaved={() => setListVersion((current) => current + 1)}
+        />
+      ) : null}
+
       {itemId ? (
         <section className="panel gt-inventory-detail" aria-labelledby="inventory-detail-heading">
           {loading ? <p>Cargando prenda…</p> : null}
@@ -803,6 +819,24 @@ export function InventoryScreen({
                   }}
                 >
                   <h3>Registrar venta</h3>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setQuantitySale([
+                        {
+                          id: detail.id,
+                          sku: detail.sku,
+                          title: detail.title,
+                          lotLabel: "Prenda con SKU",
+                          status: detail.status,
+                        },
+                      ]);
+                      resetSaleForm();
+                    }}
+                  >
+                    Vender por cantidad
+                  </button>
                   <p>SKU {detail.sku}</p>
                   <p>{detail.published === false ? "Precio" : "Precio publicado"} {formatStoredQuetzales(detail.priceGtq)}</p>
                   <label htmlFor="charged-price">Precio cobrado</label>
@@ -1077,6 +1111,12 @@ export function InventoryScreen({
             <div className="gt-inventory-actions">
               <button type="button" className="btn btn-primary" onClick={() => setQuickAddOpen((open) => !open)}>
                 Agregar sin fotos
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => { setGroupOpen((open) => !open); setQuantitySale(null); }}>
+                Crear grupo por cantidad
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => { setQuantitySale([]); setGroupOpen(false); }}>
+                Registrar venta
               </button>
             </div>
             {quickAddOpen ? (
