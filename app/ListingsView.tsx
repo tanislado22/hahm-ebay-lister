@@ -87,6 +87,7 @@ interface ListingsViewProps {
   onPrepareAll: () => void;
   onPrepareVinted: (groupId: string, sku: string) => void;
   onMarkVintedPublished: (groupId: string, url: string) => void;
+  onUnlinkVinted: (groupId: string) => Promise<void> | void;
   onSaveMissingSku?: (groupId: string, sku: string) => Promise<void> | void;
   vintedPreparing: boolean;
   vintedNotice?: { scope: "all" | string; text: string; error: boolean; queue: boolean } | null;
@@ -124,6 +125,7 @@ export function ListingsView({
   onPrepareAll,
   onPrepareVinted,
   onMarkVintedPublished,
+  onUnlinkVinted,
   onSaveMissingSku,
   vintedPreparing,
   vintedNotice,
@@ -431,6 +433,7 @@ export function ListingsView({
             onInventorySaved={onInventorySaved}
             onPrepareVinted={onPrepareVinted}
             onMarkVintedPublished={onMarkVintedPublished}
+            onUnlinkVinted={onUnlinkVinted}
             onSaveMissingSku={onSaveMissingSku}
             skuNote={skuNotes?.[group.id]?.text}
             skuNoteError={skuNotes?.[group.id]?.error}

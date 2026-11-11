@@ -14,6 +14,7 @@ import type { GuatemalaCompReport, ItemGroup, ListingResult, Photo } from "@/lib
 import { skuFieldEditable } from "@/lib/archive/manual-sku";
 import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
 import { vintedQueueHref } from "@/lib/vinted/queue-link";
+import { showsVintedPrepare, showsVintedQueue, VINTED_UNLINK_MESSAGE, vintedStatusLabel } from "@/lib/vinted/unlink";
 import { buildStoredZip, vintedPhotoFileName, vintedPhotoZipName } from "@/lib/vinted/photo-zip";
 
 const TITLE_LIMIT = 80;
@@ -92,6 +93,7 @@ archiveBusy?: boolean;
 onInventorySaved?: (groupId: string) => void;
 onPrepareVinted: (groupId: string, sku: string) => void;
 onMarkVintedPublished: (groupId: string, url: string) => void;
+onUnlinkVinted: (groupId: string) => Promise<void> | void;
 onSaveMissingSku?: (groupId: string, sku: string) => Promise<void> | void;
 skuNote?: string;
 skuNoteError?: boolean;
@@ -123,6 +125,7 @@ export function ListingCard({
   onInventorySaved,
   onPrepareVinted,
   onMarkVintedPublished,
+  onUnlinkVinted,
   onSaveMissingSku,
   skuNote,
   skuNoteError = false,
@@ -155,6 +158,9 @@ export function ListingCard({
   const [inventoryLotId, setInventoryLotId] = useState("");
   const [inventoryLots, setInventoryLots] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
   const [suggestedSku, setSuggestedSku] = useState("");
+  const [confirmUnlink, setConfirmUnlink] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
+  const [unlinkError, setUnlinkError] = useState("");
   const savingInventoryRef = useRef(false);
   const priceTouched = useRef(false);
   const cover = photoById(group.photoIds[0]);
@@ -631,12 +637,7 @@ const keyword = [
           <span className="platform-badges">
             <span>eBay: {group.postStatus === "posted" ? "Published" : "Not Published"}</span>
             <span>
-              Vinted:{" "}
-              {group.vintedStatus === "published"
-                ? "Published"
-                : group.vintedStatus === "ready"
-                  ? "Ready"
-                  : "Not Prepared"}
+              Vinted: {vintedStatusLabel(group.vintedStatus)}
             </span>
           </span>
         </div>
@@ -1409,12 +1410,7 @@ const keyword = [
           {!guatemala && group.status === "done" && listing && (
             <div className="post-row">
               <p className="post-result">
-                Vinted:{" "}
-                {group.vintedStatus === "published"
-                  ? "Published"
-                  : group.vintedStatus === "ready"
-                    ? "Ready"
-                    : "Not Prepared"}
+                Vinted: {vintedStatusLabel(group.vintedStatus)}
                 {group.vintedStatus === "published" && group.vintedListingUrl ? (
                   <>
                     {" "}
@@ -1424,8 +1420,44 @@ const keyword = [
                     </a>
                   </>
                 ) : null}
+                {group.vintedStatus === "published" ? (
+                  <>
+                    {" "}
+                    <button type="button" className="btn btn-ghost" onClick={() => { setUnlinkError(""); setConfirmUnlink(true); }}>
+                      Desvincular Vinted
+                    </button>
+                  </>
+                ) : null}
               </p>
-              {group.vintedStatus !== "published" && (
+              {confirmUnlink && group.vintedStatus === "published" ? (
+                <div role="alertdialog" aria-label="Desvincular Vinted">
+                  <p>{VINTED_UNLINK_MESSAGE}</p>
+                  {unlinkError ? <p className="post-result err" role="alert">{unlinkError}</p> : null}
+                  <div className="gt-inventory-actions">
+                    <button type="button" className="btn btn-ghost" disabled={unlinking} onClick={() => setConfirmUnlink(false)}>
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={unlinking}
+                      onClick={() => {
+                        setUnlinking(true);
+                        setUnlinkError("");
+                        void Promise.resolve(onUnlinkVinted(group.id))
+                          .then(() => setConfirmUnlink(false))
+                          .catch((error: unknown) => {
+                            setUnlinkError(error instanceof Error ? error.message : "No se pudo desvincular.");
+                          })
+                          .finally(() => setUnlinking(false));
+                      }}
+                    >
+                      {unlinking ? "Desvinculando…" : "Sí, desvincular"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {showsVintedPrepare(group.vintedStatus) && (
                 <button
                   type="button"
                   className="btn btn-ghost"
@@ -1457,26 +1489,26 @@ const keyword = [
                 {preparingVintedPhotos ? "Preparing photos…" : "Download Vinted Photos"}
               </button>
               {vintedPhotoError ? <p className="post-result err">{vintedPhotoError}</p> : null}
-              {group.vintedStatus === "ready" && (
-                <>
-                  <a className="btn btn-ghost" href={vintedQueueHref(group.id)} target="_blank" rel="noopener noreferrer">
-                    Open Vinted queue
-                  </a>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      const url = window.prompt(
-                        "Paste the Vinted listing URL if you have it. Leave blank to mark published without a URL."
-                      );
-                      if (url === null) return;
-                      onMarkVintedPublished(group.id, url.trim());
-                    }}
-                  >
-                    Mark as Published
-                  </button>
-                </>
-              )}
+              {showsVintedQueue(group.vintedStatus) ? (
+                <a className="btn btn-ghost" href={vintedQueueHref(group.id)} target="_blank" rel="noopener noreferrer">
+                  Open Vinted queue
+                </a>
+              ) : null}
+              {group.vintedStatus === "ready" ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    const url = window.prompt(
+                      "Paste the Vinted listing URL if you have it. Leave blank to mark published without a URL."
+                    );
+                    if (url === null) return;
+                    onMarkVintedPublished(group.id, url.trim());
+                  }}
+                >
+                  Mark as Published
+                </button>
+              ) : null}
             </div>
           )}
         </div>

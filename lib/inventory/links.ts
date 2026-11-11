@@ -305,6 +305,60 @@ export async function saveVintedDraft(input: {
   return rows.length > 0;
 }
 
+export async function unlinkVintedListing(input: {
+  workspaceKey: string;
+  sku: string;
+  groupId?: string | null;
+}): Promise<boolean> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const sku = input.sku.trim();
+  const rows = await sql`
+    UPDATE platform_listings
+    SET
+      vinted_status = 'not_prepared',
+      published_on_vinted = FALSE,
+      vinted_listing_url = NULL,
+      vinted_listing_id = NULL,
+      updated_at = NOW()
+    WHERE workspace_key = ${input.workspaceKey}
+      AND sku = ${sku}
+    RETURNING id
+  `;
+  await sql`
+    DELETE FROM vinted_current_item
+    WHERE workspace_key = ${input.workspaceKey}
+      AND sku = ${sku}
+  `;
+  await sql`
+    DELETE FROM vinted_ready_snapshot
+    WHERE workspace_key = ${input.workspaceKey}
+      AND sku = ${sku}
+  `;
+  const groupId = input.groupId?.trim() || "";
+  let jobUpdated = false;
+  if (groupId) {
+    try {
+      const jobs = await sql`
+        UPDATE jobs
+        SET
+          data = jsonb_set(
+            data #- '{group,vintedListingUrl}',
+            '{group,vintedStatus}',
+            '"not_prepared"'::jsonb
+          ),
+          updated_at = NOW()
+        WHERE id = ${groupId}
+        RETURNING id
+      `;
+      jobUpdated = jobs.length > 0;
+    } catch (error) {
+      console.error("[vinted/unlink] job", error instanceof Error ? error.name : "Error");
+    }
+  }
+  return rows.length > 0 || jobUpdated;
+}
+
 export async function findListingForEbaySale(
   workspaceKey: string,
   sku: string,

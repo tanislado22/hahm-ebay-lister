@@ -8,6 +8,7 @@ import { resizeImage } from "@/lib/resize";
 import { exactGuatemalaSku, guatemalaDuplicateSkuMessage } from "@/lib/markets/guatemala";
 import { guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
 import { partitionVintedPrepare, vintedPrepareResultMessage, workspaceGroupVisible } from "@/lib/archive/manual-sku";
+import { applyStoredVintedLink } from "@/lib/vinted/unlink";
 import { buildSku } from "@/lib/sku";
 import { chunkImagesForUpload } from "@/lib/uploadBatches";
 import { EbayConnect } from "./EbayConnect";
@@ -488,8 +489,9 @@ if (!selectedClientSaveReadyRef.current) {
             for (const group of restoredGroups) {
               const link = bySku.get(group.sku);
               if (!link?.vintedStatus) continue;
-              group.vintedStatus = link.vintedStatus;
-              if (link.vintedListingUrl) group.vintedListingUrl = link.vintedListingUrl;
+              const stored = applyStoredVintedLink(group, link);
+              group.vintedStatus = stored.vintedStatus;
+              group.vintedListingUrl = stored.vintedListingUrl;
             }
           }
         } catch (error) {
@@ -1745,6 +1747,25 @@ const draftAll = async () => {
       alert((error as Error).message);
     }
   };
+  const unlinkVinted = async (groupId: string) => {
+    const group = groupsRef.current.find((item) => item.id === groupId);
+    if (!group) return;
+    const res = await apiPost("/api/vinted/unlink", {
+      workMode,
+      clientId: workMode === "client" ? selectedClientId : null,
+      sku: group.sku,
+      groupId: group.id,
+    });
+    const data = (await readJson(res)) as { ok?: boolean; error?: string };
+    if (!res.ok || !data.ok) throw new Error(data.error || "No se pudo desvincular.");
+    setGroups((prev) =>
+      prev.map((item) =>
+        item.id === groupId
+          ? { ...item, vintedStatus: "not_prepared", vintedListingUrl: undefined }
+          : item
+      )
+    );
+  };
   const usableGroups = useMemo(
     () => groups.filter((group) => workspaceGroupVisible(group)),
     [groups]
@@ -2312,6 +2333,7 @@ const draftAll = async () => {
           onPrepareAll={prepareAllVinted}
           onPrepareVinted={(groupId, sku) => void prepareVintedGroups([groupId], sku)}
           onMarkVintedPublished={(groupId, url) => void markVintedPublished(groupId, url)}
+          onUnlinkVinted={unlinkVinted}
           onSaveMissingSku={saveMissingSku}
           vintedPreparing={vintedPreparing}
           vintedNotice={vintedNotice}
