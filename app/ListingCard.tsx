@@ -13,6 +13,7 @@ import { GUATEMALA_INVENTORY_MESSAGES } from "@/lib/markets/guatemala-inventory"
 import type { GuatemalaCompReport, ItemGroup, ListingResult, Photo } from "@/lib/types";
 import { skuFieldEditable } from "@/lib/archive/manual-sku";
 import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
+import { vintedQueueHref } from "@/lib/vinted/queue-link";
 import { buildStoredZip, vintedPhotoFileName, vintedPhotoZipName } from "@/lib/vinted/photo-zip";
 
 const TITLE_LIMIT = 80;
@@ -1440,7 +1441,9 @@ const keyword = [
                   {prepareQueue ? (
                     <>
                       {" "}
-                      <a href="/vinted">Vinted queue</a>
+                      <a href={vintedQueueHref(group.id)} target="_blank" rel="noopener noreferrer">
+                        Vinted queue
+                      </a>
                     </>
                   ) : null}
                 </p>
@@ -1456,7 +1459,7 @@ const keyword = [
               {vintedPhotoError ? <p className="post-result err">{vintedPhotoError}</p> : null}
               {group.vintedStatus === "ready" && (
                 <>
-                  <a className="btn btn-ghost" href="/vinted">
+                  <a className="btn btn-ghost" href={vintedQueueHref(group.id)} target="_blank" rel="noopener noreferrer">
                     Open Vinted queue
                   </a>
                   <button

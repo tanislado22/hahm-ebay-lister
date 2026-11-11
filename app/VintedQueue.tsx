@@ -5,6 +5,13 @@ import { apiGet, apiPost } from "@/lib/api-client";
 import type { ItemGroup, Photo, VintedStatus } from "@/lib/types";
 import { formatVintedCategoryPath, resolveVintedCategory } from "@/lib/vinted/category-map";
 import type { VintedPrepared } from "@/lib/vinted/prepare";
+import {
+  articleIdFromSearch,
+  assignArticleIds,
+  openQueueArticle,
+  orderQueue,
+  photosForArticle,
+} from "@/lib/vinted/queue-link";
 
 interface StoredListing {
   sku: string;
@@ -30,6 +37,7 @@ interface ReviewEvent {
 
 interface QueueItem {
   sku: string;
+  articleIds: string[];
   vintedStatus: VintedStatus;
   vintedListingUrl: string | null;
   publishedOnEbay: boolean;
@@ -92,6 +100,8 @@ export function VintedQueue() {
   const [error, setError] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [missingArticle, setMissingArticle] = useState(false);
+  const [openedArticleId, setOpenedArticleId] = useState("");
   const [workspace, setWorkspace] = useState<{ workMode: "store" | "client"; clientId: string | null } | null>(null);
 
   useEffect(() => {
@@ -120,13 +130,13 @@ export function VintedQueue() {
           throw new Error(listingJson.error || "Could not load the Vinted queue.");
         }
         const jobJson = jobRes.ok ? await jobRes.json() : { jobs: [] };
-        const photosBySku = new Map<string, Photo[]>();
+        const jobs: { articleId: string; sku: string; photos: Photo[] }[] = [];
         for (const job of jobJson.jobs ?? []) {
           const data = typeof job.data === "string" ? JSON.parse(job.data) : job.data;
           const group = data?.group as ItemGroup | undefined;
           if (!group?.sku) continue;
           const photos = Array.isArray(data.photos) ? (data.photos as Photo[]) : [];
-          photosBySku.set(group.sku, photos);
+          jobs.push({ articleId: String(group.id || job.id || ""), sku: group.sku, photos });
         }
         let currentSku = "";
         try {
@@ -135,37 +145,45 @@ export function VintedQueue() {
         } catch {
           currentSku = "";
         }
-        const queue = (listingJson.listings as StoredListing[])
-          .filter((listing) => listing.vintedStatus === "ready" || listing.vintedStatus === "published")
-          .map((listing) => ({
-            sku: listing.sku,
-            vintedStatus: listing.vintedStatus,
-            vintedListingUrl: listing.vintedListingUrl,
-            publishedOnEbay: listing.publishedOnEbay,
-            fields: withVintedCategory(
-              listing.prepared ?? {
-                sku: listing.sku,
-                title: listing.vintedTitle || listing.ebayTitle || "",
-                description: "",
-                brand: "",
-                category: "",
-                vintedCategory: "",
-                size: "",
-                color: "",
-                condition: "",
-                price: "",
-              }
-            ),
-            photos: photosBySku.get(listing.sku) ?? [],
-          }))
-          .sort((a, b) => {
-            if (currentSku && a.sku === currentSku) return -1;
-            if (currentSku && b.sku === currentSku) return 1;
-            if (a.vintedStatus === b.vintedStatus) return a.sku.localeCompare(b.sku);
-            return a.vintedStatus === "ready" ? -1 : 1;
-          });
-        setItems(queue);
-        setIndex(0);
+        const requestedArticle = articleIdFromSearch(window.location.search);
+        const listed = assignArticleIds(
+          (listingJson.listings as StoredListing[])
+            .filter((listing) => listing.vintedStatus === "ready" || listing.vintedStatus === "published")
+            .map((listing) => ({
+              sku: listing.sku,
+              vintedStatus: listing.vintedStatus,
+              vintedListingUrl: listing.vintedListingUrl,
+              publishedOnEbay: listing.publishedOnEbay,
+              fields: withVintedCategory(
+                listing.prepared ?? {
+                  sku: listing.sku,
+                  title: listing.vintedTitle || listing.ebayTitle || "",
+                  description: "",
+                  brand: "",
+                  category: "",
+                  vintedCategory: "",
+                  size: "",
+                  color: "",
+                  condition: "",
+                  price: "",
+                }
+              ),
+            })),
+          jobs
+        );
+        const ordered = orderQueue(listed, currentSku).map((listing) => ({
+          ...listing,
+          photos: photosForArticle(
+            jobs,
+            listing.sku,
+            listing.articleIds.includes(requestedArticle) ? requestedArticle : ""
+          ),
+        }));
+        const opened = openQueueArticle(ordered, requestedArticle);
+        setItems(opened.queue);
+        setIndex(opened.index);
+        setOpenedArticleId(opened.found ? requestedArticle : "");
+        setMissingArticle(Boolean(requestedArticle) && !opened.found);
         if (reviewRes.ok) {
           const reviewJson = await reviewRes.json();
           setReviews(Array.isArray(reviewJson.events) ? reviewJson.events : []);
@@ -266,8 +284,16 @@ export function VintedQueue() {
         </p>
       )}
       {!loading && !error && items.length === 0 && <p>No items are Ready or Published for Vinted yet.</p>}
+      {!loading && missingArticle ? (
+        <p className="note note-error" role="alert">
+          This article is not in the Vinted queue.
+        </p>
+      ) : null}
       {current && (
-        <article className="listing-card">
+        <article
+          className="listing-card"
+          id={`vinted-article-${current.articleIds.includes(openedArticleId) ? openedArticleId : current.articleIds[0] || current.sku}`}
+        >
           <header className="listing-card-head">
             <div className="listing-card-title">
               <strong>
