@@ -74,3 +74,21 @@ export function openQueueArticle<T extends { sku: string; articleIds: string[] }
   const index = queueIndexForArticle(queue, articleId);
   return { queue: [...queue], index: index ?? 0, found: index != null };
 }
+
+export function saveQueueListingUrl<
+  T extends { articleIds: readonly string[]; vintedStatus: string; vintedListingUrl: string | null }
+>(items: readonly T[], articleId: string, url: string): { items: T[]; index: number | null } {
+  const index = queueIndexForArticle(items, articleId);
+  if (index == null) return { items: [...items], index: null };
+  const trimmed = url.trim();
+  const next = items.map((item, itemIndex) =>
+    itemIndex === index
+      ? {
+          ...item,
+          vintedStatus: "published",
+          vintedListingUrl: trimmed || item.vintedListingUrl,
+        }
+      : item
+  );
+  return { items: next, index };
+}

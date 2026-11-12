@@ -11,6 +11,8 @@ import {
   openQueueArticle,
   orderQueue,
   photosForArticle,
+  queueIndexForArticle,
+  saveQueueListingUrl,
 } from "@/lib/vinted/queue-link";
 
 interface StoredListing {
@@ -95,13 +97,13 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 export function VintedQueue() {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [reviews, setReviews] = useState<ReviewEvent[]>([]);
-  const [index, setIndex] = useState(0);
+  const [fallbackIndex, setFallbackIndex] = useState(0);
+  const [selectedArticleId, setSelectedArticleId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [missingArticle, setMissingArticle] = useState(false);
-  const [openedArticleId, setOpenedArticleId] = useState("");
   const [workspace, setWorkspace] = useState<{ workMode: "store" | "client"; clientId: string | null } | null>(null);
 
   useEffect(() => {
@@ -180,9 +182,10 @@ export function VintedQueue() {
           ),
         }));
         const opened = openQueueArticle(ordered, requestedArticle);
+        const openedId = opened.found ? requestedArticle : opened.queue[opened.index]?.articleIds[0] || "";
         setItems(opened.queue);
-        setIndex(opened.index);
-        setOpenedArticleId(opened.found ? requestedArticle : "");
+        setFallbackIndex(opened.index);
+        setSelectedArticleId(openedId);
         setMissingArticle(Boolean(requestedArticle) && !opened.found);
         if (reviewRes.ok) {
           const reviewJson = await reviewRes.json();
@@ -200,13 +203,27 @@ export function VintedQueue() {
     return () => controller.abort();
   }, [workspace]);
 
+  const matchedIndex = queueIndexForArticle(items, selectedArticleId);
+  const index = matchedIndex ?? fallbackIndex;
   const current = items[index];
+  const articleId =
+    current && selectedArticleId && current.articleIds.includes(selectedArticleId)
+      ? selectedArticleId
+      : current?.articleIds[0] || "";
   useEffect(() => {
     setUrl(current?.vintedListingUrl ?? "");
-  }, [current?.sku, current?.vintedListingUrl]);
+  }, [articleId, current?.vintedListingUrl]);
+
+  const showArticle = (nextIndex: number) => {
+    const item = items[nextIndex];
+    const id = item?.articleIds[0] || "";
+    setFallbackIndex(nextIndex);
+    if (id) setSelectedArticleId(id);
+  };
 
   const updateCurrent = (patch: Partial<QueueItem>) => {
-    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+    if (!articleId) return;
+    setItems((prev) => prev.map((item) => (item.articleIds.includes(articleId) ? { ...item, ...patch } : item)));
   };
 
   const saveReady = async () => {
@@ -246,18 +263,9 @@ export function VintedQueue() {
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "Could not mark this item published.");
-      const nextItems = items.map((item, i) =>
-        i === index
-          ? {
-              ...item,
-              vintedStatus: "published" as const,
-              vintedListingUrl: url.trim() || item.vintedListingUrl,
-            }
-          : item
-      );
-      setItems(nextItems);
-      const nextReady = nextItems.findIndex((item, i) => i > index && item.vintedStatus === "ready");
-      if (nextReady >= 0) setIndex(nextReady);
+      const saved = saveQueueListingUrl(items, articleId, url.trim());
+      setItems(saved.items);
+      if (articleId) setSelectedArticleId(articleId);
     } catch (markError) {
       setError((markError as Error).message);
     } finally {
@@ -292,7 +300,7 @@ export function VintedQueue() {
       {current && (
         <article
           className="listing-card"
-          id={`vinted-article-${current.articleIds.includes(openedArticleId) ? openedArticleId : current.articleIds[0] || current.sku}`}
+          id={`vinted-article-${articleId || current.sku}`}
         >
           <header className="listing-card-head">
             <div className="listing-card-title">
@@ -373,14 +381,19 @@ export function VintedQueue() {
             <button type="button" className="btn btn-ghost" onClick={() => void markPublished()} disabled={busy}>
               Mark as Published
             </button>
+            {current.vintedListingUrl ? (
+              <a className="btn btn-ghost" href={current.vintedListingUrl} target="_blank" rel="noopener noreferrer">
+                Open saved listing
+              </a>
+            ) : null}
             <div className="result-actions">
-              <button type="button" className="btn btn-ghost" onClick={() => setIndex((n) => Math.max(0, n - 1))} disabled={index === 0}>
+              <button type="button" className="btn btn-ghost" onClick={() => showArticle(Math.max(0, index - 1))} disabled={index === 0}>
                 ← Previous
               </button>
               <button
                 type="button"
                 className="btn btn-ghost"
-                onClick={() => setIndex((n) => Math.min(items.length - 1, n + 1))}
+                onClick={() => showArticle(Math.min(items.length - 1, index + 1))}
                 disabled={index >= items.length - 1}
               >
                 Next →
