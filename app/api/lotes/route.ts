@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
   const account = await accountFrom({ workMode: params.get("workMode"), clientId: params.get("clientId") });
   if ("error" in account) return NextResponse.json({ ok: false, error: account.error }, { status: account.status });
   try {
-    await importDetectedMarketplaceSales(account.key);
+    const marketplace = await importDetectedMarketplaceSales(account.key);
     const lots = await listUsaLots(account.key);
     const open = await listOpenSales(account.key);
     const sync = await readSyncState(account.key);
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
     });
     const lotId = params.get("lotId") || "";
     const detail = lotId ? await readLotReport(account.key, lotId) : null;
-    return NextResponse.json({ ok: true, lots, open, status, detail });
+    return NextResponse.json({ ok: true, lots, open, status, detail, marketplace });
   } catch (error) {
     console.error("[lotes] list", error);
     return NextResponse.json({ ok: false, error: "No se pudieron leer los lotes." }, { status: 500 });

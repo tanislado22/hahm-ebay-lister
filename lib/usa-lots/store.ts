@@ -6,6 +6,7 @@ import {
   manualMarketplaceMoney,
   marketplaceFeeLabel,
   marketplaceHasNet,
+  describeMarketplaceNotices,
   marketplaceListingKey,
   matchMarketplaceArticle,
   planMarketplaceSale,
@@ -1088,43 +1089,54 @@ export async function registerMarketplaceSale(input: {
   return { ok: true, message: saved.message };
 }
 
-export async function importDetectedMarketplaceSales(accountKey: string): Promise<number> {
+export async function importDetectedMarketplaceSales(accountKey: string): Promise<string[]> {
   await ensureUsaLots();
   const sql = getSql();
   const notices = await sql`
-    SELECT platform, external_event_id, sku, title, COALESCE(sent_at, created_at) AS sold_at
+    SELECT platform, external_event_id, sku, title, status, COALESCE(sent_at, created_at) AS sold_at
     FROM telegram_sale_notices
     WHERE platform IN ('poshmark', 'depop')
-      AND status IN ('sent', 'suppressed')
     ORDER BY created_at DESC
-    LIMIT 100
+    LIMIT 20
   `;
   const knownRows = await sql`
     SELECT order_id FROM usa_ebay_sales
     WHERE order_id LIKE 'poshmark:%' OR order_id LIKE 'depop:%'
   `;
   const known = new Set(knownRows.map((row) => String((row as { order_id?: string }).order_id ?? "")));
-  let changed = 0;
-  for (const row of notices) {
-    const record = row as { platform?: string; external_event_id?: string; sku?: string; title?: string; sold_at?: string };
-    const platform = marketplacePlatform(String(record.platform ?? ""));
-    const externalId = String(record.external_event_id ?? "").trim();
+  const rows = notices.map((row) => {
+    const record = row as { platform?: string; external_event_id?: string; sku?: string; title?: string; status?: string; sold_at?: string };
+    return {
+      platform: String(record.platform ?? ""),
+      status: String(record.status ?? ""),
+      sku: String(record.sku ?? ""),
+      title: String(record.title ?? ""),
+      externalId: String(record.external_event_id ?? ""),
+      soldAt: record.sold_at ? String(record.sold_at) : "",
+    };
+  });
+  for (const record of rows) {
+    const platform = marketplacePlatform(record.platform);
+    const externalId = record.externalId.trim();
     if (!platform || !externalId || known.has(`${platform}:${externalId}`)) continue;
+    if (record.status !== "sent" && record.status !== "suppressed") continue;
     const saved = await rememberMarketplaceSale({
       accountKey: accountKey === "store" ? null : accountKey,
       platform,
-      externalId: String(record.external_event_id),
-      sku: String(record.sku ?? ""),
-      title: String(record.title ?? ""),
+      externalId: record.externalId,
+      sku: record.sku,
+      title: record.title,
       listingUrl: "",
-      soldAt: record.sold_at ? String(record.sold_at) : null,
+      soldAt: record.soldAt || null,
       itemCents: null,
       buyerShippingCents: null,
       feeCents: null,
       sellerShippingCents: null,
       refundCents: null,
     });
-    if (saved.action === "record" || saved.action === "complete" || saved.action === "unmatched") changed += 1;
+    if (saved.action === "record" || saved.action === "complete" || saved.action === "unmatched") {
+      known.add(`${platform}:${externalId}`);
+    }
   }
-  return changed;
+  return describeMarketplaceNotices(rows, [...known]);
 }

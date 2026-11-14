@@ -80,6 +80,7 @@ export default function LotsPage() {
   const [lots, setLots] = useState<LotRow[]>([]);
   const [openSales, setOpenSales] = useState<{ unassigned: OpenSale[]; unmatched: OpenSale[] }>({ unassigned: [], unmatched: [] });
   const [statusLines, setStatusLines] = useState<string[]>([]);
+  const [marketplaceLines, setMarketplaceLines] = useState<string[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [selected, setSelected] = useState("");
   const [message, setMessage] = useState("");
@@ -112,7 +113,7 @@ export default function LotsPage() {
     const params = account();
     if (lotId) params.set("lotId", lotId);
     const response = await fetch(`/api/lotes?${params.toString()}`, { cache: "no-store", headers: accessHeaders() });
-    const data = await response.json() as { ok?: boolean; error?: string; lots?: LotRow[]; open?: { unassigned: OpenSale[]; unmatched: OpenSale[] }; status?: { lines: string[] }; detail?: Detail | null };
+    const data = await response.json() as { ok?: boolean; error?: string; lots?: LotRow[]; open?: { unassigned: OpenSale[]; unmatched: OpenSale[] }; status?: { lines: string[] }; detail?: Detail | null; marketplace?: string[] };
     if (!response.ok || !data.ok) {
       setError(data.error || "No se pudieron leer los lotes.");
       return;
@@ -120,6 +121,7 @@ export default function LotsPage() {
     setLots(data.lots || []);
     setOpenSales(data.open || { unassigned: [], unmatched: [] });
     setStatusLines(data.status?.lines || []);
+    setMarketplaceLines(Array.isArray(data.marketplace) ? data.marketplace : []);
     setDetail(data.detail || null);
   };
 
@@ -233,6 +235,9 @@ export default function LotsPage() {
         <button type="button" className="btn btn-ghost" disabled={syncing} onClick={() => void prepareNotifications()}>
           Preparar notificaciones de eBay
         </button>
+        <p className="note">Registrar venta está dentro del lote que abras, en cada prenda que no esté apartada para Guatemala, debajo de Guardar costo. Ventas por vincular está al final de esta página.</p>
+        <h3>Avisos de Poshmark y Depop</h3>
+        {marketplaceLines.length === 0 ? <p>Leyendo avisos…</p> : marketplaceLines.map((line) => <p key={line} className="note" role="status">{line}</p>)}
         {message ? <p className="note" role="status">{message}</p> : null}
         {error ? <p className="note note-error" role="alert">{error}</p> : null}
       </section>
@@ -342,6 +347,7 @@ export default function LotsPage() {
           <p className="note">El promedio usa el total vendible, incluidas las piezas destinadas a Guatemala. No cambia un costo manual ni el costo ya guardado en una venta. El envío a Guatemala no entra en las prendas de Estados Unidos.</p>
           <p className="note">Apartar un artículo no lo quita del total vendible ni pasa su costo a las demás prendas. Si ya registraste un número de piezas para Guatemala, ese artículo cuenta dentro de ese número.</p>
           <p className="note">Poshmark y Depop no envían el precio ni la comisión. El correo solo avisa la venta. Regístrala en la ficha, con el enlace si lo tienes, para que entre en este lote. Si esa prenda ya se vendió por otra vía, no se cuenta otra vez.</p>
+          {detail.items.length === 0 ? <p className="note">Este lote no tiene prendas registradas una por una, por eso no aparece Registrar venta.</p> : null}
           <ul>
             {detail.items.map((item) => (
               <li key={item.id}>

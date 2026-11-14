@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  describeMarketplaceNotices,
   manualMarketplaceMoney,
   marketplaceListingKey,
   matchMarketplaceArticle,
@@ -203,11 +204,25 @@ describe("ventas de Poshmark y Depop en el lote", () => {
     });
   });
 
+  it("explica en pantalla por qué no entró el aviso de Poshmark", () => {
+    expect(describeMarketplaceNotices([], [])).toEqual([
+      "No se importó la venta de Poshmark: no hay ningún aviso de Poshmark ni de Depop guardado. El correo no quedó registrado en esta base.",
+    ]);
+    expect(describeMarketplaceNotices([
+      { platform: "poshmark", status: "failed", sku: "", title: "Navy Wool Coat", externalId: "gmail-ayer", soldAt: "2026-11-12T15:00:00.000Z" },
+    ], [])[0]).toContain("estado failed");
+    expect(describeMarketplaceNotices([
+      { platform: "poshmark", status: "sent", sku: "", title: "Navy Wool Coat", externalId: "gmail-ayer", soldAt: "2026-11-12T15:00:00.000Z" },
+    ], ["poshmark:gmail-ayer"])[0]).toContain("Ventas por vincular");
+  });
+
   it("la ficha del lote ofrece el registro manual", () => {
     const page = readFileSync("app/lotes/page.tsx", "utf8");
     expect(page).toContain('action: "marketplace"');
     expect(page).toContain("Registrar venta");
     expect(page).toContain("Poshmark y Depop no envían el precio ni la comisión");
+    expect(page).toContain("Avisos de Poshmark y Depop");
+    expect(page).toContain("Este lote no tiene prendas registradas una por una");
     const route = readFileSync("app/api/lotes/route.ts", "utf8");
     expect(route).toContain('action === "marketplace"');
     expect(route).toContain("importDetectedMarketplaceSales");

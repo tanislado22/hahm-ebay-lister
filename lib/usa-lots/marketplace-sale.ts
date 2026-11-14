@@ -164,6 +164,50 @@ export function planMarketplaceSale(
   return { action: "unmatched", orderId };
 }
 
+export interface MarketplaceNoticeRow {
+  platform: string;
+  status: string;
+  sku: string;
+  title: string;
+  externalId: string;
+  soldAt: string;
+}
+
+export function describeMarketplaceNotices(
+  notices: readonly MarketplaceNoticeRow[],
+  storedOrderIds: readonly string[]
+): string[] {
+  const stored = new Set(storedOrderIds);
+  const rows = notices.filter((row) => row.platform === "poshmark" || row.platform === "depop");
+  if (rows.length === 0) {
+    return [
+      "No se importó la venta de Poshmark: no hay ningún aviso de Poshmark ni de Depop guardado. El correo no quedó registrado en esta base.",
+    ];
+  }
+  return rows.slice(0, 8).map((row) => {
+    const name = row.platform === "depop" ? "Depop" : "Poshmark";
+    const title = row.title.trim() || "sin título";
+    const when = row.soldAt.trim().slice(0, 10);
+    const whenText = when ? ` del ${when}` : "";
+    const orderId = `${row.platform}:${row.externalId.trim()}`;
+    if (row.externalId.trim() && stored.has(orderId)) {
+      const sku = row.sku.trim();
+      return sku
+        ? `El aviso de ${name}${whenText}, «${title}», ya está guardado con SKU ${sku}. Si no tiene ficha, está en Ventas por vincular, al final de la página.`
+        : `El aviso de ${name}${whenText}, «${title}», ya está guardado sin SKU. Está en Ventas por vincular, al final de la página.`;
+    }
+    const status = row.status.trim() || "desconocido";
+    if (status !== "sent" && status !== "suppressed") {
+      return `No se importó el aviso de ${name}${whenText}, «${title}»: está en estado ${status}, no en enviado.`;
+    }
+    const sku = row.sku.trim();
+    if (!sku) {
+      return `No se vinculó el aviso de ${name}${whenText}, «${title}»: el correo no trajo un SKU ni un enlace de la publicación.`;
+    }
+    return `No se vinculó el aviso de ${name}${whenText}, «${title}», SKU ${sku}: ninguna prenda del lote tiene ese SKU.`;
+  });
+}
+
 export function manualMarketplaceMoney(input: {
   price: string;
   fee: string;
