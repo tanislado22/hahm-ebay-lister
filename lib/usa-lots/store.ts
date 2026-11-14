@@ -2,6 +2,18 @@ import crypto from "crypto";
 import { ensureInventoryTables, getSql } from "@/lib/db";
 import { exactSku } from "@/lib/archive/text";
 import { ebayListingId, lotForMatch, matchSaleToItem, planStoredSaleLinks, type SaleCandidate } from "@/lib/usa-lots/match";
+import {
+  manualMarketplaceMoney,
+  marketplaceFeeLabel,
+  marketplaceHasNet,
+  marketplaceListingKey,
+  matchMarketplaceArticle,
+  planMarketplaceSale,
+  type MarketplaceArticle,
+  type MarketplaceExistingSale,
+  type MarketplaceNotice,
+  type MarketplacePlatform,
+} from "@/lib/usa-lots/marketplace-sale";
 import { averageUnitCents, applyAverageCosts, buildLotReport, exclusiveShare, heldPieceCount, saleProfit, type SaleMoney } from "@/lib/usa-lots/profit";
 import { saleLinesToStore, type ParsedSaleLine } from "@/lib/usa-lots/parse-order";
 
@@ -114,6 +126,9 @@ export async function ensureUsaLots(): Promise<void> {
   await sql`ALTER TABLE usa_sale_notices ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
   await sql`ALTER TABLE usa_purchase_lots ADD COLUMN IF NOT EXISTS guatemala_piece_count INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE usa_purchase_lots ADD COLUMN IF NOT EXISTS guatemala_shipping_cents INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE usa_ebay_sales ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DEFAULT 'ebay'`;
+  await sql`ALTER TABLE usa_ebay_sales ADD COLUMN IF NOT EXISTS listing_url TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE usa_lot_items ADD COLUMN IF NOT EXISTS listing_url TEXT NOT NULL DEFAULT ''`;
 }
 
 function centsOrNull(value: unknown): number | null {
@@ -606,6 +621,7 @@ function asMoney(row: Record<string, unknown>): SaleMoney {
     quantity: centsOrNull(row.quantity),
     costEstimated: Boolean(row.cost_estimated),
     cancelled: Boolean(row.cancelled),
+    feeLabel: marketplaceFeeLabel(String(row.platform ?? "ebay")),
   };
 }
 
@@ -648,6 +664,7 @@ export async function readLotReport(accountKey: string, lotId: string) {
         quantity,
         recordedCostCents: unitCostCents != null && quantity != null && quantity >= 1 ? unitCostCents * quantity : null,
         ebayItemId: String(sale.record.ebay_item_id ?? ""),
+        platform: String(sale.record.platform ?? "ebay"),
       };
     }),
   });
@@ -675,6 +692,7 @@ export async function readLotReport(accountKey: string, lotId: string) {
     sales: saleRows.map((sale) => ({
       id: String(sale.record.id),
       orderId: String(sale.record.order_id),
+      platform: String(sale.record.platform ?? "ebay"),
       sku: String(sale.record.sku ?? ""),
       title: String(sale.record.title ?? ""),
       ebayItemId: String(sale.record.ebay_item_id ?? ""),
@@ -693,11 +711,11 @@ export async function readLotReport(accountKey: string, lotId: string) {
   };
 }
 
-export async function listOpenSales(accountKey: string): Promise<{ unassigned: { id: string; sku: string; title: string; ebayItemId: string; orderId: string }[]; unmatched: { id: string; sku: string; title: string; ebayItemId: string; orderId: string }[] }> {
+export async function listOpenSales(accountKey: string): Promise<{ unassigned: { id: string; sku: string; title: string; ebayItemId: string; orderId: string; platform: string }[]; unmatched: { id: string; sku: string; title: string; ebayItemId: string; orderId: string; platform: string }[] }> {
   await ensureUsaLots();
   const sql = getSql();
   const rows = await sql`
-    SELECT id, sku, title, ebay_item_id, order_id, link_status
+    SELECT id, sku, title, ebay_item_id, order_id, link_status, platform
     FROM usa_ebay_sales
     WHERE account_key = ${accountKey} AND link_status IN ('unassigned', 'unmatched')
     ORDER BY updated_at DESC
@@ -709,6 +727,7 @@ export async function listOpenSales(accountKey: string): Promise<{ unassigned: {
     title: String(row.title ?? ""),
     ebayItemId: String(row.ebay_item_id ?? ""),
     orderId: String(row.order_id ?? ""),
+    platform: String(row.platform ?? "ebay"),
   });
   return {
     unassigned: rows.filter((row) => String((row as { link_status?: string }).link_status) === "unassigned").map((row) => map(row as Record<string, unknown>)),
@@ -827,4 +846,285 @@ export async function finishSaleNotice(id: string): Promise<void> {
 export async function postponeSaleNotice(id: string): Promise<void> {
   const sql = getSql();
   await sql`UPDATE usa_sale_notices SET updated_at = NOW() + INTERVAL '30 minutes' WHERE id = ${id} AND status = 'pending'`;
+}
+
+function marketplacePlatform(value: string): MarketplacePlatform | null {
+  if (value === "poshmark" || value === "depop") return value;
+  return null;
+}
+
+function articleFromRow(row: Record<string, unknown>): MarketplaceArticle & { accountKey: string; unitCostCents: number | null; costEstimated: boolean } {
+  const listingUrl = String(row.listing_url ?? "").trim();
+  return {
+    id: String(row.id),
+    accountKey: String(row.account_key ?? ""),
+    sku: exactSku(row.sku),
+    lotId: String(row.lot_id ?? ""),
+    listingUrls: listingUrl ? [listingUrl] : [],
+    disposition: String(row.disposition ?? "") === "guatemala-transfer" ? "guatemala-transfer" : "",
+    unitCostCents: centsOrNull(row.unit_cost_cents),
+    costEstimated: Boolean(row.cost_estimated),
+  };
+}
+
+function existingSaleFromRow(row: Record<string, unknown>): MarketplaceExistingSale {
+  const money = {
+    itemCents: centsOrNull(row.item_cents),
+    buyerShippingCents: centsOrNull(row.buyer_shipping_cents),
+    feeCents: centsOrNull(row.fee_cents),
+    sellerShippingCents: centsOrNull(row.seller_shipping_cents),
+    refundCents: centsOrNull(row.refund_cents),
+  };
+  const platform = String(row.platform ?? "ebay");
+  const status = String(row.link_status ?? "unmatched");
+  return {
+    id: String(row.id),
+    orderId: String(row.order_id ?? ""),
+    itemId: String(row.item_ref ?? ""),
+    sku: String(row.sku ?? ""),
+    platform,
+    listingKey: marketplacePlatform(platform) ? marketplaceListingKey(marketplacePlatform(platform) as MarketplacePlatform, String(row.listing_url ?? "")) : "",
+    cancelled: Boolean(row.cancelled),
+    linkStatus: status === "lotted" || status === "unassigned" || status === "transfer" ? status : "unmatched",
+    hasNet: marketplaceHasNet(money),
+  };
+}
+
+async function loadMarketplaceArticles(accountKey: string | null) {
+  const sql = getSql();
+  const rows = accountKey
+    ? await sql`
+        SELECT id, account_key, lot_id, sku, listing_url, disposition, unit_cost_cents, cost_estimated
+        FROM usa_lot_items
+        WHERE account_key = ${accountKey}
+      `
+    : await sql`
+        SELECT id, account_key, lot_id, sku, listing_url, disposition, unit_cost_cents, cost_estimated
+        FROM usa_lot_items
+      `;
+  return rows.map((row) => articleFromRow(row as Record<string, unknown>));
+}
+
+async function loadMarketplaceSales(accountKey: string): Promise<MarketplaceExistingSale[]> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, order_id, item_ref, sku, platform, listing_url, cancelled, link_status,
+      item_cents, buyer_shipping_cents, fee_cents, seller_shipping_cents, refund_cents
+    FROM usa_ebay_sales
+    WHERE account_key = ${accountKey}
+  `;
+  return rows.map((row) => existingSaleFromRow(row as Record<string, unknown>));
+}
+
+export async function rememberMarketplaceSale(input: {
+  accountKey?: string | null;
+  platform: MarketplacePlatform;
+  externalId: string;
+  sku: string;
+  title: string;
+  listingUrl: string;
+  soldAt?: string | null;
+  itemCents: number | null;
+  buyerShippingCents: number | null;
+  feeCents: number | null;
+  sellerShippingCents: number | null;
+  refundCents: number | null;
+  itemId?: string;
+}): Promise<{ action: string; message: string }> {
+  await ensureUsaLots();
+  const externalId = input.externalId.trim();
+  if (!externalId) return { action: "skipped", message: "Falta el identificador de la venta." };
+  const scopedAccount = input.accountKey?.trim() || "";
+  const articles = await loadMarketplaceArticles(scopedAccount || null);
+  const chosen = input.itemId?.trim()
+    ? articles.filter((article) => article.id === input.itemId)
+    : articles;
+  if (input.itemId?.trim() && chosen.length === 0) {
+    return { action: "missing", message: "Esa ficha no está en un lote de esta cuenta." };
+  }
+  if (input.itemId?.trim() && chosen.some((article) => article.disposition === "guatemala-transfer")) {
+    return { action: "transfer", message: "Esa prenda está apartada para Guatemala y no se registra como venta." };
+  }
+  const notice: MarketplaceNotice = {
+    platform: input.platform,
+    externalId,
+    sku: input.sku,
+    title: input.title,
+    listingUrl: input.listingUrl,
+    itemCents: input.itemCents,
+    buyerShippingCents: input.buyerShippingCents,
+    feeCents: input.feeCents,
+    sellerShippingCents: input.sellerShippingCents,
+    refundCents: input.refundCents,
+  };
+  const match = matchMarketplaceArticle(notice, chosen);
+  const article = match.kind === "one" ? chosen.find((item) => item.id === match.article.id) : undefined;
+  const accountKey = article?.accountKey || scopedAccount || "store";
+  const existing = await loadMarketplaceSales(accountKey);
+  const plan = planMarketplaceSale(notice, article ? [article] : [], existing);
+  if (plan.action === "duplicate") return { action: "duplicate", message: plan.reason };
+  if (plan.action === "unmatched" && scopedAccount && scopedAccount !== "store" && !input.itemId) {
+    return { action: "skipped", message: "" };
+  }
+  const sql = getSql();
+  const listingUrl = input.listingUrl.trim();
+  const soldAt = input.soldAt?.trim() || null;
+  if (plan.action === "complete") {
+    await sql`
+      UPDATE usa_ebay_sales SET
+        sku = CASE WHEN ${input.sku.trim()} <> '' THEN ${input.sku.trim()} ELSE sku END,
+        title = CASE WHEN ${input.title.trim()} <> '' THEN ${input.title.trim()} ELSE title END,
+        platform = ${input.platform},
+        listing_url = CASE WHEN ${listingUrl} <> '' THEN ${listingUrl} ELSE listing_url END,
+        sold_at = COALESCE(sold_at, ${soldAt}),
+        item_cents = COALESCE(${input.itemCents}, item_cents),
+        buyer_shipping_cents = COALESCE(${input.buyerShippingCents}, buyer_shipping_cents),
+        fee_cents = COALESCE(${input.feeCents}, fee_cents),
+        seller_shipping_cents = COALESCE(${input.sellerShippingCents}, seller_shipping_cents),
+        refund_cents = COALESCE(${input.refundCents}, refund_cents),
+        quantity = COALESCE(quantity, 1),
+        lot_id = CASE WHEN ${plan.lotId} <> '' THEN ${plan.lotId} ELSE lot_id END,
+        item_ref = CASE WHEN ${plan.itemId} <> '' THEN ${plan.itemId} ELSE item_ref END,
+        link_status = CASE WHEN ${plan.itemId} <> '' THEN 'lotted' ELSE link_status END,
+        unit_cost_cents = COALESCE(unit_cost_cents, ${article?.unitCostCents ?? null}),
+        cost_estimated = CASE
+          WHEN unit_cost_cents IS NULL AND ${article?.unitCostCents ?? null} IS NOT NULL THEN ${Boolean(article?.costEstimated)}
+          ELSE cost_estimated
+        END,
+        link_locked = link_locked OR ${Boolean(input.itemId)},
+        updated_at = NOW()
+      WHERE id = ${plan.saleId} AND account_key = ${accountKey}
+    `;
+    if (article && listingUrl) {
+      await sql`
+        UPDATE usa_lot_items
+        SET listing_url = ${listingUrl}, updated_at = NOW()
+        WHERE id = ${article.id} AND account_key = ${accountKey} AND listing_url = ''
+      `;
+    }
+    return {
+      action: "complete",
+      message: plan.hasNet
+        ? "La venta quedó en la ficha de este lote y actualizó el neto, la ganancia y lo que falta por recuperar."
+        : "La venta quedó vinculada a la ficha. Falta el precio o la comisión para sumar el neto.",
+    };
+  }
+  const itemId = plan.action === "record" ? plan.itemId : "";
+  const lotId = plan.action === "record" ? plan.lotId : "";
+  const linked = articles.find((item) => item.id === itemId);
+  await sql`
+    INSERT INTO usa_ebay_sales (
+      id, account_key, order_id, line_item_id, ebay_item_id, sku, title, quantity, sold_at,
+      item_cents, buyer_shipping_cents, tax_remitted_cents, fee_cents, seller_shipping_cents, refund_cents,
+      unit_cost_cents, cost_estimated, cancelled, lot_id, item_ref, link_status, link_locked, platform, listing_url
+    ) VALUES (
+      ${crypto.randomUUID()}, ${accountKey}, ${plan.orderId}, ${itemId || "notice"}, '', ${input.sku.trim()},
+      ${input.title.trim()}, 1, ${soldAt}, ${input.itemCents}, ${input.buyerShippingCents}, 0,
+      ${input.feeCents}, ${input.sellerShippingCents}, ${input.refundCents},
+      ${linked?.unitCostCents ?? null}, ${Boolean(linked?.costEstimated)}, FALSE, ${lotId}, ${itemId},
+      ${itemId ? "lotted" : "unmatched"}, ${Boolean(input.itemId)}, ${input.platform}, ${listingUrl}
+    )
+    ON CONFLICT (account_key, order_id, line_item_id) DO NOTHING
+  `;
+  if (linked && listingUrl) {
+    await sql`
+      UPDATE usa_lot_items
+      SET listing_url = ${listingUrl}, updated_at = NOW()
+      WHERE id = ${linked.id} AND account_key = ${accountKey} AND listing_url = ''
+    `;
+  }
+  if (!itemId) {
+    return { action: "unmatched", message: "La venta se guardó sin ficha. Regístrala desde la prenda del lote para asignar el neto." };
+  }
+  return {
+    action: "record",
+    message: marketplaceHasNet(notice)
+      ? "La venta quedó en la ficha de este lote y actualizó el neto, la ganancia y lo que falta por recuperar."
+      : "La venta quedó vinculada a la ficha. Falta el precio o la comisión para sumar el neto.",
+  };
+}
+
+export async function registerMarketplaceSale(input: {
+  accountKey: string;
+  itemId: string;
+  platform: string;
+  price: string;
+  fee: string;
+  buyerShipping: string;
+  sellerShipping: string;
+  listingUrl: string;
+}): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const platform = marketplacePlatform(input.platform);
+  if (!platform) return { ok: false, error: "Elige Poshmark o Depop." };
+  const money = manualMarketplaceMoney(input);
+  if (!money.ok) return money;
+  await ensureUsaLots();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, sku, title, lot_id, disposition
+    FROM usa_lot_items
+    WHERE id = ${input.itemId} AND account_key = ${input.accountKey}
+    LIMIT 1
+  `;
+  const item = rows[0] as { sku?: string; title?: string; lot_id?: string; disposition?: string } | undefined;
+  if (!item) return { ok: false, error: "Esa ficha no está en un lote de esta cuenta." };
+  if (String(item.disposition ?? "") === "guatemala-transfer") {
+    return { ok: false, error: "Esa prenda está apartada para Guatemala y no se registra como venta." };
+  }
+  const saved = await rememberMarketplaceSale({
+    accountKey: input.accountKey,
+    platform,
+    externalId: `manual-${input.itemId}`,
+    sku: String(item.sku ?? ""),
+    title: String(item.title ?? ""),
+    listingUrl: input.listingUrl,
+    soldAt: new Date().toISOString(),
+    ...money.money,
+    itemId: input.itemId,
+  });
+  if (saved.action === "duplicate" || saved.action === "missing" || saved.action === "transfer") {
+    return { ok: false, error: saved.message };
+  }
+  return { ok: true, message: saved.message };
+}
+
+export async function importDetectedMarketplaceSales(accountKey: string): Promise<number> {
+  await ensureUsaLots();
+  const sql = getSql();
+  const notices = await sql`
+    SELECT platform, external_event_id, sku, title, COALESCE(sent_at, created_at) AS sold_at
+    FROM telegram_sale_notices
+    WHERE platform IN ('poshmark', 'depop')
+      AND status IN ('sent', 'suppressed')
+    ORDER BY created_at DESC
+    LIMIT 100
+  `;
+  const knownRows = await sql`
+    SELECT order_id FROM usa_ebay_sales
+    WHERE order_id LIKE 'poshmark:%' OR order_id LIKE 'depop:%'
+  `;
+  const known = new Set(knownRows.map((row) => String((row as { order_id?: string }).order_id ?? "")));
+  let changed = 0;
+  for (const row of notices) {
+    const record = row as { platform?: string; external_event_id?: string; sku?: string; title?: string; sold_at?: string };
+    const platform = marketplacePlatform(String(record.platform ?? ""));
+    const externalId = String(record.external_event_id ?? "").trim();
+    if (!platform || !externalId || known.has(`${platform}:${externalId}`)) continue;
+    const saved = await rememberMarketplaceSale({
+      accountKey: accountKey === "store" ? null : accountKey,
+      platform,
+      externalId: String(record.external_event_id),
+      sku: String(record.sku ?? ""),
+      title: String(record.title ?? ""),
+      listingUrl: "",
+      soldAt: record.sold_at ? String(record.sold_at) : null,
+      itemCents: null,
+      buyerShippingCents: null,
+      feeCents: null,
+      sellerShippingCents: null,
+      refundCents: null,
+    });
+    if (saved.action === "record" || saved.action === "complete" || saved.action === "unmatched") changed += 1;
+  }
+  return changed;
 }

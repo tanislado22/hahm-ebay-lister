@@ -72,6 +72,27 @@ export async function handleVintedSaleEmail(
     };
   }
 
+  if (!dryRun && (classification.platform === "poshmark" || classification.platform === "depop")) {
+    try {
+      const { rememberMarketplaceSale } = await import("@/lib/usa-lots/store");
+      await rememberMarketplaceSale({
+        platform: classification.platform,
+        externalId: email.messageId,
+        sku,
+        title,
+        listingUrl: listingUrl || "",
+        soldAt: email.date || null,
+        itemCents: null,
+        buyerShippingCents: null,
+        feeCents: null,
+        sellerShippingCents: null,
+        refundCents: null,
+      });
+    } catch (error) {
+      console.error("[mailbox/inbound] lot", error instanceof Error ? error.name : "Error");
+    }
+  }
+
   if (classification.platform !== "vinted" || !sku) {
     const telegram = await notifySale(email.messageId, classification.platform, sku, title, listingUrl);
     if (telegram === "failed") {

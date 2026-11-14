@@ -9,9 +9,11 @@ import {
   correctSaleLink,
   countUsaSales,
   createUsaLot,
+  importDetectedMarketplaceSales,
   listOpenSales,
   listUsaLots,
   readLotReport,
+  registerMarketplaceSale,
   readSyncState,
   setGuatemalaReservation,
   setManualItemCost,
@@ -38,6 +40,7 @@ export async function GET(req: NextRequest) {
   const account = await accountFrom({ workMode: params.get("workMode"), clientId: params.get("clientId") });
   if ("error" in account) return NextResponse.json({ ok: false, error: account.error }, { status: account.status });
   try {
+    await importDetectedMarketplaceSales(account.key);
     const lots = await listUsaLots(account.key);
     const open = await listOpenSales(account.key);
     const sync = await readSyncState(account.key);
@@ -157,6 +160,19 @@ export async function POST(req: NextRequest) {
     if (action === "transfer") {
       const moved = await transferItemToGuatemala(account.key, String(body.itemId || ""));
       return NextResponse.json(moved.ok ? { ...moved, message: "Quedó apartado para Guatemala como traslado. No se registró como venta y no se copió al catálogo de Guatemala." } : moved, { status: moved.ok ? 200 : 400 });
+    }
+    if (action === "marketplace") {
+      const saved = await registerMarketplaceSale({
+        accountKey: account.key,
+        itemId: String(body.itemId || ""),
+        platform: String(body.platform || ""),
+        price: String(body.price || ""),
+        fee: String(body.fee || ""),
+        buyerShipping: String(body.buyerShipping || ""),
+        sellerShipping: String(body.sellerShipping || ""),
+        listingUrl: String(body.listingUrl || ""),
+      });
+      return NextResponse.json(saved, { status: saved.ok ? 200 : 400 });
     }
     if (action === "correct") {
       const corrected = await correctSaleLink({

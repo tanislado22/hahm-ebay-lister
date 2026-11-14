@@ -22,10 +22,12 @@ interface OpenSale {
   title: string;
   ebayItemId: string;
   orderId: string;
+  platform?: string;
 }
 
 interface SaleRow {
   id: string;
+  platform?: string;
   sku: string;
   title: string;
   ebayItemId: string;
@@ -321,7 +323,7 @@ export default function LotsPage() {
           <p>Registrados: {detail.report.registered}. Publicados: {detail.report.published}. Vendidos: {detail.report.sold}. Destinados a Guatemala: {detail.report.transferred}. Restantes en Estados Unidos: {detail.report.remaining == null ? "conteo incompleto" : detail.report.remaining}{detail.report.remainingEstimated ? " (estimado)" : ""}.</p>
           <p>{detail.report.soldProfitProvisional ? "Ganancia provisional" : "Ganancia"} de lo vendido: {centsToUsd(detail.report.soldProfitCents)}. Este número resta el costo de las unidades vendidas una sola vez.</p>
           <p>Dinero recuperado neto de gastos de venta: {centsToUsd(detail.report.recoveredCents)}{detail.report.recoveredProvisional ? " (provisional)" : ""}. No resta otra vez el costo del lote.</p>
-          <p>{detail.report.surplusCents != null ? `Excedente recuperado: ${centsToUsd(detail.report.surplusCents)}.` : `Inversión pendiente de recuperar: ${centsToUsd(detail.report.investmentLeftCents)}.`}</p>
+          <p>{detail.report.surplusCents != null ? `Excedente recuperado: ${centsToUsd(detail.report.surplusCents)}${detail.report.recoveredProvisional ? " (provisional)" : ""}.` : `Inversión pendiente de recuperar: ${centsToUsd(detail.report.investmentLeftCents)}${detail.report.recoveredProvisional ? " (provisional)" : ""}.`}</p>
           <p>Costo del inventario restante: {centsToUsd(detail.report.unsoldCostCents)}</p>
           {detail.report.pending.length > 0 ? <ul>{detail.report.pending.map((item) => <li key={item}>{item}</li>)}</ul> : null}
           <form className="archive-search" onSubmit={(event) => {
@@ -339,6 +341,7 @@ export default function LotsPage() {
           <button type="button" className="btn btn-ghost" onClick={() => void post({ action: "average", lotId: detail.lot.id }).then((ok) => { if (ok) void load(detail.lot.id); })}>Repartir promedio</button>
           <p className="note">El promedio usa el total vendible, incluidas las piezas destinadas a Guatemala. No cambia un costo manual ni el costo ya guardado en una venta. El envío a Guatemala no entra en las prendas de Estados Unidos.</p>
           <p className="note">Apartar un artículo no lo quita del total vendible ni pasa su costo a las demás prendas. Si ya registraste un número de piezas para Guatemala, ese artículo cuenta dentro de ese número.</p>
+          <p className="note">Poshmark y Depop no envían el precio ni la comisión. El correo solo avisa la venta. Regístrala en la ficha, con el enlace si lo tienes, para que entre en este lote. Si esa prenda ya se vendió por otra vía, no se cuenta otra vez.</p>
           <ul>
             {detail.items.map((item) => (
               <li key={item.id}>
@@ -353,6 +356,33 @@ export default function LotsPage() {
                   <button type="submit" className="btn btn-ghost">Guardar costo</button>
                   <button type="button" className="btn btn-ghost" onClick={() => void post({ action: "transfer", itemId: item.id }).then((ok) => { if (ok) void load(detail.lot.id); })}>Apartar para Guatemala</button>
                 </form>
+                {item.disposition !== "guatemala-transfer" ? (
+                  <form onSubmit={(event) => {
+                    event.preventDefault();
+                    const form = new FormData(event.currentTarget);
+                    void post({
+                      action: "marketplace",
+                      itemId: item.id,
+                      platform: form.get("platform"),
+                      price: form.get("price"),
+                      fee: form.get("fee"),
+                      buyerShipping: form.get("buyerShipping"),
+                      sellerShipping: form.get("sellerShipping"),
+                      listingUrl: form.get("listingUrl"),
+                    }).then((ok) => { if (ok) void load(detail.lot.id); });
+                  }}>
+                    <select name="platform" aria-label={`Plataforma de la venta ${item.sku || item.title}`}>
+                      <option value="poshmark">Poshmark</option>
+                      <option value="depop">Depop</option>
+                    </select>
+                    <input name="price" aria-label="Precio USD" placeholder="Precio USD" />
+                    <input name="fee" aria-label="Comisión USD" placeholder="Comisión USD" />
+                    <input name="buyerShipping" aria-label="Envío cobrado USD" placeholder="Envío cobrado USD" />
+                    <input name="sellerShipping" aria-label="Envío pagado USD" placeholder="Envío pagado USD" />
+                    <input name="listingUrl" aria-label="Enlace de la publicación" placeholder="Enlace de la publicación" />
+                    <button type="submit" className="btn btn-ghost">Registrar venta</button>
+                  </form>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -360,7 +390,7 @@ export default function LotsPage() {
           {detail.sales.length === 0 ? <p>Todavía no hay ventas identificadas en este lote.</p> : null}
           {detail.sales.map((sale) => (
             <p key={sale.id}>
-              {sale.soldAt.slice(0, 10)} · SKU {sale.sku || "sin SKU"} · {sale.title} · final {centsToUsd(sale.itemCents)} · envío cobrado {centsToUsd(sale.buyerShippingCents)} · comisión {centsToUsd(sale.feeCents)} · envío pagado {centsToUsd(sale.sellerShippingCents)} · costo {centsToUsd(sale.unitCostCents)} · {sale.label} {centsToUsd(sale.profitCents)}
+              {sale.soldAt.slice(0, 10)} · {sale.platform === "poshmark" ? "Poshmark" : sale.platform === "depop" ? "Depop" : "eBay"} · SKU {sale.sku || "sin SKU"} · {sale.title} · final {centsToUsd(sale.itemCents)} · envío cobrado {centsToUsd(sale.buyerShippingCents)} · comisión {centsToUsd(sale.feeCents)} · envío pagado {centsToUsd(sale.sellerShippingCents)} · costo {centsToUsd(sale.unitCostCents)} · {sale.label} {centsToUsd(sale.profitCents)}
               {sale.cancelled ? " · cancelada" : ""}
               {sale.missing.length ? ` · falta: ${sale.missing.join(", ")}` : ""}
             </p>
@@ -381,7 +411,7 @@ export default function LotsPage() {
         <h2>Ventas por vincular</h2>
         {openSales.unmatched.length === 0 ? <p>No hay ventas sin artículo identificado.</p> : null}
         {openSales.unmatched.map((sale) => (
-          <p key={sale.id}>{sale.orderId} · SKU {sale.sku || "sin SKU"} · anuncio {sale.ebayItemId || "sin número"} · {sale.title}</p>
+          <p key={sale.id}>{sale.platform === "poshmark" ? "Poshmark" : sale.platform === "depop" ? "Depop" : "eBay"} · {sale.orderId} · SKU {sale.sku || "sin SKU"} · anuncio {sale.ebayItemId || "sin número"} · {sale.title}</p>
         ))}
       </section>
     </main>

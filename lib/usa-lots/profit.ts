@@ -15,6 +15,7 @@ export interface SaleMoney {
   quantity: number | null;
   costEstimated: boolean;
   cancelled: boolean;
+  feeLabel?: string;
 }
 
 export interface ProfitResult {
@@ -41,7 +42,7 @@ export function saleProfit(sale: SaleMoney): ProfitResult {
   const item = missingAmount(sale.itemCents, "precio final", missing);
   const shippingIn = missingAmount(sale.buyerShippingCents, "envío cobrado al comprador", missing);
   const refund = missingAmount(sale.refundCents, sale.cancelled ? "reembolso de la cancelación" : "reembolsos", missing);
-  const fee = missingAmount(sale.feeCents, "comisión de eBay", missing);
+  const fee = missingAmount(sale.feeCents, sale.feeLabel?.trim() || "comisión de eBay", missing);
   const shippingOut = missingAmount(sale.sellerShippingCents, "envío pagado por ti", missing);
   const other = sale.otherCents == null ? 0 : sale.otherCents;
   const quantity = sale.quantity;
@@ -105,6 +106,7 @@ export interface LotSaleSnapshot {
   quantity?: number | null;
   recordedCostCents?: number | null;
   ebayItemId?: string;
+  platform?: string;
 }
 
 export interface LotReport {
@@ -185,7 +187,7 @@ export function buildLotReport(input: {
   items: LotItemSnapshot[];
   sales: LotSaleSnapshot[];
 }): LotReport {
-  const sales = input.sales.filter((sale) => sale.linkStatus === "lotted");
+  const sales = chooseLotSales(input.sales).filter((sale) => sale.linkStatus === "lotted");
   const investedCents = input.purchaseCents + input.extraCents;
   const registered = input.items.length;
   const linkedTransfers = input.items.filter((item) => item.disposition === "guatemala-transfer").length;
@@ -199,15 +201,22 @@ export function buildLotReport(input: {
   const usPieces = sellableCount == null ? null : Math.max(0, sellableCount - transferred);
   const pending: string[] = [];
   if (countIncomplete) pending.push("El conteo de piezas vendibles está incompleto.");
-  const profitKnown = sales.every((sale) => sale.profit.profitCents != null);
-  const recoveredKnown = sales.every((sale) => sale.profit.recoveredCents != null);
+  const priced = sales.filter((sale) => sale.profit.recoveredCents != null);
+  const unpriced = sales.filter((sale) => sale.profit.recoveredCents == null);
+  const profitKnown = priced.length > 0 && priced.every((sale) => sale.profit.profitCents != null);
   const soldProfitCents = profitKnown
-    ? sales.reduce((total, sale) => total + (sale.profit.profitCents ?? 0), 0)
+    ? priced.reduce((total, sale) => total + (sale.profit.profitCents ?? 0), 0)
     : null;
-  const recoveredCents = recoveredKnown
-    ? sales.reduce((total, sale) => total + (sale.profit.recoveredCents ?? 0), 0)
+  const recoveredCents = priced.length > 0
+    ? priced.reduce((total, sale) => total + (sale.profit.recoveredCents ?? 0), 0)
     : null;
   for (const sale of sales) pending.push(...sale.profit.missing.map((item) => `Venta: ${item}`));
+  if (unpriced.length > 0) {
+    const names = [...new Set(unpriced.map((sale) => platformName(sale.platform)))];
+    pending.push(
+      `Falta el precio o la comisión de ${names.join(" y ")}. Esa venta ya descuenta la prenda, pero su neto no se sumó y no se anotó como cero.`
+    );
+  }
   const respected = respectedCosts(input.items, sales);
   const balance = assignmentBalance({ investedCents, sellableCount: input.sellableCount, respected });
   if (balance.pendingCents != null && balance.pendingCents !== 0) {
@@ -239,9 +248,9 @@ export function buildLotReport(input: {
     remaining,
     remainingEstimated: countIncomplete,
     soldProfitCents,
-    soldProfitProvisional: !profitKnown || sales.some((sale) => sale.profit.provisional),
+    soldProfitProvisional: soldProfitCents == null || unpriced.length > 0 || priced.some((sale) => sale.profit.provisional),
     recoveredCents,
-    recoveredProvisional: !recoveredKnown || sales.some((sale) => sale.profit.provisional),
+    recoveredProvisional: recoveredCents == null || unpriced.length > 0 || priced.some((sale) => sale.profit.provisional),
     investmentLeftCents: investmentLeftCents != null && investmentLeftCents > 0 ? investmentLeftCents : investmentLeftCents === 0 ? 0 : null,
     surplusCents: investmentLeftCents != null && investmentLeftCents < 0 ? -investmentLeftCents : null,
     unsoldCostCents,
@@ -256,6 +265,32 @@ export function buildLotReport(input: {
     guatemalaShippingUnitCents: shipping.unitCents,
     guatemalaShippingPendingCents: (input.guatemalaShippingCents ?? 0) > 0 ? shipping.pendingCents : 0,
   };
+}
+
+function platformName(platform: string | undefined): string {
+  if (platform === "poshmark") return "Poshmark";
+  if (platform === "depop") return "Depop";
+  return "una venta";
+}
+
+export function chooseLotSales<T extends LotSaleSnapshot>(sales: readonly T[]): T[] {
+  const rest: T[] = [];
+  const groups = new Map<string, T[]>();
+  for (const sale of sales) {
+    if (sale.linkStatus !== "lotted" || sale.cancelled || !sale.itemId) {
+      rest.push(sale);
+      continue;
+    }
+    const list = groups.get(sale.itemId) ?? [];
+    list.push(sale);
+    groups.set(sale.itemId, list);
+  }
+  const chosen: T[] = [];
+  for (const group of groups.values()) {
+    const priced = group.filter((sale) => sale.profit.recoveredCents != null);
+    chosen.push(priced[0] ?? group[0]);
+  }
+  return [...rest, ...chosen];
 }
 
 function listingDigits(value: string): string {
