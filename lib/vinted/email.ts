@@ -23,7 +23,7 @@ const SALE_PATTERNS = [
 ];
 
 const SKIP_LINE =
-  /^(you sold|you made a sale|your item(?: just)? sold|ka-ching|you(?:'ve| have) sold|sold!|has vendido|vendiste|tu art[ií]culo se ha vendido|good news|buenas noticias|congratulations|enhorabuena|hi\b|hello\b|hola\b|hey\b|please ship|por favor|the buyer|el comprador|view\b|ver\b|http|www\.|dear\b)/i;
+  /^(you sold|you just sold|you made a sale|your item(?: just)? sold|ka-ching|you(?:'ve| have) sold|sold!|has vendido|vendiste|tu art[ií]culo se ha vendido|good news|buenas noticias|congratulations|congrats\b|enhorabuena|hi\b|hello\b|hola\b|hey\b|please ship|por favor|the buyer|el comprador|view\b|ver\b|http|www\.|dear\b)/i;
 
 /** Plain text plus the HTML alternative, so a SKU line in either part can be read. */
 export function textForSale(email: InboundEmail): string {

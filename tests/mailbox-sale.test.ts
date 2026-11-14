@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { classifyMailboxEmail } from "@/lib/mailbox/sale-email";
+import { classifyMailboxEmail, mailboxDiagnosis } from "@/lib/mailbox/sale-email";
 
 const NEW_DATE = "2026-10-11T15:00:00.000Z";
 
@@ -15,6 +15,48 @@ describe("marketplace sale emails", () => {
         date: NEW_DATE,
       })
     ).toMatchObject({ kind: "sale", platform: "poshmark", title: "Blue Shirt" });
+  });
+
+  test("reports why a Poshmark message was ignored without including the body", () => {
+    const email = {
+      from: "Poshmark <news@poshmark.com>",
+      subject: "Someone liked your item",
+      text: "Your listing is getting attention.",
+      html: "<p>Secret buyer@example.com</p>",
+      messageId: "liked-1",
+      date: NEW_DATE,
+    };
+    const classification = classifyMailboxEmail(email);
+    expect(classification.kind).toBe("ignore");
+    const diagnosis = mailboxDiagnosis(email, classification);
+    expect(diagnosis).toMatchObject({
+      classifier: "you-just-sold",
+      subject: "Someone liked your item",
+      fromHost: "poshmark.com",
+      platform: "poshmark",
+      receivedSku: "",
+      sawYouJustSold: false,
+    });
+    expect(JSON.stringify(diagnosis)).not.toContain("buyer@example.com");
+    expect(String(diagnosis.clue).length).toBeLessThanOrEqual(90);
+  });
+
+  test("a split You just sold line and SKU 3053 still count as the sale", () => {
+    const email = {
+      from: "no-reply@poshmark.com",
+      subject: "Update",
+      text: "",
+      html: "<div>You just</div><div>sold</div><p>SKU 3053</p><p>Price $8</p><p>Your earnings $5.05</p>",
+      messageId: "posh-3053-html",
+      date: NEW_DATE,
+    };
+    expect(classifyMailboxEmail(email)).toMatchObject({ kind: "sale", platform: "poshmark" });
+    expect(mailboxDiagnosis(email, classifyMailboxEmail(email))).toMatchObject({
+      receivedSku: "3053",
+      sawYouJustSold: true,
+      sawEarnings: true,
+      htmlChars: email.html.length,
+    });
   });
 
   test("recognizes a Poshmark sale and ignores an offer", () => {

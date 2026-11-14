@@ -1,4 +1,7 @@
 import { classifyVintedEmail, extractSoldTitle, htmlToText, type InboundEmail } from "@/lib/vinted/email";
+import { extractDescriptionSkus } from "@/lib/vinted/sale-identity";
+
+export const MAILBOX_CLASSIFIER = "you-just-sold";
 
 export type MailboxPlatform = "vinted" | "poshmark" | "depop";
 
@@ -23,9 +26,27 @@ const DEPOP_SALE = [
 
 const NOT_A_SALE = /offer|liked your|price drop|bundle|shipping label|has shipped|refund|question|favorit|mensaje|message from/i;
 
+function attributeText(html: string): string {
+  return [...html.matchAll(/\b(?:alt|title)=["']([^"']+)["']/gi)].map((match) => match[1] ?? "").join("\n");
+}
+
+/** Subject, plain text, HTML text, and image labels. Whitespace is kept for line parsing. */
+export function mailboxVisibleText(email: InboundEmail): string {
+  return [email.subject, email.text, htmlToText(email.html || ""), attributeText(email.html || "")].filter(Boolean).join("\n");
+}
+
+function flatText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 function haystackOf(email: InboundEmail): string {
-  const text = email.text.trim() || htmlToText(email.html || "");
-  return `${email.from}\n${email.subject}\n${text}`;
+  return flatText(`${email.from}\n${mailboxVisibleText(email)}`);
+}
+
+function statedNetSale(flat: string): boolean {
+  const sku = /\bSKU[: \t#]+[A-Za-z0-9]/i.test(flat);
+  const earnings = /your earnings|net earnings|you earned/i.test(flat);
+  return sku && earnings;
 }
 
 function detectPlatform(email: InboundEmail): MailboxPlatform | null {
@@ -44,13 +65,57 @@ function classifyNamedSale(
   platform: "poshmark" | "depop",
   patterns: RegExp[]
 ): MailboxClassification {
-  const text = email.text.trim() || htmlToText(email.html || "");
-  const haystack = `${email.subject}\n${text}`;
-  const subjectIsNoise = NOT_A_SALE.test(email.subject) && !patterns.some((pattern) => pattern.test(email.subject));
-  if (subjectIsNoise || !patterns.some((pattern) => pattern.test(haystack))) {
-    return { kind: "ignore", reason: "not a sale" };
+  const readable = mailboxVisibleText(email);
+  const flat = flatText(readable);
+  const subject = flatText(email.subject);
+  const phrase = patterns.some((pattern) => pattern.test(flat));
+  const stated = statedNetSale(flat);
+  const subjectIsNoise = NOT_A_SALE.test(subject) && !patterns.some((pattern) => pattern.test(subject));
+  if (!phrase && !stated) {
+    const sku = extractDescriptionSkus(readable)[0] ?? "";
+    const reason = subjectIsNoise
+      ? "not a sale: the subject is an offer, a like, or a shipping note"
+      : sku
+        ? `not a sale: SKU ${sku} is in the received text, but there is no sale phrase or earnings`
+        : "not a sale: the received text has no You just sold phrase, SKU, or earnings";
+    return { kind: "ignore", reason };
   }
-  return { kind: "sale", platform, title: extractSoldTitle(email.subject, text, patterns) };
+  return { kind: "sale", platform, title: extractSoldTitle(email.subject, readable, patterns) };
+}
+
+function fromHost(value: string): string {
+  const match = value.match(/@([a-z0-9.-]+\.[a-z]{2,})/i);
+  return (match?.[1] ?? "").replace(/^www\./i, "").toLowerCase();
+}
+
+function clueAroundSale(flat: string): string {
+  const redacted = flat.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]");
+  const at = redacted.search(/you\s+just\s+sold|\bSKU[: \t#]+[A-Za-z0-9]|your earnings|\$\d/i);
+  const start = at < 0 ? 0 : Math.max(0, at - 24);
+  return redacted.slice(start, start + 90);
+}
+
+/** Safe per-email receipt. It does not include the message body, the buyer, or any secret. */
+export function mailboxDiagnosis(
+  email: InboundEmail,
+  classification: MailboxClassification
+): Record<string, string | number | boolean> {
+  const visible = mailboxVisibleText(email);
+  const flat = flatText(visible);
+  const skus = extractDescriptionSkus(visible);
+  const platform = classification.kind === "sale" ? classification.platform : detectPlatform(email) ?? "";
+  return {
+    classifier: MAILBOX_CLASSIFIER,
+    subject: flatText(email.subject).replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]").slice(0, 140),
+    fromHost: fromHost(email.from),
+    platform,
+    receivedSku: skus.length === 1 ? skus[0] : "",
+    textChars: email.text.length,
+    htmlChars: (email.html || "").length,
+    sawYouJustSold: /you\s+just\s+sold/i.test(flat),
+    sawEarnings: /your earnings|net earnings|you earned/i.test(flat),
+    clue: clueAroundSale(flat),
+  };
 }
 
 export function classifyMailboxEmail(email: InboundEmail): MailboxClassification {

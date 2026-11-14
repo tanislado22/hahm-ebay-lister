@@ -1,7 +1,7 @@
 import { textForSale, type InboundEmail } from "@/lib/vinted/email";
 import { listSaleTitleCandidates } from "@/lib/inventory/links";
 import { claimSaleEvent, finishSaleEvent } from "@/lib/inventory/sale-events";
-import { classifyMailboxEmail } from "@/lib/mailbox/sale-email";
+import { classifyMailboxEmail, mailboxDiagnosis, mailboxVisibleText } from "@/lib/mailbox/sale-email";
 import { resolveMarketplaceIdentity, resolveSaleIdentity } from "@/lib/vinted/sale-identity";
 import { isNewTelegramSale } from "@/lib/telegram/ebay-sale";
 import { saleTelegramMessage } from "@/lib/telegram/message";
@@ -16,11 +16,19 @@ export async function handleVintedSaleEmail(
 ): Promise<{ httpStatus: number; body: Record<string, unknown> }> {
   const dryRun = options?.dryRun === true;
   const text = textForSale(email);
-  const classification = classifyMailboxEmail({ ...email, text, html: "" });
+  const visible = mailboxVisibleText(email);
+  const classification = classifyMailboxEmail({ ...email, text: visible, html: "" });
+  const diagnosis = mailboxDiagnosis(email, classification);
   if (classification.kind === "ignore") {
     return {
       httpStatus: 200,
-      body: { ok: true, ignored: true, reason: classification.reason, ...(dryRun ? { dryRun: true } : {}) },
+      body: {
+        ok: true,
+        ignored: true,
+        reason: classification.reason,
+        ...diagnosis,
+        ...(dryRun ? { dryRun: true } : {}),
+      },
     };
   }
   if (!email.messageId.trim()) {
@@ -56,13 +64,14 @@ export async function handleVintedSaleEmail(
       console.error("[mailbox/inbound] lot titles", error instanceof Error ? error.name : "Error");
     }
   }
+  const saleText = marketplace ? visible : text;
   const identity = marketplace
-    ? resolveMarketplaceIdentity(email.subject, text, candidates)
+    ? resolveMarketplaceIdentity(email.subject, saleText, candidates)
     : resolveSaleIdentity(classification.title, text, candidates);
   const sku = identity.sku;
   const title = identity.title;
-  const listingUrl = extractPlatformListingUrl(classification.platform, `${text}\n${email.html || ""}`);
-  const statedNet = marketplace ? readStatedMarketplaceNet(text) : null;
+  const listingUrl = extractPlatformListingUrl(classification.platform, `${saleText}\n${email.html || ""}`);
+  const statedNet = marketplace ? readStatedMarketplaceNet(saleText) : null;
 
   if (dryRun) {
     return {
@@ -135,6 +144,7 @@ export async function handleVintedSaleEmail(
         sku: sku || null,
         title,
         telegram,
+        ...(marketplace ? diagnosis : {}),
       },
     };
   }
