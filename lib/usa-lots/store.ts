@@ -860,6 +860,7 @@ function articleFromRow(row: Record<string, unknown>): MarketplaceArticle & { ac
     id: String(row.id),
     accountKey: String(row.account_key ?? ""),
     sku: exactSku(row.sku),
+    title: String(row.title ?? "").trim(),
     lotId: String(row.lot_id ?? ""),
     listingUrls: listingUrl ? [listingUrl] : [],
     disposition: String(row.disposition ?? "") === "guatemala-transfer" ? "guatemala-transfer" : "",
@@ -895,12 +896,12 @@ async function loadMarketplaceArticles(accountKey: string | null) {
   const sql = getSql();
   const rows = accountKey
     ? await sql`
-        SELECT id, account_key, lot_id, sku, listing_url, disposition, unit_cost_cents, cost_estimated
+        SELECT id, account_key, lot_id, sku, title, listing_url, disposition, unit_cost_cents, cost_estimated
         FROM usa_lot_items
         WHERE account_key = ${accountKey}
       `
     : await sql`
-        SELECT id, account_key, lot_id, sku, listing_url, disposition, unit_cost_cents, cost_estimated
+        SELECT id, account_key, lot_id, sku, title, listing_url, disposition, unit_cost_cents, cost_estimated
         FROM usa_lot_items
       `;
   return rows.map((row) => articleFromRow(row as Record<string, unknown>));
@@ -915,6 +916,23 @@ async function loadMarketplaceSales(accountKey: string): Promise<MarketplaceExis
     WHERE account_key = ${accountKey}
   `;
   return rows.map((row) => existingSaleFromRow(row as Record<string, unknown>));
+}
+
+export async function listMarketplaceTitleCandidates(): Promise<{ sku: string; title: string }[]> {
+  await ensureUsaLots();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT sku, title
+    FROM usa_lot_items
+    WHERE btrim(title) <> ''
+      AND COALESCE(disposition, '') <> 'guatemala-transfer'
+  `;
+  return rows.flatMap((row) => {
+    const record = row as { sku?: string; title?: string };
+    const title = String(record.title ?? "").trim();
+    if (!title) return [];
+    return [{ sku: exactSku(record.sku), title }];
+  });
 }
 
 export async function rememberMarketplaceSale(input: {

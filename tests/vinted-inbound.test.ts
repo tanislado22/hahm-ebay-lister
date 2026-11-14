@@ -13,6 +13,10 @@ vi.mock("@/lib/telegram/notices", () => ({
 vi.mock("@/lib/whatsapp/send", () => ({
   sendPlatformSaleAlert: vi.fn(),
 }));
+vi.mock("@/lib/usa-lots/store", () => ({
+  rememberMarketplaceSale: vi.fn(async () => ({ action: "record", message: "pendiente" })),
+  listMarketplaceTitleCandidates: vi.fn(async () => []),
+}));
 
 import { POST } from "@/app/api/vinted/inbound/route";
 import { listSaleTitleCandidates } from "@/lib/inventory/links";
@@ -21,12 +25,15 @@ import { deliverConfirmedSale } from "@/lib/telegram/notices";
 import { handleVintedSaleEmail } from "@/lib/vinted/handle-inbound";
 import { saleTelegramMessage } from "@/lib/telegram/message";
 import { sendPlatformSaleAlert } from "@/lib/whatsapp/send";
+import { listMarketplaceTitleCandidates, rememberMarketplaceSale } from "@/lib/usa-lots/store";
 
 const listPublished = vi.mocked(listSaleTitleCandidates);
 const claim = vi.mocked(claimSaleEvent);
 const finish = vi.mocked(finishSaleEvent);
 const deliver = vi.mocked(deliverConfirmedSale);
 const whatsapp = vi.mocked(sendPlatformSaleAlert);
+const lotTitles = vi.mocked(listMarketplaceTitleCandidates);
+const rememberLot = vi.mocked(rememberMarketplaceSale);
 
 const SALE = {
   from: "me@gmail.com",
@@ -67,6 +74,7 @@ describe("vinted inbound", () => {
     finish.mockResolvedValue();
     deliver.mockResolvedValue("sent");
     whatsapp.mockResolvedValue();
+    lotTitles.mockResolvedValue([]);
   });
 
   test("rejects a request when the inbound secret is missing or wrong", async () => {
@@ -171,6 +179,62 @@ describe("vinted inbound", () => {
     expect(deliver).not.toHaveBeenCalled();
     expect(claim).not.toHaveBeenCalled();
     expect(whatsapp).not.toHaveBeenCalled();
+    expect(rememberLot).not.toHaveBeenCalled();
+  });
+
+  test("a Poshmark sale matches the lot title and records it with the net pending", async () => {
+    lotTitles.mockResolvedValue([{ sku: "2830", title: "Navy Wool Coat" }]);
+    const result = await handleVintedSaleEmail({
+      from: "support@poshmark.com",
+      subject: "Congrats! You made a sale",
+      text: "Congrats! You made a sale\n\nNavy Wool Coat\n\nShip your order soon\n",
+      html: "",
+      messageId: "posh-real",
+      date: "2026-11-12T15:00:00.000Z",
+    });
+    expect(result.body).toMatchObject({
+      ok: true,
+      status: "sent",
+      platform: "poshmark",
+      sku: "2830",
+      title: "Navy Wool Coat",
+    });
+    expect(rememberLot).toHaveBeenCalledWith(expect.objectContaining({
+      platform: "poshmark",
+      externalId: "posh-real",
+      sku: "2830",
+      title: "Navy Wool Coat",
+      itemCents: null,
+      feeCents: null,
+      buyerShippingCents: null,
+      sellerShippingCents: null,
+      refundCents: null,
+    }));
+  });
+
+  test("an older Depop sale is still recorded and is not announced again", async () => {
+    lotTitles.mockResolvedValue([{ sku: "2503", title: "Blue Denim Jacket" }]);
+    const result = await handleVintedSaleEmail({
+      from: "sold@alerts.depop.com",
+      subject: "You've sold an item",
+      text: "You've sold an item\n\nBlue Denim Jacket\n",
+      html: "",
+      messageId: "depop-old",
+      date: "2026-10-09T12:00:00.000Z",
+    });
+    expect(result.body).toMatchObject({
+      ok: true,
+      suppressed: true,
+      recorded: true,
+      platform: "depop",
+      sku: "2503",
+    });
+    expect(rememberLot).toHaveBeenCalledWith(expect.objectContaining({
+      platform: "depop",
+      sku: "2503",
+      feeCents: null,
+    }));
+    expect(deliver).not.toHaveBeenCalled();
   });
 
   test("a Vinted sale without a title or SKU still previews a manual notice", async () => {

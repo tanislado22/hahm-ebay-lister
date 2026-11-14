@@ -2,7 +2,7 @@ import { textForSale, type InboundEmail } from "@/lib/vinted/email";
 import { listSaleTitleCandidates } from "@/lib/inventory/links";
 import { claimSaleEvent, finishSaleEvent } from "@/lib/inventory/sale-events";
 import { classifyMailboxEmail } from "@/lib/mailbox/sale-email";
-import { resolveSaleIdentity } from "@/lib/vinted/sale-identity";
+import { resolveMarketplaceIdentity, resolveSaleIdentity } from "@/lib/vinted/sale-identity";
 import { isNewTelegramSale } from "@/lib/telegram/ebay-sale";
 import { saleTelegramMessage } from "@/lib/telegram/message";
 import { extractPlatformListingUrl } from "@/lib/telegram/sale-links";
@@ -25,7 +25,8 @@ export async function handleVintedSaleEmail(
   if (!email.messageId.trim()) {
     return { httpStatus: 400, body: { ok: false, error: "Missing MessageID" } };
   }
-  if (!isNewTelegramSale(email.date ?? "")) {
+  const marketplace = classification.platform === "poshmark" || classification.platform === "depop";
+  if (!marketplace && !isNewTelegramSale(email.date ?? "")) {
     return {
       httpStatus: 200,
       body: {
@@ -38,15 +39,25 @@ export async function handleVintedSaleEmail(
   }
 
   const published = await listSaleTitleCandidates();
-  const identity = resolveSaleIdentity(
-    classification.title,
-    text,
-    published.map((row) => ({
-      sku: row.sku,
-      vintedTitle: row.vintedTitle ?? "",
-      ebayTitle: row.ebayTitle ?? "",
-    }))
-  );
+  const candidates = published.map((row) => ({
+    sku: row.sku,
+    vintedTitle: row.vintedTitle ?? "",
+    ebayTitle: row.ebayTitle ?? "",
+  }));
+  if (marketplace) {
+    try {
+      const { listMarketplaceTitleCandidates } = await import("@/lib/usa-lots/store");
+      const lots = await listMarketplaceTitleCandidates();
+      for (const row of lots) {
+        candidates.push({ sku: row.sku, vintedTitle: row.title, ebayTitle: "" });
+      }
+    } catch (error) {
+      console.error("[mailbox/inbound] lot titles", error instanceof Error ? error.name : "Error");
+    }
+  }
+  const identity = marketplace
+    ? resolveMarketplaceIdentity(email.subject, text, candidates)
+    : resolveSaleIdentity(classification.title, text, candidates);
   const sku = identity.sku;
   const title = identity.title;
   const listingUrl = extractPlatformListingUrl(classification.platform, `${text}\n${email.html || ""}`);
@@ -72,11 +83,11 @@ export async function handleVintedSaleEmail(
     };
   }
 
-  if (!dryRun && (classification.platform === "poshmark" || classification.platform === "depop")) {
+  if (!dryRun && marketplace) {
     try {
       const { rememberMarketplaceSale } = await import("@/lib/usa-lots/store");
       await rememberMarketplaceSale({
-        platform: classification.platform,
+        platform: classification.platform as "poshmark" | "depop",
         externalId: email.messageId,
         sku,
         title,
@@ -90,6 +101,20 @@ export async function handleVintedSaleEmail(
       });
     } catch (error) {
       console.error("[mailbox/inbound] lot", error instanceof Error ? error.name : "Error");
+    }
+    if (!isNewTelegramSale(email.date ?? "")) {
+      return {
+        httpStatus: 200,
+        body: {
+          ok: true,
+          suppressed: true,
+          reason: "before activation",
+          recorded: true,
+          platform: classification.platform,
+          sku: sku || null,
+          title,
+        },
+      };
     }
   }
 

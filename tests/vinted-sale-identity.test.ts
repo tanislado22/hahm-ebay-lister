@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { resolveSaleIdentity } from "@/lib/vinted/sale-identity";
+import { resolveMarketplaceIdentity, resolveSaleIdentity } from "@/lib/vinted/sale-identity";
 
 const jeans = {
   sku: "2830",
@@ -40,6 +40,14 @@ describe("vinted sale identity", () => {
       sku: "",
       title: "No identificado",
     });
+  });
+
+  test("matches a Poshmark subject to the lot title even when the first line is the greeting", () => {
+    expect(resolveMarketplaceIdentity(
+      "Congrats! You made a sale",
+      "Congrats! You made a sale\n\nNavy Wool Coat\n\nShip your order soon\n",
+      [{ sku: "2830", vintedTitle: "Navy Wool Coat", ebayTitle: "" }]
+    )).toEqual({ sku: "2830", title: "Navy Wool Coat" });
   });
 
   test("still names the sale when nothing identifies the item", () => {

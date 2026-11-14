@@ -120,6 +120,21 @@ describe("ventas de Poshmark y Depop en el lote", () => {
     expect(matchMarketplaceArticle({ platform: "depop", sku: "", listingUrl: "" }, [depop]).kind).toBe("none");
   });
 
+  it("vincula por el título del lote y deja el neto pendiente si faltan las comisiones", () => {
+    const titled: MarketplaceArticle = { id: "coat", sku: "", title: "Navy Wool Coat", lotId: "lote-1", listingUrls: [] };
+    const copy: MarketplaceArticle = { id: "copy", sku: "", title: "Navy Wool Coat", lotId: "lote-1", listingUrls: [] };
+    const plan = planMarketplaceSale(notice({
+      sku: "",
+      itemCents: null,
+      buyerShippingCents: null,
+      feeCents: null,
+      sellerShippingCents: null,
+      refundCents: null,
+    }), [titled], []);
+    expect(plan).toMatchObject({ action: "record", itemId: "coat", hasNet: false });
+    expect(matchMarketplaceArticle({ platform: "poshmark", sku: "", listingUrl: "", title: "Navy Wool Coat" }, [titled, copy]).kind).toBe("ambiguous");
+  });
+
   it("no cuenta dos veces la misma prenda si llega por correo y por la ficha", () => {
     const email: MarketplaceExistingSale = {
       id: "sale-email",
@@ -205,9 +220,7 @@ describe("ventas de Poshmark y Depop en el lote", () => {
   });
 
   it("explica en pantalla por qué no entró el aviso de Poshmark", () => {
-    expect(describeMarketplaceNotices([], [])).toEqual([
-      "No se importó la venta de Poshmark: no hay ningún aviso de Poshmark ni de Depop guardado. El correo no quedó registrado en esta base.",
-    ]);
+    expect(describeMarketplaceNotices([], [])[0]).toContain("DRY_RUN");
     expect(describeMarketplaceNotices([
       { platform: "poshmark", status: "failed", sku: "", title: "Navy Wool Coat", externalId: "gmail-ayer", soldAt: "2026-11-12T15:00:00.000Z" },
     ], [])[0]).toContain("estado failed");

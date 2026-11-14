@@ -21,12 +21,18 @@
  *      APP_URL          https://hahm-ebay-lister-tau-one.vercel.app/api/vinted/inbound
  *      INBOUND_SECRET   el mismo valor que VINTED_INBOUND_SECRET en Vercel
  *      DRY_RUN          true
+ *    APP_URL es un alias de producción del proyecto hahm-ebay-lister, el mismo
+ *    despliegue que hahm-ebay-lister-ebay-lister3.vercel.app y que Lotes.
+ *    No uses www.variedadessanandres.com: esa dirección no acepta /api.
  *    No escribas el secreto en este archivo.
  * 7. Si BASELINED todavía no es true, ejecuta baselineExistingSales una sola vez.
  *    Si ya existe, no lo vuelvas a ejecutar: no hace falta cambiar ACTIVATED_AT.
  * 8. Ejecuta previewVintedSale. Usa dryRun, no envía Telegram y no marca correos.
  * 9. El activador de checkVintedSales cada 10 minutos se crea solo después de confirmar
- *    la publicación. DRY_RUN debe seguir en true hasta esa confirmación.
+ *    la publicación. DRY_RUN debe ser exactamente false para guardar ventas.
+ *    Mientras sea true, el correo se revisa y no se registra en el lote.
+ * 10. Poshmark y Depop se buscan otra vez en los últimos 14 días, aunque ACTIVATED_AT
+ *    sea posterior. Sustituye Code.gs por este archivo para que esa búsqueda quede activa.
  */
 
 var ALLOWED_URL = "https://hahm-ebay-lister-tau-one.vercel.app/api/vinted/inbound";
@@ -152,19 +158,25 @@ function postSale_(email, dryRun) {
 
 function listCandidateIds_(activatedAt) {
   var ids = [];
+  collectIds_(vintedSearchQuery_(activatedAt), ids);
+  collectIds_(recentMarketplaceQuery_(), ids);
+  return ids.slice(0, 50);
+}
+
+function collectIds_(query, ids) {
   var pageToken = "";
-  for (var page = 0; page < 5 && ids.length < 50; page++) {
-    var args = { q: vintedSearchQuery_(activatedAt), maxResults: 20 };
+  for (var page = 0; page < 3 && ids.length < 50; page++) {
+    var args = { q: query, maxResults: 20 };
     if (pageToken) args.pageToken = pageToken;
     var listed = Gmail.Users.Messages.list("me", args);
     var messages = (listed && listed.messages) || [];
     for (var i = 0; i < messages.length; i++) {
-      if (messages[i].id) ids.push(messages[i].id);
+      var id = messages[i].id;
+      if (id && ids.indexOf(id) < 0) ids.push(id);
     }
     pageToken = (listed && listed.nextPageToken) || "";
     if (!pageToken || !messages.length) break;
   }
-  return ids;
 }
 
 function readMessage_(id) {
@@ -232,11 +244,20 @@ function scriptConfig_() {
 
 function vintedSearchQuery_(activatedAt) {
   var day = Utilities.formatDate(new Date(activatedAt - 86400000), "America/New_York", "yyyy/MM/dd");
-  return (
-    "after:" +
-    day +
-    " ((from:vinted.com (sold OR vendido OR vendiste)) OR (from:poshmark.com (sold OR \"made a sale\" OR \"you sold\")) OR (from:depop.com (sold OR \"you sold\" OR \"you've sold\")))"
-  );
+  return "after:" + day + " (" + mailboxSaleQuery_() + ")";
+}
+
+function recentMarketplaceQuery_() {
+  var day = Utilities.formatDate(new Date(Date.now() - 14 * 86400000), "America/New_York", "yyyy/MM/dd");
+  return "after:" + day + " (" + poshmarkDepopQuery_() + ")";
+}
+
+function poshmarkDepopQuery_() {
+  return "(from:poshmark.com (sale OR sold OR congrats OR \"ka-ching\" OR \"cha-ching\")) OR (from:depop.com (sold OR sale OR \"time to ship\"))";
+}
+
+function mailboxSaleQuery_() {
+  return "(from:vinted.com (sold OR vendido OR vendiste)) OR " + poshmarkDepopQuery_();
 }
 
 function loadIdSet_(key) {

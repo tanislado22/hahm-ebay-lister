@@ -1,11 +1,13 @@
 import { listingUrlForPlatform } from "@/lib/telegram/sale-links";
 import { usdToCents } from "@/lib/usa-lots/money";
+import { matchSoldTitle } from "@/lib/vinted/match";
 
 export type MarketplacePlatform = "poshmark" | "depop";
 
 export interface MarketplaceArticle {
   id: string;
   sku: string;
+  title?: string;
   lotId: string;
   listingUrls: readonly string[];
   disposition?: "" | "guatemala-transfer";
@@ -74,7 +76,7 @@ export function marketplaceHasNet(input: {
 }
 
 export function matchMarketplaceArticle(
-  input: { platform: MarketplacePlatform; sku: string; listingUrl: string },
+  input: { platform: MarketplacePlatform; sku: string; listingUrl: string; title?: string },
   articles: readonly MarketplaceArticle[]
 ): { kind: "one"; article: MarketplaceArticle } | { kind: "none" } | { kind: "ambiguous" } {
   const sellable = articles.filter((article) => article.disposition !== "guatemala-transfer" && article.lotId.trim());
@@ -83,12 +85,25 @@ export function matchMarketplaceArticle(
   const bySku = sku ? sellable.filter((article) => article.sku.trim() === sku) : [];
   if (bySku.length > 1) return { kind: "ambiguous" };
   if (bySku.length === 1) return { kind: "one", article: bySku[0] };
-  if (!key) return { kind: "none" };
-  const byUrl = sellable.filter((article) =>
-    article.listingUrls.some((url) => marketplaceListingKey(input.platform, url) === key)
+  if (key) {
+    const byUrl = sellable.filter((article) =>
+      article.listingUrls.some((url) => marketplaceListingKey(input.platform, url) === key)
+    );
+    if (byUrl.length > 1) return { kind: "ambiguous" };
+    if (byUrl.length === 1) return { kind: "one", article: byUrl[0] };
+  }
+  const needle = (input.title || "").trim();
+  if (!needle) return { kind: "none" };
+  const titled = sellable.filter((article) => (article.title || "").trim());
+  const matched = matchSoldTitle(
+    needle,
+    titled.map((article) => ({ sku: article.id, vintedTitle: article.title || "", ebayTitle: "" }))
   );
-  if (byUrl.length > 1) return { kind: "ambiguous" };
-  if (byUrl.length === 1) return { kind: "one", article: byUrl[0] };
+  if (matched.kind === "ambiguous") return { kind: "ambiguous" };
+  if (matched.kind === "unique") {
+    const article = titled.find((item) => item.id === matched.sku);
+    if (article) return { kind: "one", article };
+  }
   return { kind: "none" };
 }
 
@@ -181,7 +196,7 @@ export function describeMarketplaceNotices(
   const rows = notices.filter((row) => row.platform === "poshmark" || row.platform === "depop");
   if (rows.length === 0) {
     return [
-      "No se importó la venta de Poshmark: no hay ningún aviso de Poshmark ni de Depop guardado. El correo no quedó registrado en esta base.",
+      "No se importó la venta de Poshmark: no hay ningún aviso de Poshmark ni de Depop guardado. El correo no llegó a esta base. En Apps Script, DRY_RUN tiene que ser false y BASELINED true. APP_URL tiene que ser https://hahm-ebay-lister-tau-one.vercel.app/api/vinted/inbound, el alias de producción del proyecto hahm-ebay-lister. No uses www.variedadessanandres.com: esa dirección no acepta esta llamada.",
     ];
   }
   return rows.slice(0, 8).map((row) => {
@@ -202,7 +217,7 @@ export function describeMarketplaceNotices(
     }
     const sku = row.sku.trim();
     if (!sku) {
-      return `No se vinculó el aviso de ${name}${whenText}, «${title}»: el correo no trajo un SKU ni un enlace de la publicación.`;
+      return `No se vinculó el aviso de ${name}${whenText}, «${title}»: ninguna prenda del lote tiene ese título, y el correo no trajo un SKU ni un enlace de la publicación.`;
     }
     return `No se vinculó el aviso de ${name}${whenText}, «${title}», SKU ${sku}: ninguna prenda del lote tiene ese SKU.`;
   });
