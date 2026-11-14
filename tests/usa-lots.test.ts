@@ -11,7 +11,10 @@ import { describeEbayFailure, emailFromXml, needsNotificationConfig, notificatio
 import { subscribeSaleNotifications } from "@/lib/usa-lots/subscribe";
 import { challengeResponse, selectPaidSaleTopics, verifyEbayNotification } from "@/lib/usa-lots/notifications";
 import { isReadOnlyOrderRequest, mergeSaleLines, parseFulfillmentOrders, saleLinesToStore } from "@/lib/usa-lots/parse-order";
-import { allocateSharedCents, applyAverageCosts, averageUnitCents, buildLotReport, saleProfit } from "@/lib/usa-lots/profit";
+import { planMarketplaceSale } from "@/lib/usa-lots/marketplace-sale";
+import { ratioToUsd } from "@/lib/usa-lots/money";
+import { allocateSharedCents, applyAverageCosts, applyExactAverageCosts, averageShare, averageUnitCents, buildLotReport, costForLinkedSale, saleProfit } from "@/lib/usa-lots/profit";
+import { resolveMarketplaceIdentity } from "@/lib/vinted/sale-identity";
 import { describeSaleSync, feeGapFromStatus, FINANCES_SCOPE, nextOrderWindow, NOTIFICATION_SCOPE, readsRecentOrdersDuring } from "@/lib/usa-lots/sync-plan";
 
 const archived = {
@@ -121,7 +124,7 @@ describe("USA purchase lots", () => {
   test("marks an incomplete average as estimated and leaves historical costs unchanged", () => {
     expect(averageUnitCents(100000, 5000, null)).toBeNull();
     const blocked = applyAverageCosts(
-      [{ id: "a", locked: true, sold: false, source: "manual" }, { id: "b", locked: false, sold: true, source: "average" }],
+      [{ id: "a", locked: true, sold: false, source: "manual" }, { id: "b", locked: false, sold: true, source: "average", hasCost: true }],
       1050,
       2
     );
@@ -151,7 +154,8 @@ describe("USA purchase lots", () => {
     expect(plain.registered).toBe(0);
     expect(plain.averageUnitCents).toBe(58);
     expect(plain.averageDisplayCents).toBe(59);
-    expect(plain.pendingAssignCents).toBe(1566);
+    expect(plain.averageText).toBe("$0.589089");
+    expect(plain.pendingAssignCents).toBe(0);
     expect(plain.guatemalaShippingUnitCents).toBe(46);
     expect(averageUnitCents(90000, 11500 + 36000, 1723)).toBe(79);
 
@@ -200,8 +204,8 @@ describe("USA purchase lots", () => {
     expect(averageUnitCents(90000, 11500 + 36000, 1723)).not.toBe(58);
     expect(report.guatemalaShippingCents).toBe(36000);
     expect(report.guatemalaShippingUnitCents).toBe(46);
-    expect(report.pendingAssignCents).toBe(1102);
-    expect(report.pending.join(" ")).toContain("Diferencia pendiente de asignar: $11.02");
+    expect(report.pendingAssignCents).toBe(-462);
+    expect(report.pending.join(" ")).toContain("Los costos ya asignados superan lo invertido por $4.62");
     expect(report.pending.join(" ")).toContain("No se suman al costo de Estados Unidos");
 
     const linkedLater = buildLotReport({
@@ -232,13 +236,145 @@ describe("USA purchase lots", () => {
         { id: "us", locked: false, sold: false, source: "estimated", disposition: "" as const },
         { id: "gt", locked: false, sold: false, source: "estimated", disposition: "guatemala-transfer" as const },
         { id: "manual", locked: true, sold: false, source: "manual", disposition: "" as const },
-        { id: "sold", locked: false, sold: true, source: "average", disposition: "" as const },
+        { id: "sold", locked: false, sold: true, source: "average", disposition: "" as const, hasCost: true },
       ],
       58,
       1723,
       58 + 46
     );
     expect(split.items.map((item) => item.unitCostCents)).toEqual([58, 104, null, null]);
+  });
+
+  test("prices SKU 3053 with the exact $1,015 / 1,723 share and links the next sale once", () => {
+    const share = averageShare(90000, 11500, 1723);
+    expect(share).toEqual({ numerator: 101500, denominator: 1723 });
+    expect(ratioToUsd(101500, 1723)).toBe("$0.589089");
+    const applied = applyExactAverageCosts(
+      [
+        { id: "3053", locked: false, source: "estimated", disposition: "" as const },
+        { id: "manual", locked: true, source: "manual", disposition: "" as const, hasCost: true },
+        { id: "gt", locked: false, source: "estimated", disposition: "guatemala-transfer" as const },
+      ],
+      share,
+      { numerator: 101500 * 770 + 36000 * 1723, denominator: 1723 * 770 }
+    );
+    expect(applied.items[0]).toMatchObject({ costShare: share, costEstimated: false });
+    expect(applied.items[1].costShare).toBeNull();
+    expect(applied.items[2]?.costShare?.denominator).toBeGreaterThan(1);
+    expect(applied.estimated).toBe(false);
+
+    const profit = saleProfit({
+      itemCents: 800,
+      buyerShippingCents: 0,
+      taxRemittedCents: 0,
+      feeCents: 295,
+      sellerShippingCents: 0,
+      refundCents: 0,
+      otherCents: 0,
+      unitCostCents: null,
+      unitCostNumerator: 101500,
+      unitCostDenominator: 1723,
+      quantity: 1,
+      costEstimated: false,
+      cancelled: false,
+    });
+    expect(profit.recoveredCents).toBe(505);
+    expect(profit.profitCents).toBe(446);
+    expect(profit.label).toBe("Ganancia");
+    expect(profit.provisional).toBe(false);
+    expect(profit.missing).toEqual([]);
+
+    const ebay = saleProfit({
+      itemCents: 1200,
+      buyerShippingCents: 821,
+      taxRemittedCents: 131,
+      feeCents: 313,
+      sellerShippingCents: 712,
+      refundCents: 0,
+      otherCents: 0,
+      unitCostCents: null,
+      unitCostNumerator: 101500,
+      unitCostDenominator: 1723,
+      quantity: 1,
+      costEstimated: false,
+      cancelled: false,
+    });
+    const report = buildLotReport({
+      purchaseCents: 90000,
+      extraCents: 11500,
+      sellableCount: 1723,
+      publishedCount: 2,
+      items: [
+        { id: "3053", ebayItemId: "", disposition: "", unitCostCents: null, costEstimated: false, costShare: share },
+        { id: "3006", ebayItemId: "880094115816", disposition: "", unitCostCents: null, costEstimated: false, costShare: share },
+      ],
+      sales: [
+        { itemId: "3053", cancelled: false, linkStatus: "lotted", platform: "poshmark", profit },
+        { itemId: "3006", cancelled: false, linkStatus: "lotted", platform: "ebay", profit: ebay },
+      ],
+    });
+    expect(report.sold).toBe(2);
+    expect(report.recoveredCents).toBe(1501);
+    expect(report.investedCents).toBe(101500);
+    expect(report.soldProfitCents).toBe((profit.profitCents ?? 0) + (ebay.profitCents ?? 0));
+    expect(report.soldProfitProvisional).toBe(false);
+    expect(report.pending.join(" ")).not.toContain("costo del artículo");
+    const repeated = buildLotReport({
+      purchaseCents: 90000,
+      extraCents: 11500,
+      sellableCount: 1723,
+      publishedCount: 2,
+      items: [
+        { id: "3053", ebayItemId: "", disposition: "", unitCostCents: null, costEstimated: false, costShare: share },
+        { id: "3006", ebayItemId: "880094115816", disposition: "", unitCostCents: null, costEstimated: false, costShare: share },
+      ],
+      sales: [
+        { itemId: "3053", cancelled: false, linkStatus: "lotted", platform: "poshmark", profit },
+        { itemId: "3006", cancelled: false, linkStatus: "lotted", platform: "ebay", profit: ebay },
+      ],
+    });
+    expect(repeated.investedCents).toBe(report.investedCents);
+    expect(repeated.recoveredCents).toBe(report.recoveredCents);
+    expect(repeated.sold).toBe(2);
+
+    const kept = costForLinkedSale({ itemCostCents: 250, itemShare: null, lotShare: share });
+    expect(kept).toEqual({ unitCostCents: 250, numerator: null, denominator: null, estimated: false });
+    const filled = costForLinkedSale({ itemCostCents: null, itemShare: null, lotShare: share });
+    expect(filled).toEqual({ unitCostCents: null, numerator: 101500, denominator: 1723, estimated: false });
+
+    const identity = resolveMarketplaceIdentity(
+      "You just sold 100% Cotton NEW on Poshmark",
+      "You just sold 100% Cotton NEW on Poshmark.\nUnder Armour Notre Dame Fighting Irish Green Leprechaun T-Shirt Mens XXL\nSKU 3053\n",
+      [
+        { sku: "3053", vintedTitle: "Jockey Classics Classic Comfort Briefs 3-Pack White Size 7/L 100% Cotton NEW", ebayTitle: "" },
+        { sku: "3006", vintedTitle: "Under Armour Notre Dame Fighting Irish Green Leprechaun T-Shirt Mens XXL", ebayTitle: "" },
+      ]
+    );
+    const article = { id: "3053", sku: identity.sku, title: identity.title, lotId: "compra-1000", listingUrls: [], disposition: "" as const };
+    const notice = {
+      platform: "poshmark" as const,
+      externalId: "msg-3053",
+      sku: identity.sku,
+      title: identity.title,
+      listingUrl: "",
+      itemCents: 800,
+      buyerShippingCents: 0,
+      feeCents: 295,
+      sellerShippingCents: 0,
+      refundCents: 0,
+    };
+    expect(planMarketplaceSale(notice, [article], [])).toMatchObject({ action: "record", itemId: "3053", lotId: "compra-1000" });
+    expect(planMarketplaceSale(notice, [article], [{
+      id: "sale-3053",
+      orderId: "poshmark:msg-3053",
+      itemId: "3053",
+      sku: "3053",
+      platform: "poshmark",
+      listingKey: "",
+      cancelled: false,
+      linkStatus: "lotted",
+      hasNet: true,
+    }]).action).toBe("duplicate");
   });
 
   test("links paid order 01-15420-99914 to SKU 3006 once and keeps the gain provisional", () => {

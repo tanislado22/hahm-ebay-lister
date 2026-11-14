@@ -94,10 +94,11 @@ export async function handleVintedSaleEmail(
     };
   }
 
+  let lotAction = "";
   if (!dryRun && marketplace) {
     try {
       const { rememberMarketplaceSale } = await import("@/lib/usa-lots/store");
-      await rememberMarketplaceSale({
+      const saved = await rememberMarketplaceSale({
         platform: classification.platform as "poshmark" | "depop",
         externalId: email.messageId,
         sku,
@@ -110,7 +111,9 @@ export async function handleVintedSaleEmail(
         sellerShippingCents: statedNet?.sellerShippingCents ?? null,
         refundCents: statedNet?.refundCents ?? null,
       });
+      lotAction = saved.action;
     } catch (error) {
+      lotAction = "not_recorded";
       console.error("[mailbox/inbound] lot", error instanceof Error ? error.name : "Error");
     }
     if (!isNewTelegramSale(email.date ?? "")) {
@@ -121,6 +124,7 @@ export async function handleVintedSaleEmail(
           suppressed: true,
           reason: "before activation",
           recorded: true,
+          lot: lotAction || "not_recorded",
           platform: classification.platform,
           sku: sku || null,
           title,
@@ -144,7 +148,7 @@ export async function handleVintedSaleEmail(
         sku: sku || null,
         title,
         telegram,
-        ...(marketplace ? diagnosis : {}),
+        ...(marketplace ? { ...diagnosis, lot: lotAction || "not_recorded" } : {}),
       },
     };
   }

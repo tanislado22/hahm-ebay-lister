@@ -8,6 +8,20 @@ const jeans = {
 };
 
 describe("vinted sale identity", () => {
+  test("keeps SKU 3053 when another garment title also appears in the email", () => {
+    expect(resolveMarketplaceIdentity(
+      "You just sold 100% Cotton NEW on Poshmark",
+      "You just sold 100% Cotton NEW on Poshmark.\nUnder Armour Notre Dame Fighting Irish Green Leprechaun T-Shirt Mens XXL\nSKU 3053\n",
+      [
+        { sku: "3053", vintedTitle: "Jockey Classics Classic Comfort Briefs 3-Pack White Size 7/L 100% Cotton NEW", ebayTitle: "" },
+        { sku: "3006", vintedTitle: "Under Armour Notre Dame Fighting Irish Green Leprechaun T-Shirt Mens XXL", ebayTitle: "" },
+      ]
+    )).toEqual({
+      sku: "3053",
+      title: "Jockey Classics Classic Comfort Briefs 3-Pack White Size 7/L 100% Cotton NEW",
+    });
+  });
+
   test("reads SKU 3053 without a colon", () => {
     expect(resolveMarketplaceIdentity(
       "You just sold an item",

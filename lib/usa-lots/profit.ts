@@ -1,4 +1,52 @@
-import { centsToUsd } from "@/lib/usa-lots/money";
+import { centsToUsd, divideRounded, ratioToUsd } from "@/lib/usa-lots/money";
+
+export interface CostShare {
+  numerator: number;
+  denominator: number;
+}
+
+export function exactShare(numerator: number, denominator: number): CostShare | null {
+  if (!Number.isInteger(numerator) || !Number.isInteger(denominator) || denominator <= 0 || numerator < 0) return null;
+  const divisor = greatestDivisor(numerator, denominator);
+  return { numerator: numerator / divisor, denominator: denominator / divisor };
+}
+
+export function averageShare(purchaseCents: number, extraCents: number, sellableCount: number | null): CostShare | null {
+  if (sellableCount == null || sellableCount < 1) return null;
+  if (!Number.isInteger(purchaseCents) || !Number.isInteger(extraCents) || purchaseCents < 0 || extraCents < 0) return null;
+  return exactShare(purchaseCents + extraCents, sellableCount);
+}
+
+export function combineShares(left: CostShare, right: CostShare): CostShare | null {
+  return exactShare(
+    left.numerator * right.denominator + right.numerator * left.denominator,
+    left.denominator * right.denominator
+  );
+}
+
+export function costForLinkedSale(input: {
+  itemCostCents: number | null;
+  itemShare: CostShare | null;
+  lotShare: CostShare | null;
+}): { unitCostCents: number | null; numerator: number | null; denominator: number | null; estimated: boolean } {
+  if (input.itemCostCents != null) {
+    return { unitCostCents: input.itemCostCents, numerator: null, denominator: null, estimated: false };
+  }
+  const share = input.itemShare ?? input.lotShare;
+  if (!share) return { unitCostCents: null, numerator: null, denominator: null, estimated: true };
+  return { unitCostCents: null, numerator: share.numerator, denominator: share.denominator, estimated: false };
+}
+
+function greatestDivisor(left: number, right: number): number {
+  let a = Math.abs(left);
+  let b = Math.abs(right);
+  while (b > 0) {
+    const next = a % b;
+    a = b;
+    b = next;
+  }
+  return a || 1;
+}
 
 export const SHARED_COST_RULE =
   "Los gastos compartidos del pedido se reparten según el precio de cada artículo. El resto de los centavos va al artículo de mayor precio.";
@@ -12,6 +60,8 @@ export interface SaleMoney {
   refundCents: number | null;
   otherCents: number | null;
   unitCostCents: number | null;
+  unitCostNumerator?: number | null;
+  unitCostDenominator?: number | null;
   quantity: number | null;
   costEstimated: boolean;
   cancelled: boolean;
@@ -47,15 +97,26 @@ export function saleProfit(sale: SaleMoney): ProfitResult {
   const other = sale.otherCents == null ? 0 : sale.otherCents;
   const quantity = sale.quantity;
   if (quantity == null || quantity < 1) missing.push("cantidad vendida");
+  const exact = exactShare(sale.unitCostNumerator ?? Number.NaN, sale.unitCostDenominator ?? Number.NaN);
+  const precise = exact != null && exact.denominator > 1 ? exact : null;
   const unit = sale.unitCostCents;
-  if (unit == null) missing.push("costo del artículo");
-  if (sale.costEstimated) missing.push("el costo sigue estimado");
-  const cost = unit != null && quantity != null && quantity >= 1 ? unit * quantity : null;
+  if (unit == null && precise == null) missing.push("costo del artículo");
+  if (sale.costEstimated && precise == null) missing.push("el costo sigue estimado");
+  const cost = precise != null && quantity != null && quantity >= 1
+    ? divideRounded(precise.numerator * quantity, precise.denominator)
+    : unit != null && quantity != null && quantity >= 1
+      ? unit * quantity
+      : null;
   const income = item != null && shippingIn != null && refund != null ? item + shippingIn - refund : null;
   const expenses = fee != null && shippingOut != null ? fee + shippingOut + other : null;
   const recovered = income != null && expenses != null ? income - expenses : null;
-  const profit = recovered != null && cost != null && !sale.costEstimated ? recovered - cost : null;
-  const provisional = missing.length > 0 || sale.cancelled || sale.costEstimated;
+  const knownCost = Boolean(precise) || (unit != null && !sale.costEstimated);
+  const profit = recovered != null && quantity != null && quantity >= 1 && precise != null
+    ? divideRounded(recovered * precise.denominator - precise.numerator * quantity, precise.denominator)
+    : recovered != null && cost != null && knownCost
+      ? recovered - cost
+      : null;
+  const provisional = missing.length > 0 || sale.cancelled || (sale.costEstimated && precise == null);
   return {
     incomeCents: income,
     costCents: cost,
@@ -96,6 +157,7 @@ export interface LotItemSnapshot {
   unitCostCents: number | null;
   costEstimated: boolean;
   manual?: boolean;
+  costShare?: CostShare | null;
 }
 
 export interface LotSaleSnapshot {
@@ -127,6 +189,7 @@ export interface LotReport {
   pending: string[];
   averageUnitCents: number | null;
   averageDisplayCents: number | null;
+  averageText: string | null;
   pendingAssignCents: number | null;
   usPieces: number | null;
   linkedTransfers: number;
@@ -165,9 +228,10 @@ export function assignmentBalance(input: {
     respectedCount += piece.count;
     respectedCents += piece.cents;
   }
-  const flexible = input.sellableCount - respectedCount;
-  const assigned = flexible >= 0 ? respectedCents + unitCents * flexible : respectedCents;
-  return { unitCents, displayCents, pendingCents: input.investedCents - assigned };
+  const pendingCents = respectedCount > input.sellableCount
+    ? null
+    : divideRounded(input.investedCents * respectedCount - respectedCents * input.sellableCount, input.sellableCount);
+  return { unitCents, displayCents, pendingCents };
 }
 
 export function exclusiveShare(totalCents: number, pieces: number): { unitCents: number | null; pendingCents: number } {
@@ -233,11 +297,12 @@ export function buildLotReport(input: {
   }
   const unsold = input.items.filter((item) => item.disposition !== "guatemala-transfer" && !soldIds.has(item.id));
   const unregisteredRemaining = remaining == null ? 0 : Math.max(0, remaining - unsold.length);
-  const unsoldKnown = unregisteredRemaining === 0 && unsold.every((item) => item.unitCostCents != null && !item.costEstimated);
-  const unsoldCostCents = unsoldKnown ? unsold.reduce((total, item) => total + (item.unitCostCents ?? 0), 0) : null;
-  if (unsold.some((item) => item.unitCostCents == null || item.costEstimated)) {
+  const unsoldKnown = unregisteredRemaining === 0 && unsold.every((item) => itemHasKnownCost(item));
+  const unsoldCostCents = unsoldKnown ? unsold.reduce((total, item) => total + knownUnitCents(item), 0) : null;
+  if (unsold.some((item) => !itemHasKnownCost(item))) {
     pending.push("Falta el costo de parte del inventario restante.");
   }
+  const share = averageShare(input.purchaseCents, input.extraCents, input.sellableCount);
   const investmentLeftCents = recoveredCents == null ? null : investedCents - recoveredCents;
   return {
     investedCents,
@@ -257,6 +322,7 @@ export function buildLotReport(input: {
     pending: [...new Set(pending)],
     averageUnitCents: balance.unitCents,
     averageDisplayCents: balance.displayCents,
+    averageText: share ? ratioToUsd(share.numerator, share.denominator) : null,
     pendingAssignCents: balance.pendingCents,
     usPieces,
     linkedTransfers,
@@ -345,7 +411,26 @@ function respectedCosts(items: LotItemSnapshot[], sales: LotSaleSnapshot[]): { c
   return respected;
 }
 
-export function applyAverageCosts<T extends { id: string; locked: boolean; sold: boolean; source: string; disposition?: "" | "guatemala-transfer" }>(
+function itemHasKnownCost(item: LotItemSnapshot): boolean {
+  if (item.costEstimated) return false;
+  if (item.unitCostCents != null) return true;
+  return item.costShare != null && item.costShare.denominator > 0;
+}
+
+function knownUnitCents(item: LotItemSnapshot): number {
+  if (item.unitCostCents != null) return item.unitCostCents;
+  if (item.costShare == null || item.costShare.denominator <= 0) return 0;
+  return divideRounded(item.costShare.numerator, item.costShare.denominator);
+}
+
+export function applyAverageCosts<T extends {
+  id: string;
+  locked: boolean;
+  sold: boolean;
+  source: string;
+  disposition?: "" | "guatemala-transfer";
+  hasCost?: boolean;
+}>(
   items: T[],
   unitCents: number | null,
   sellableCount: number | null,
@@ -362,11 +447,42 @@ export function applyAverageCosts<T extends { id: string; locked: boolean; sold:
     estimated: false,
     error: "",
     items: items.map((item) => {
-      if (item.locked || item.sold || item.source === "manual") {
+      if (item.locked || item.hasCost || item.source === "manual") {
         return { ...item, unitCostCents: null, costEstimated: false };
       }
       const share = item.disposition === "guatemala-transfer" && transferUnitCents != null ? transferUnitCents : unitCents;
       return { ...item, unitCostCents: share, costEstimated: false };
+    }),
+  };
+}
+
+export function applyExactAverageCosts<T extends {
+  id: string;
+  locked: boolean;
+  source: string;
+  disposition?: "" | "guatemala-transfer";
+  hasCost?: boolean;
+}>(
+  items: T[],
+  share: CostShare | null,
+  transferShare: CostShare | null = null
+): { items: (T & { costShare: CostShare | null; costEstimated: boolean })[]; estimated: boolean; error: string } {
+  if (share == null) {
+    return {
+      items: items.map((item) => ({ ...item, costShare: null, costEstimated: true })),
+      estimated: true,
+      error: "Indica cuántas piezas vendibles tiene el lote antes de repartir el promedio. No se inventó una cantidad.",
+    };
+  }
+  return {
+    estimated: false,
+    error: "",
+    items: items.map((item) => {
+      if (item.locked || item.hasCost || item.source === "manual") {
+        return { ...item, costShare: null, costEstimated: false };
+      }
+      const assigned = item.disposition === "guatemala-transfer" && transferShare != null ? transferShare : share;
+      return { ...item, costShare: assigned, costEstimated: false };
     }),
   };
 }

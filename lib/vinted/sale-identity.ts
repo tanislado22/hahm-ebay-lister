@@ -87,8 +87,12 @@ export function resolveMarketplaceIdentity(
 ): { sku: string; title: string } {
   const guesses = marketplaceTitleGuesses(subject, body);
   const primary = guesses[0] || "";
-  const listed = extractDescriptionSkus(body);
+  const listed = extractDescriptionSkus(`${subject}\n${body}`);
   const emailSku = listed.length === 1 ? listed[0] : "";
+  if (emailSku) {
+    const known = titleOf(candidates.find((candidate) => candidate.sku === emailSku));
+    return { sku: emailSku, title: (known || primary || UNIDENTIFIED_ITEM_TITLE).slice(0, 180) };
+  }
   const matchedSkus = new Set<string>();
   let storedTitle = "";
   for (const guess of guesses) {
@@ -101,14 +105,8 @@ export function resolveMarketplaceIdentity(
       storedTitle = matched.title;
     }
   }
-  let title = (storedTitle || primary || UNIDENTIFIED_ITEM_TITLE).slice(0, 180);
-  const titleSku = matchedSkus.size === 1 ? [...matchedSkus][0] : "";
-  if (emailSku && titleSku && emailSku !== titleSku) return { sku: "", title };
-  if (matchedSkus.size > 1) return { sku: "", title };
-  const sku = emailSku || titleSku;
-  if (sku && title === UNIDENTIFIED_ITEM_TITLE) {
-    const known = titleOf(candidates.find((candidate) => candidate.sku === sku));
-    if (known) title = known.slice(0, 180);
+  if (matchedSkus.size !== 1) {
+    return { sku: "", title: (storedTitle || primary || UNIDENTIFIED_ITEM_TITLE).slice(0, 180) };
   }
-  return { sku, title };
+  return { sku: [...matchedSkus][0], title: (storedTitle || primary || UNIDENTIFIED_ITEM_TITLE).slice(0, 180) };
 }

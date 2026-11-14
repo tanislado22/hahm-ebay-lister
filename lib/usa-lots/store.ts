@@ -15,7 +15,8 @@ import {
   type MarketplaceNotice,
   type MarketplacePlatform,
 } from "@/lib/usa-lots/marketplace-sale";
-import { averageUnitCents, applyAverageCosts, buildLotReport, exclusiveShare, heldPieceCount, saleProfit, type SaleMoney } from "@/lib/usa-lots/profit";
+import { ratioToUsd } from "@/lib/usa-lots/money";
+import { averageShare, buildLotReport, combineShares, costForLinkedSale, heldPieceCount, saleProfit, type CostShare, type SaleMoney } from "@/lib/usa-lots/profit";
 import { saleLinesToStore, type ParsedSaleLine } from "@/lib/usa-lots/parse-order";
 
 export async function ensureUsaLots(): Promise<void> {
@@ -130,12 +131,29 @@ export async function ensureUsaLots(): Promise<void> {
   await sql`ALTER TABLE usa_ebay_sales ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DEFAULT 'ebay'`;
   await sql`ALTER TABLE usa_ebay_sales ADD COLUMN IF NOT EXISTS listing_url TEXT NOT NULL DEFAULT ''`;
   await sql`ALTER TABLE usa_lot_items ADD COLUMN IF NOT EXISTS listing_url TEXT NOT NULL DEFAULT ''`;
+  await sql`ALTER TABLE usa_lot_items ADD COLUMN IF NOT EXISTS cost_numerator INTEGER`;
+  await sql`ALTER TABLE usa_lot_items ADD COLUMN IF NOT EXISTS cost_denominator INTEGER`;
+  await sql`ALTER TABLE usa_ebay_sales ADD COLUMN IF NOT EXISTS cost_numerator INTEGER`;
+  await sql`ALTER TABLE usa_ebay_sales ADD COLUMN IF NOT EXISTS cost_denominator INTEGER`;
 }
 
 function centsOrNull(value: unknown): number | null {
   if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isInteger(number) ? number : null;
+}
+
+function shareFromRow(row: Record<string, unknown>): CostShare | null {
+  const numerator = centsOrNull(row.cost_numerator);
+  const denominator = centsOrNull(row.cost_denominator);
+  if (numerator == null || denominator == null || denominator <= 1) return null;
+  return { numerator, denominator };
+}
+
+function costLabel(row: Record<string, unknown>): string {
+  const share = shareFromRow(row);
+  if (share) return ratioToUsd(share.numerator, share.denominator);
+  return ratioToUsd(centsOrNull(row.unit_cost_cents) ?? Number.NaN, 1);
 }
 
 export async function createUsaLot(input: {
@@ -281,6 +299,7 @@ export async function assignItemsToLot(input: {
   const sql = getSql();
   const lots = await sql`SELECT id FROM usa_purchase_lots WHERE id = ${input.lotId} AND account_key = ${input.accountKey} LIMIT 1`;
   if (!lots.length) return { ok: false, error: "Ese lote no pertenece a esta cuenta." };
+  const share = await shareForLot(input.lotId);
   let assigned = 0;
   for (const item of input.items) {
     const sku = exactSku(item.sku);
@@ -296,16 +315,35 @@ export async function assignItemsToLot(input: {
           archive_id = CASE WHEN ${item.archiveId} <> '' THEN ${item.archiveId} ELSE archive_id END,
           source_job_id = CASE WHEN ${item.jobId} <> '' THEN ${item.jobId} ELSE source_job_id END,
           title = CASE WHEN ${item.title} <> '' THEN ${item.title} ELSE title END,
+          cost_numerator = CASE
+            WHEN unit_cost_cents IS NULL AND cost_numerator IS NULL AND cost_locked = FALSE AND cost_source <> 'manual' AND ${share?.numerator ?? null} IS NOT NULL THEN ${share?.numerator ?? null}
+            ELSE cost_numerator
+          END,
+          cost_denominator = CASE
+            WHEN unit_cost_cents IS NULL AND cost_numerator IS NULL AND cost_locked = FALSE AND cost_source <> 'manual' AND ${share?.denominator ?? null} IS NOT NULL THEN ${share?.denominator ?? null}
+            ELSE cost_denominator
+          END,
+          cost_source = CASE
+            WHEN unit_cost_cents IS NULL AND cost_numerator IS NULL AND cost_locked = FALSE AND cost_source <> 'manual' AND ${share?.numerator ?? null} IS NOT NULL THEN 'average'
+            ELSE cost_source
+          END,
+          cost_estimated = CASE
+            WHEN unit_cost_cents IS NULL AND cost_numerator IS NULL AND cost_locked = FALSE AND cost_source <> 'manual' AND ${share?.numerator ?? null} IS NOT NULL THEN FALSE
+            ELSE cost_estimated
+          END,
           updated_at = NOW()
         WHERE id = ${existing} AND account_key = ${input.accountKey}
       `;
     } else {
       await sql`
         INSERT INTO usa_lot_items (
-          id, account_key, lot_id, sku, ebay_item_id, archive_id, source_job_id, title, cost_source, cost_estimated
+          id, account_key, lot_id, sku, ebay_item_id, archive_id, source_job_id, title,
+          cost_numerator, cost_denominator, cost_source, cost_estimated
         ) VALUES (
           ${crypto.randomUUID()}, ${input.accountKey}, ${input.lotId}, ${sku}, ${ebayItemId},
-          ${item.archiveId}, ${item.jobId}, ${item.title}, 'estimated', TRUE
+          ${item.archiveId}, ${item.jobId}, ${item.title},
+          ${share?.numerator ?? null}, ${share?.denominator ?? null},
+          ${share ? "average" : "estimated"}, ${share == null}
         )
       `;
     }
@@ -401,49 +439,89 @@ export async function setManualItemCost(accountKey: string, itemId: string, unit
 }
 
 export async function spreadAverageCost(accountKey: string, lotId: string): Promise<{ ok: true; estimated: boolean; updated: number } | { ok: false; error: string }> {
+  return fillMissingAverageCosts(accountKey, lotId);
+}
+
+export async function fillMissingAverageCosts(accountKey: string, lotId: string): Promise<{ ok: true; estimated: boolean; updated: number } | { ok: false; error: string }> {
   await ensureUsaLots();
   const sql = getSql();
   const lots = await sql`SELECT purchase_cents, extra_cents, sellable_count, guatemala_piece_count, guatemala_shipping_cents FROM usa_purchase_lots WHERE id = ${lotId} AND account_key = ${accountKey} LIMIT 1`;
   if (!lots.length) return { ok: false, error: "Ese lote no pertenece a esta cuenta." };
   const lot = lots[0] as { purchase_cents: number; extra_cents: number; sellable_count: number | null; guatemala_piece_count: number | null; guatemala_shipping_cents: number | null };
   const sellable = centsOrNull(lot.sellable_count);
-  const unit = averageUnitCents(Number(lot.purchase_cents), Number(lot.extra_cents), sellable);
-  const items = await sql`SELECT id, cost_locked, cost_source, disposition FROM usa_lot_items WHERE account_key = ${accountKey} AND lot_id = ${lotId}`;
-  const sold = await sql`SELECT item_ref FROM usa_ebay_sales WHERE account_key = ${accountKey} AND lot_id = ${lotId} AND cancelled = FALSE AND item_ref <> ''`;
-  const soldIds = new Set(sold.map((row) => String((row as { item_ref: string }).item_ref)));
-  const linkedTransfers = items.filter((row) => String((row as { disposition?: string }).disposition ?? "") === "guatemala-transfer").length;
-  const guatemalaPieces = heldPieceCount(centsOrNull(lot.guatemala_piece_count) ?? 0, linkedTransfers);
-  const shippingUnit = exclusiveShare(centsOrNull(lot.guatemala_shipping_cents) ?? 0, guatemalaPieces).unitCents ?? 0;
-  const planned = applyAverageCosts(
-    items.map((row) => {
-      const record = row as { id: string; cost_locked: boolean; cost_source: string; disposition?: string };
-      return {
-        id: String(record.id),
-        locked: Boolean(record.cost_locked),
-        sold: soldIds.has(String(record.id)),
-        source: String(record.cost_source),
-        disposition: String(record.disposition ?? "") === "guatemala-transfer" ? "guatemala-transfer" as const : "" as const,
-      };
-    }),
-    unit,
-    sellable,
-    unit == null ? null : unit + shippingUnit
-  );
-  if (planned.error) return { ok: false, error: planned.error };
-  let updated = 0;
-  for (const item of planned.items) {
-    if (item.unitCostCents == null) continue;
-    await sql`
-      UPDATE usa_lot_items SET
-        unit_cost_cents = ${item.unitCostCents},
-        cost_source = 'average',
-        cost_estimated = ${item.costEstimated},
-        updated_at = NOW()
-      WHERE id = ${item.id} AND account_key = ${accountKey} AND cost_locked = FALSE
-    `;
-    updated += 1;
+  const share = averageShare(Number(lot.purchase_cents), Number(lot.extra_cents), sellable);
+  if (!share) {
+    return { ok: false, error: "Indica cuántas piezas vendibles tiene el lote antes de repartir el promedio. No se inventó una cantidad." };
   }
-  return { ok: true, estimated: planned.estimated, updated };
+  const dispositions = await sql`SELECT disposition FROM usa_lot_items WHERE account_key = ${accountKey} AND lot_id = ${lotId}`;
+  const linkedTransfers = dispositions.filter((row) => String((row as { disposition?: string }).disposition ?? "") === "guatemala-transfer").length;
+  const guatemalaPieces = heldPieceCount(centsOrNull(lot.guatemala_piece_count) ?? 0, linkedTransfers);
+  const shippingCents = centsOrNull(lot.guatemala_shipping_cents) ?? 0;
+  const shippingShare = shippingCents > 0 && guatemalaPieces > 0 ? averageShare(shippingCents, 0, guatemalaPieces) : null;
+  const transferShare = shippingShare ? combineShares(share, shippingShare) : share;
+  const openItems = await sql`
+    UPDATE usa_lot_items SET
+      cost_numerator = ${share.numerator},
+      cost_denominator = ${share.denominator},
+      cost_source = 'average',
+      cost_estimated = FALSE,
+      updated_at = NOW()
+    WHERE account_key = ${accountKey}
+      AND lot_id = ${lotId}
+      AND cost_locked = FALSE
+      AND cost_source <> 'manual'
+      AND unit_cost_cents IS NULL
+      AND cost_numerator IS NULL
+      AND COALESCE(disposition, '') <> 'guatemala-transfer'
+    RETURNING id
+  `;
+  const movedItems = transferShare
+    ? await sql`
+      UPDATE usa_lot_items SET
+        cost_numerator = ${transferShare.numerator},
+        cost_denominator = ${transferShare.denominator},
+        cost_source = 'average',
+        cost_estimated = FALSE,
+        updated_at = NOW()
+      WHERE account_key = ${accountKey}
+        AND lot_id = ${lotId}
+        AND cost_locked = FALSE
+        AND cost_source <> 'manual'
+        AND unit_cost_cents IS NULL
+        AND cost_numerator IS NULL
+        AND disposition = 'guatemala-transfer'
+      RETURNING id
+    `
+    : [];
+  await sql`
+    UPDATE usa_ebay_sales AS sale SET
+      cost_numerator = item.cost_numerator,
+      cost_denominator = item.cost_denominator,
+      cost_estimated = FALSE,
+      updated_at = NOW()
+    FROM usa_lot_items AS item
+    WHERE sale.account_key = ${accountKey}
+      AND sale.lot_id = ${lotId}
+      AND sale.item_ref = item.id
+      AND sale.unit_cost_cents IS NULL
+      AND sale.cost_numerator IS NULL
+      AND item.cost_numerator IS NOT NULL
+      AND item.cost_denominator > 1
+  `;
+  await sql`
+    UPDATE usa_ebay_sales AS sale SET
+      unit_cost_cents = item.unit_cost_cents,
+      cost_estimated = item.cost_estimated,
+      updated_at = NOW()
+    FROM usa_lot_items AS item
+    WHERE sale.account_key = ${accountKey}
+      AND sale.lot_id = ${lotId}
+      AND sale.item_ref = item.id
+      AND sale.unit_cost_cents IS NULL
+      AND sale.cost_numerator IS NULL
+      AND item.unit_cost_cents IS NOT NULL
+  `;
+  return { ok: true, estimated: false, updated: openItems.length + movedItems.length };
 }
 
 export async function transferItemToGuatemala(accountKey: string, itemId: string): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -500,20 +578,28 @@ export async function saveParsedSales(accountKey: string, lines: ParsedSaleLine[
     }));
     const item = match.itemId ? candidates.find((candidate) => candidate.id === match.itemId) : undefined;
     const costRow = item && item.source === "lot"
-      ? await sql`SELECT unit_cost_cents, cost_estimated FROM usa_lot_items WHERE id = ${item.id} LIMIT 1`
+      ? await sql`SELECT unit_cost_cents, cost_estimated, cost_numerator, cost_denominator, cost_source, cost_locked FROM usa_lot_items WHERE id = ${item.id} LIMIT 1`
       : [];
-    const cost = costRow[0] as { unit_cost_cents?: number | null; cost_estimated?: boolean } | undefined;
+    const stored = costRow[0] as Record<string, unknown> | undefined;
+    const lotShare = match.linkStatus === "lotted" ? await shareForLot(match.lotId) : null;
+    const cost = linkedCost(stored ? {
+      unitCostCents: centsOrNull(stored.unit_cost_cents),
+      costNumerator: centsOrNull(stored.cost_numerator),
+      costDenominator: centsOrNull(stored.cost_denominator),
+      costSource: String(stored.cost_source ?? ""),
+      costLocked: Boolean(stored.cost_locked),
+    } : undefined, lotShare);
     const fee = fees.find((entry) => entry.orderId === line.orderId);
     await sql`
       INSERT INTO usa_ebay_sales (
         id, account_key, order_id, line_item_id, ebay_item_id, sku, title, quantity, sold_at,
         item_cents, buyer_shipping_cents, tax_remitted_cents, fee_cents, seller_shipping_cents, refund_cents,
-        unit_cost_cents, cost_estimated, cancelled, lot_id, item_ref, link_status, allocation
+        unit_cost_cents, cost_numerator, cost_denominator, cost_estimated, cancelled, lot_id, item_ref, link_status, allocation
       ) VALUES (
         ${crypto.randomUUID()}, ${accountKey}, ${line.orderId}, ${line.lineItemId}, ${line.ebayItemId}, ${line.sku},
         ${line.title}, ${line.quantity}, ${line.soldAt || null}, ${line.itemCents}, ${line.buyerShippingCents},
         ${line.taxRemittedCents}, ${fee?.feeCents ?? null}, ${fee?.sellerShippingCents ?? null}, ${line.refundCents},
-        ${centsOrNull(cost?.unit_cost_cents)}, ${Boolean(cost?.cost_estimated)}, ${line.cancelled}, ${match.lotId},
+        ${cost.unitCostCents}, ${cost.numerator}, ${cost.denominator}, ${cost.estimated}, ${line.cancelled}, ${match.lotId},
         ${match.itemId}, ${match.linkStatus}, ${line.allocation}
       )
       ON CONFLICT (account_key, order_id, line_item_id) DO UPDATE SET
@@ -528,7 +614,18 @@ export async function saveParsedSales(accountKey: string, lines: ParsedSaleLine[
         seller_shipping_cents = COALESCE(EXCLUDED.seller_shipping_cents, usa_ebay_sales.seller_shipping_cents),
         refund_cents = COALESCE(EXCLUDED.refund_cents, usa_ebay_sales.refund_cents),
         unit_cost_cents = COALESCE(usa_ebay_sales.unit_cost_cents, EXCLUDED.unit_cost_cents),
-        cost_estimated = CASE WHEN usa_ebay_sales.unit_cost_cents IS NULL THEN EXCLUDED.cost_estimated ELSE usa_ebay_sales.cost_estimated END,
+        cost_numerator = CASE
+          WHEN usa_ebay_sales.unit_cost_cents IS NULL AND usa_ebay_sales.cost_numerator IS NULL THEN EXCLUDED.cost_numerator
+          ELSE usa_ebay_sales.cost_numerator
+        END,
+        cost_denominator = CASE
+          WHEN usa_ebay_sales.unit_cost_cents IS NULL AND usa_ebay_sales.cost_numerator IS NULL THEN EXCLUDED.cost_denominator
+          ELSE usa_ebay_sales.cost_denominator
+        END,
+        cost_estimated = CASE
+          WHEN usa_ebay_sales.unit_cost_cents IS NULL AND usa_ebay_sales.cost_numerator IS NULL THEN EXCLUDED.cost_estimated
+          ELSE usa_ebay_sales.cost_estimated
+        END,
         cancelled = usa_ebay_sales.cancelled OR EXCLUDED.cancelled,
         lot_id = CASE WHEN usa_ebay_sales.link_locked THEN usa_ebay_sales.lot_id ELSE EXCLUDED.lot_id END,
         item_ref = CASE WHEN usa_ebay_sales.link_locked THEN usa_ebay_sales.item_ref ELSE EXCLUDED.item_ref END,
@@ -619,6 +716,8 @@ function asMoney(row: Record<string, unknown>): SaleMoney {
     refundCents: centsOrNull(row.refund_cents),
     otherCents: centsOrNull(row.other_cents) ?? 0,
     unitCostCents: centsOrNull(row.unit_cost_cents),
+    unitCostNumerator: centsOrNull(row.cost_numerator),
+    unitCostDenominator: centsOrNull(row.cost_denominator),
     quantity: centsOrNull(row.quantity),
     costEstimated: Boolean(row.cost_estimated),
     cancelled: Boolean(row.cancelled),
@@ -628,6 +727,7 @@ function asMoney(row: Record<string, unknown>): SaleMoney {
 
 export async function readLotReport(accountKey: string, lotId: string) {
   await ensureUsaLots();
+  await fillMissingAverageCosts(accountKey, lotId);
   const sql = getSql();
   const lots = await sql`SELECT * FROM usa_purchase_lots WHERE id = ${lotId} AND account_key = ${accountKey} LIMIT 1`;
   if (!lots.length) return null;
@@ -653,6 +753,7 @@ export async function readLotReport(accountKey: string, lotId: string) {
       unitCostCents: centsOrNull(item.unit_cost_cents),
       costEstimated: Boolean(item.cost_estimated),
       manual: String(item.cost_source ?? "") === "manual" || item.cost_locked === true,
+      costShare: shareFromRow(item),
     })),
     sales: saleRows.map((sale) => {
       const unitCostCents = centsOrNull(sale.record.unit_cost_cents);
@@ -688,6 +789,7 @@ export async function readLotReport(accountKey: string, lotId: string) {
       title: String(item.title ?? ""),
       unitCostCents: centsOrNull(item.unit_cost_cents),
       costEstimated: Boolean(item.cost_estimated),
+      costText: costLabel(item),
       disposition: String(item.disposition ?? ""),
     })),
     sales: saleRows.map((sale) => ({
@@ -704,6 +806,7 @@ export async function readLotReport(accountKey: string, lotId: string) {
       feeCents: centsOrNull(sale.record.fee_cents),
       sellerShippingCents: centsOrNull(sale.record.seller_shipping_cents),
       unitCostCents: centsOrNull(sale.record.unit_cost_cents),
+      costText: costLabel(sale.record),
       profitCents: sale.profit.profitCents,
       label: sale.profit.label,
       missing: sale.profit.missing,
@@ -854,7 +957,15 @@ function marketplacePlatform(value: string): MarketplacePlatform | null {
   return null;
 }
 
-function articleFromRow(row: Record<string, unknown>): MarketplaceArticle & { accountKey: string; unitCostCents: number | null; costEstimated: boolean } {
+function articleFromRow(row: Record<string, unknown>): MarketplaceArticle & {
+  accountKey: string;
+  unitCostCents: number | null;
+  costEstimated: boolean;
+  costNumerator: number | null;
+  costDenominator: number | null;
+  costSource: string;
+  costLocked: boolean;
+} {
   const listingUrl = String(row.listing_url ?? "").trim();
   return {
     id: String(row.id),
@@ -866,7 +977,69 @@ function articleFromRow(row: Record<string, unknown>): MarketplaceArticle & { ac
     disposition: String(row.disposition ?? "") === "guatemala-transfer" ? "guatemala-transfer" : "",
     unitCostCents: centsOrNull(row.unit_cost_cents),
     costEstimated: Boolean(row.cost_estimated),
+    costNumerator: centsOrNull(row.cost_numerator),
+    costDenominator: centsOrNull(row.cost_denominator),
+    costSource: String(row.cost_source ?? ""),
+    costLocked: Boolean(row.cost_locked),
   };
+}
+
+async function shareForLot(lotId: string): Promise<CostShare | null> {
+  if (!lotId.trim()) return null;
+  const sql = getSql();
+  const rows = await sql`SELECT purchase_cents, extra_cents, sellable_count FROM usa_purchase_lots WHERE id = ${lotId} LIMIT 1`;
+  const lot = rows[0] as { purchase_cents?: number; extra_cents?: number; sellable_count?: number | null } | undefined;
+  if (!lot) return null;
+  return averageShare(Number(lot.purchase_cents), Number(lot.extra_cents), centsOrNull(lot.sellable_count));
+}
+
+async function pricedArticle(article: {
+  id: string;
+  lotId: string;
+  unitCostCents: number | null;
+  costNumerator: number | null;
+  costDenominator: number | null;
+  costSource: string;
+  costLocked: boolean;
+} | undefined) {
+  if (!article) return costForLinkedSale({ itemCostCents: null, itemShare: null, lotShare: null });
+  const lotShare = await shareForLot(article.lotId);
+  const cost = linkedCost(article, lotShare);
+  if (cost.numerator != null && article.unitCostCents == null && article.costNumerator == null && !article.costLocked && article.costSource !== "manual") {
+    const sql = getSql();
+    await sql`
+      UPDATE usa_lot_items SET
+        cost_numerator = ${cost.numerator},
+        cost_denominator = ${cost.denominator},
+        cost_source = 'average',
+        cost_estimated = FALSE,
+        updated_at = NOW()
+      WHERE id = ${article.id}
+        AND unit_cost_cents IS NULL
+        AND cost_numerator IS NULL
+        AND cost_locked = FALSE
+        AND cost_source <> 'manual'
+    `;
+  }
+  return cost;
+}
+
+function linkedCost(article: {
+  unitCostCents: number | null;
+  costNumerator: number | null;
+  costDenominator: number | null;
+  costSource: string;
+  costLocked: boolean;
+} | undefined, lotShare: CostShare | null) {
+  const itemShare = article && article.costNumerator != null && article.costDenominator != null && article.costDenominator > 1
+    ? { numerator: article.costNumerator, denominator: article.costDenominator }
+    : null;
+  const manual = Boolean(article && (article.costLocked || article.costSource === "manual"));
+  return costForLinkedSale({
+    itemCostCents: article?.unitCostCents ?? null,
+    itemShare,
+    lotShare: manual ? null : lotShare,
+  });
 }
 
 function existingSaleFromRow(row: Record<string, unknown>): MarketplaceExistingSale {
@@ -896,12 +1069,14 @@ async function loadMarketplaceArticles(accountKey: string | null) {
   const sql = getSql();
   const rows = accountKey
     ? await sql`
-        SELECT id, account_key, lot_id, sku, title, listing_url, disposition, unit_cost_cents, cost_estimated
+        SELECT id, account_key, lot_id, sku, title, listing_url, disposition, unit_cost_cents, cost_estimated,
+          cost_numerator, cost_denominator, cost_source, cost_locked
         FROM usa_lot_items
         WHERE account_key = ${accountKey}
       `
     : await sql`
-        SELECT id, account_key, lot_id, sku, title, listing_url, disposition, unit_cost_cents, cost_estimated
+        SELECT id, account_key, lot_id, sku, title, listing_url, disposition, unit_cost_cents, cost_estimated,
+          cost_numerator, cost_denominator, cost_source, cost_locked
         FROM usa_lot_items
       `;
   return rows.map((row) => articleFromRow(row as Record<string, unknown>));
@@ -988,6 +1163,7 @@ export async function rememberMarketplaceSale(input: {
   const sql = getSql();
   const listingUrl = input.listingUrl.trim();
   const soldAt = input.soldAt?.trim() || null;
+  const priced = await pricedArticle(article);
   if (plan.action === "complete") {
     await sql`
       UPDATE usa_ebay_sales SET
@@ -1005,9 +1181,17 @@ export async function rememberMarketplaceSale(input: {
         lot_id = CASE WHEN ${plan.lotId} <> '' THEN ${plan.lotId} ELSE lot_id END,
         item_ref = CASE WHEN ${plan.itemId} <> '' THEN ${plan.itemId} ELSE item_ref END,
         link_status = CASE WHEN ${plan.itemId} <> '' THEN 'lotted' ELSE link_status END,
-        unit_cost_cents = COALESCE(unit_cost_cents, ${article?.unitCostCents ?? null}),
+        unit_cost_cents = COALESCE(unit_cost_cents, ${priced.unitCostCents}),
+        cost_numerator = CASE
+          WHEN unit_cost_cents IS NULL AND cost_numerator IS NULL THEN ${priced.numerator}
+          ELSE cost_numerator
+        END,
+        cost_denominator = CASE
+          WHEN unit_cost_cents IS NULL AND cost_numerator IS NULL THEN ${priced.denominator}
+          ELSE cost_denominator
+        END,
         cost_estimated = CASE
-          WHEN unit_cost_cents IS NULL AND ${article?.unitCostCents ?? null} IS NOT NULL THEN ${Boolean(article?.costEstimated)}
+          WHEN unit_cost_cents IS NULL AND cost_numerator IS NULL THEN ${priced.estimated}
           ELSE cost_estimated
         END,
         link_locked = link_locked OR ${Boolean(input.itemId)},
@@ -1031,16 +1215,17 @@ export async function rememberMarketplaceSale(input: {
   const itemId = plan.action === "record" ? plan.itemId : "";
   const lotId = plan.action === "record" ? plan.lotId : "";
   const linked = articles.find((item) => item.id === itemId);
+  const recordedCost = linked ? await pricedArticle(linked) : priced;
   await sql`
     INSERT INTO usa_ebay_sales (
       id, account_key, order_id, line_item_id, ebay_item_id, sku, title, quantity, sold_at,
       item_cents, buyer_shipping_cents, tax_remitted_cents, fee_cents, seller_shipping_cents, refund_cents,
-      unit_cost_cents, cost_estimated, cancelled, lot_id, item_ref, link_status, link_locked, platform, listing_url
+      unit_cost_cents, cost_numerator, cost_denominator, cost_estimated, cancelled, lot_id, item_ref, link_status, link_locked, platform, listing_url
     ) VALUES (
       ${crypto.randomUUID()}, ${accountKey}, ${plan.orderId}, ${itemId || "notice"}, '', ${input.sku.trim()},
       ${input.title.trim()}, 1, ${soldAt}, ${input.itemCents}, ${input.buyerShippingCents}, 0,
       ${input.feeCents}, ${input.sellerShippingCents}, ${input.refundCents},
-      ${linked?.unitCostCents ?? null}, ${Boolean(linked?.costEstimated)}, FALSE, ${lotId}, ${itemId},
+      ${recordedCost.unitCostCents}, ${recordedCost.numerator}, ${recordedCost.denominator}, ${recordedCost.estimated}, FALSE, ${lotId}, ${itemId},
       ${itemId ? "lotted" : "unmatched"}, ${Boolean(input.itemId)}, ${input.platform}, ${listingUrl}
     )
     ON CONFLICT (account_key, order_id, line_item_id) DO NOTHING
