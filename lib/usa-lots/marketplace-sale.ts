@@ -63,6 +63,41 @@ export function marketplaceListingKey(platform: MarketplacePlatform, value: stri
   return `${host}${path}`;
 }
 
+const LABELED_AMOUNT = "[\\s:\\-]*\\$\\s*([0-9]{1,6}(?:\\.[0-9]{2})?)";
+
+function labeledCents(text: string, label: RegExp): number | null {
+  const match = text.match(new RegExp(label.source + LABELED_AMOUNT, "i"));
+  if (!match?.[1]) return null;
+  return usdToCents(match[1]);
+}
+
+/**
+ * The email already states the seller's net. Recovered money is that net.
+ * The gap between price and net is one deduction. Commission and tax are not applied again.
+ * When the price is missing, the net itself is the recovered amount.
+ */
+export function readStatedMarketplaceNet(text: string): {
+  itemCents: number;
+  buyerShippingCents: number;
+  feeCents: number;
+  sellerShippingCents: number;
+  refundCents: number;
+} | null {
+  const net = labeledCents(text, /(?:your earnings|net earnings|you earned|earnings)/);
+  if (net == null) return null;
+  const price = labeledCents(text, /(?:sold for|item price|sale price|price)/);
+  if (price == null || price < net) {
+    return { itemCents: net, buyerShippingCents: 0, feeCents: 0, sellerShippingCents: 0, refundCents: 0 };
+  }
+  return {
+    itemCents: price,
+    buyerShippingCents: 0,
+    feeCents: price - net,
+    sellerShippingCents: 0,
+    refundCents: 0,
+  };
+}
+
 export function marketplaceHasNet(input: {
   itemCents: number | null;
   buyerShippingCents: number | null;

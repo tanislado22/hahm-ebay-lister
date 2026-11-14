@@ -8,12 +8,14 @@ export type MailboxClassification =
 
 const POSHMARK_SALE = [
   /you (?:just )?made a sale/i,
+  /you just sold/i,
   /your item (?:just )?sold/i,
   /ka-ching/i,
   /congrats,? you sold/i,
 ];
 
 const DEPOP_SALE = [
+  /you just sold/i,
   /you(?:'ve| have) sold/i,
   /your item (?:just )?sold/i,
   /sold! time to ship/i,

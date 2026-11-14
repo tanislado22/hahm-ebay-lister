@@ -8,6 +8,14 @@ const jeans = {
 };
 
 describe("vinted sale identity", () => {
+  test("reads SKU 3053 without a colon", () => {
+    expect(resolveMarketplaceIdentity(
+      "You just sold an item",
+      "You just sold an item\nBlue Shirt\nSKU 3053\nPrice $8\nYour earnings $5.05\n",
+      [{ sku: "3053", vintedTitle: "Blue Shirt", ebayTitle: "" }]
+    )).toEqual({ sku: "3053", title: "Blue Shirt" });
+  });
+
   test("uses one SKU line from the listing description", () => {
     expect(
       resolveSaleIdentity("Navy wool coat", "Navy wool coat\nSKU: 2443\n", [jeans])

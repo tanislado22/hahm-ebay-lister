@@ -7,6 +7,7 @@ import { isNewTelegramSale } from "@/lib/telegram/ebay-sale";
 import { saleTelegramMessage } from "@/lib/telegram/message";
 import { extractPlatformListingUrl } from "@/lib/telegram/sale-links";
 import { deliverConfirmedSale, type TelegramDelivery } from "@/lib/telegram/notices";
+import { readStatedMarketplaceNet } from "@/lib/usa-lots/marketplace-sale";
 import { sendPlatformSaleAlert } from "@/lib/whatsapp/send";
 
 export async function handleVintedSaleEmail(
@@ -61,6 +62,7 @@ export async function handleVintedSaleEmail(
   const sku = identity.sku;
   const title = identity.title;
   const listingUrl = extractPlatformListingUrl(classification.platform, `${text}\n${email.html || ""}`);
+  const statedNet = marketplace ? readStatedMarketplaceNet(text) : null;
 
   if (dryRun) {
     return {
@@ -93,11 +95,11 @@ export async function handleVintedSaleEmail(
         title,
         listingUrl: listingUrl || "",
         soldAt: email.date || null,
-        itemCents: null,
-        buyerShippingCents: null,
-        feeCents: null,
-        sellerShippingCents: null,
-        refundCents: null,
+        itemCents: statedNet?.itemCents ?? null,
+        buyerShippingCents: statedNet?.buyerShippingCents ?? null,
+        feeCents: statedNet?.feeCents ?? null,
+        sellerShippingCents: statedNet?.sellerShippingCents ?? null,
+        refundCents: statedNet?.refundCents ?? null,
       });
     } catch (error) {
       console.error("[mailbox/inbound] lot", error instanceof Error ? error.name : "Error");

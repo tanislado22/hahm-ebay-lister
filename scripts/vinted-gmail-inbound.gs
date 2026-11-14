@@ -52,11 +52,15 @@ function checkVintedSales() {
       return;
     }
     var dryRun = isDryRun_();
+    var replay = !dryRun && props.getProperty("MARKETPLACE_REPLAY") !== "done";
+    var retryLeft = false;
     var skip = loadIdSet_(dryRun ? "DRY_SEEN" : "PROCESSED");
     listCandidateIds_(activatedAt).forEach(function (id) {
-      if (skip[id]) return;
       var email = readMessage_(id);
-      if (!email || email.receivedMs < activatedAt) return;
+      if (!email) return;
+      var recentMarketplace = isRecentMarketplace_(email);
+      if (skip[id] && !(replay && recentMarketplace)) return;
+      if (email.receivedMs < activatedAt && !recentMarketplace) return;
       var result = postSale_(email, dryRun);
       Logger.log(JSON.stringify({
         messageId: id,
@@ -67,8 +71,10 @@ function checkVintedSales() {
       if (dryRun && result.status === 200 && result.body && result.body.dryRun === true) {
         rememberId_("DRY_SEEN", id);
       }
-      if (!dryRun && result.settled) rememberId_("PROCESSED", id);
+      if (shouldRetryIgnoredSale_(email, result)) retryLeft = true;
+      if (!dryRun && result.settled && !shouldRetryIgnoredSale_(email, result)) rememberId_("PROCESSED", id);
     });
+    if (replay && scriptConfig_() && !retryLeft) props.setProperty("MARKETPLACE_REPLAY", "done");
   } finally {
     lock.releaseLock();
   }
@@ -188,8 +194,8 @@ function readMessage_(id) {
     id: message.id,
     from: headerValue_(message, "from"),
     subject: headerValue_(message, "subject"),
-    text: String(bodies["text/plain"] || "").slice(0, 20000),
-    html: String(bodies["text/html"] || "").slice(0, 20000),
+    text: String(bodies["text/plain"] || "").slice(0, 100000),
+    html: String(bodies["text/html"] || "").slice(0, 100000),
     receivedMs: Number(message.internalDate || "0"),
   };
 }
@@ -197,8 +203,9 @@ function readMessage_(id) {
 function collectText_(part, found) {
   if (!part) return;
   var type = String(part.mimeType || "");
-  if ((type === "text/plain" || type === "text/html") && part.body && part.body.data && !found[type]) {
-    found[type] = decodeBase64Url_(part.body.data);
+  if ((type === "text/plain" || type === "text/html") && part.body && part.body.data) {
+    var piece = decodeBase64Url_(part.body.data);
+    if (piece) found[type] = found[type] ? found[type] + "\n" + piece : piece;
   }
   var parts = part.parts || [];
   for (var i = 0; i < parts.length; i++) collectText_(parts[i], found);
@@ -218,6 +225,13 @@ function decodeBase64Url_(data) {
   } catch (error) {
     return "";
   }
+}
+
+function shouldRetryIgnoredSale_(email, result) {
+  var body = result.body || {};
+  if (body.ignored !== true) return false;
+  var haystack = String(email.subject || "") + "\n" + String(email.text || "") + "\n" + String(email.html || "");
+  return /you just sold/i.test(haystack) || /\bSKU[: \t#]+[A-Za-z0-9]/i.test(haystack);
 }
 
 function isSettled_(status, body) {
@@ -245,6 +259,12 @@ function scriptConfig_() {
 function vintedSearchQuery_(activatedAt) {
   var day = Utilities.formatDate(new Date(activatedAt - 86400000), "America/New_York", "yyyy/MM/dd");
   return "after:" + day + " (" + mailboxSaleQuery_() + ")";
+}
+
+function isRecentMarketplace_(email) {
+  var from = String(email.from || "");
+  if (!/poshmark\.com/i.test(from) && !/depop\.com/i.test(from)) return false;
+  return email.receivedMs >= Date.now() - 14 * 86400000;
 }
 
 function recentMarketplaceQuery_() {

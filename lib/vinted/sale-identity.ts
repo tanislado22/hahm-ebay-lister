@@ -3,7 +3,7 @@ import { matchSoldTitle, type TitleCandidate } from "@/lib/vinted/match";
 
 export const UNIDENTIFIED_ITEM_TITLE = "No identificado";
 
-const SKU_TOKEN = /SKU:[ \t]*([A-Za-z0-9][A-Za-z0-9-]{2,40})\b/gi;
+const SKU_TOKEN = /\bSKU[: \t#]+([A-Za-z0-9][A-Za-z0-9-]{2,40})\b/gi;
 
 /** SKU lines written into Vinted descriptions: `SKU: 2830`. Several different values are not a match. */
 export function extractDescriptionSkus(text: string): string[] {
@@ -45,6 +45,7 @@ export function resolveSaleIdentity(
 
 const MARKETPLACE_SALE_LINES = [
   /you (?:just )?made a sale/i,
+  /you just sold/i,
   /your item (?:just )?sold/i,
   /ka-ching|cha-ching/i,
   /congrats,? you sold/i,

@@ -4,6 +4,19 @@ import { classifyMailboxEmail } from "@/lib/mailbox/sale-email";
 const NEW_DATE = "2026-10-11T15:00:00.000Z";
 
 describe("marketplace sale emails", () => {
+  test("recognizes the Poshmark email that says You just sold", () => {
+    expect(
+      classifyMailboxEmail({
+        from: "no-reply@poshmark.com",
+        subject: "You just sold an item",
+        text: "You just sold an item\n\nBlue Shirt\nSKU 3053\nPrice $8\nYour earnings $5.05\n",
+        html: "",
+        messageId: "posh-3053",
+        date: NEW_DATE,
+      })
+    ).toMatchObject({ kind: "sale", platform: "poshmark", title: "Blue Shirt" });
+  });
+
   test("recognizes a Poshmark sale and ignores an offer", () => {
     expect(
       classifyMailboxEmail({

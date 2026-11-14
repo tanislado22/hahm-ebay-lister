@@ -182,6 +182,29 @@ describe("vinted inbound", () => {
     expect(rememberLot).not.toHaveBeenCalled();
   });
 
+  test("records the Poshmark email for SKU 3053 with the stated net of $5.05", async () => {
+    lotTitles.mockResolvedValue([{ sku: "3053", title: "Blue Shirt" }]);
+    const result = await handleVintedSaleEmail({
+      from: "no-reply@poshmark.com",
+      subject: "You just sold an item",
+      text: "You just sold an item\n\nBlue Shirt\nSKU 3053\nPrice $8\nYour earnings $5.05\n",
+      html: "<p>You just sold an item</p><p>SKU 3053</p><p>Price $8</p><p>Your earnings $5.05</p>",
+      messageId: "posh-3053",
+      date: "2026-11-12T15:00:00.000Z",
+    });
+    expect(result.body).toMatchObject({ ok: true, platform: "poshmark", sku: "3053" });
+    expect(rememberLot).toHaveBeenCalledWith(expect.objectContaining({
+      platform: "poshmark",
+      externalId: "posh-3053",
+      sku: "3053",
+      itemCents: 800,
+      feeCents: 295,
+      buyerShippingCents: 0,
+      sellerShippingCents: 0,
+      refundCents: 0,
+    }));
+  });
+
   test("a Poshmark sale matches the lot title and records it with the net pending", async () => {
     lotTitles.mockResolvedValue([{ sku: "2830", title: "Navy Wool Coat" }]);
     const result = await handleVintedSaleEmail({

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   describeMarketplaceNotices,
   manualMarketplaceMoney,
+  readStatedMarketplaceNet,
   marketplaceListingKey,
   matchMarketplaceArticle,
   planMarketplaceSale,
@@ -217,6 +218,57 @@ describe("ventas de Poshmark y Depop en el lote", () => {
       ok: true,
       money: { itemCents: 8000, feeCents: 1600, buyerShippingCents: 0, sellerShippingCents: 400, refundCents: 0 },
     });
+  });
+
+  it("no registra otra vez el mismo correo de Poshmark", () => {
+    const existing: MarketplaceExistingSale = {
+      id: "sale-3053",
+      orderId: "poshmark:posh-3053",
+      itemId: "shirt",
+      sku: "3053",
+      platform: "poshmark",
+      listingKey: "",
+      cancelled: false,
+      linkStatus: "lotted",
+      hasNet: true,
+    };
+    const shirt: MarketplaceArticle = { id: "shirt", sku: "3053", title: "Blue Shirt", lotId: "lote-1", listingUrls: [] };
+    const again = planMarketplaceSale(notice({
+      externalId: "posh-3053",
+      sku: "3053",
+      title: "Blue Shirt",
+      itemCents: 800,
+      feeCents: 295,
+      buyerShippingCents: 0,
+      sellerShippingCents: 0,
+      refundCents: 0,
+    }), [shirt], [existing]);
+    expect(again.action).toBe("duplicate");
+  });
+
+  it("usa el neto de $5.05 del correo de SKU 3053 sin volver a restar comisión ni impuesto", () => {
+    const stated = readStatedMarketplaceNet("You just sold an item\nSKU 3053\nPrice $8\nYour earnings $5.05\n");
+    expect(stated).toEqual({
+      itemCents: 800,
+      buyerShippingCents: 0,
+      feeCents: 295,
+      sellerShippingCents: 0,
+      refundCents: 0,
+    });
+    const profit = saleProfit({
+      itemCents: stated?.itemCents ?? null,
+      buyerShippingCents: 0,
+      taxRemittedCents: 80,
+      feeCents: stated?.feeCents ?? null,
+      sellerShippingCents: 0,
+      refundCents: 0,
+      otherCents: 0,
+      unitCostCents: 100,
+      quantity: 1,
+      costEstimated: false,
+      cancelled: false,
+    });
+    expect(profit.recoveredCents).toBe(505);
   });
 
   it("explica en pantalla por qué no entró el aviso de Poshmark", () => {
