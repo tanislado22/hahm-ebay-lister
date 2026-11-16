@@ -5,6 +5,7 @@ import { accessHeaders, apiGet, apiPost } from "@/lib/api-client";
 import { WORKSPACE_ARCHIVE_MESSAGES } from "@/lib/markets/guatemala-workspace-archive";
 import { getAnalysisModel, getSortModel } from "@/lib/model-preferences";
 import { resizeImage } from "@/lib/resize";
+import { rotatePhotoClockwise } from "@/lib/photos/rotate";
 import { exactGuatemalaSku, guatemalaDuplicateSkuMessage } from "@/lib/markets/guatemala";
 import { guatemalaPriceIfEmpty, unavailableGuatemalaCompReport } from "@/lib/markets/guatemala-price-match";
 import { partitionVintedPrepare, vintedPrepareResultMessage, workspaceGroupVisible } from "@/lib/archive/manual-sku";
@@ -16,6 +17,7 @@ import { OwnerAccess } from "./OwnerAccess";
 import { ModelSelector } from "./ModelSelector";
 import { ReviewBoard } from "./ReviewBoard";
 import { ListingsView } from "./ListingsView";
+import { RotatePhotoButton } from "./RotatePhotoButton";
 import type {
   AnalyzeResponse,
   CompsSummary,
@@ -91,6 +93,7 @@ async function runPool<T>(
 
 export default function Home() {
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [rotatingPhotoIds, setRotatingPhotoIds] = useState<string[]>([]);
   const [binPrefix, setBinPrefix] = useState("");
   const [step, setStep] = useState<Step>("upload");
   const [groups, setGroups] = useState<ItemGroup[]>([]);
@@ -551,9 +554,14 @@ setStep(
     clients.some((client) => client.id === selectedClientId && client.market === "guatemala");
 
   const groupsRef = useRef(groups);
+  const photosRef = useRef(photos);
+  const rotateChains = useRef(new Map<string, Promise<void>>());
   useEffect(() => {
     groupsRef.current = groups;
   }, [groups]);
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
  useEffect(() => {
 
     const clientId = workMode === "client" ? selectedClientId : null;
@@ -770,6 +778,35 @@ setManualGroups((prev) => [
 }, []);
 
 
+
+  const rotatePhoto = useCallback((photoId: string) => {
+    const previous = rotateChains.current.get(photoId) ?? Promise.resolve();
+    let turn: Promise<void> = Promise.resolve();
+    turn = previous.catch(() => undefined).then(async () => {
+      const photo = photosRef.current.find((item) => item.id === photoId);
+      if (!photo?.data) return;
+      setRotatingPhotoIds((ids) => (ids.includes(photoId) ? ids : [...ids, photoId]));
+      try {
+        const rotated = await rotatePhotoClockwise(photo);
+        setPhotos((prev) => {
+          const next = prev.map((item) =>
+            item.id === photoId
+              ? { ...item, mediaType: rotated.mediaType, data: rotated.data, previewUrl: rotated.previewUrl }
+              : item
+          );
+          photosRef.current = next;
+          return next;
+        });
+      } catch (error) {
+        setError((error as Error).message || "No se pudo rotar la foto.");
+      } finally {
+        if (rotateChains.current.get(photoId) === turn) {
+          setRotatingPhotoIds((ids) => ids.filter((id) => id !== photoId));
+        }
+      }
+    });
+    rotateChains.current.set(photoId, turn);
+  }, []);
 
   const removePhoto = (id: string) => {
 
@@ -1244,8 +1281,9 @@ const archiveGroups = async (targets: ItemGroup[]) => {
       // Snapshot this group's photos from the latest state (no stale closure).
       const group = groupsRef.current.find((g) => g.id === groupId);
       if (!group) return;
+      const stored = new Map(photosRef.current.map((photo) => [photo.id, photo]));
       const imgs = group.photoIds
-        .map((id) => photoMap.get(id))
+        .map((id) => stored.get(id))
         .filter((p): p is Photo => Boolean(p))
         .map((p) => ({ mediaType: p.mediaType, data: p.data }));
       setGroups((prev) =>
@@ -1341,7 +1379,7 @@ const archiveGroups = async (targets: ItemGroup[]) => {
         );
       }
     },
-    [photoMap]
+    []
   );
 
   const writeAll = async () => {
@@ -1371,8 +1409,9 @@ const archiveGroups = async (targets: ItemGroup[]) => {
       if (guatemalaActiveRef.current) return;
       const group = groupsRef.current.find((g) => g.id === groupId);
       if (!group || !group.listing) return;
+      const stored = new Map(photosRef.current.map((photo) => [photo.id, photo]));
       const images = group.photoIds
-        .map((id) => photoMap.get(id))
+        .map((id) => stored.get(id))
         .filter((p): p is Photo => Boolean(p))
         .map((p) => ({ mediaType: p.mediaType, data: p.data }))
         .slice(0, MAX_PUBLISH_PHOTOS);
@@ -1494,7 +1533,7 @@ const archiveGroups = async (targets: ItemGroup[]) => {
         );
       }
     },
-    [photoMap, workMode, selectedClientId]
+    [workMode, selectedClientId]
   );
 const draftGroup = async (groupId: string) => {
 
@@ -1506,9 +1545,10 @@ const draftGroup = async (groupId: string) => {
 
   try {
 
+    const stored = new Map(photosRef.current.map((photo) => [photo.id, photo]));
     const images = group.photoIds
 
-      .map((id) => photoMap.get(id))
+      .map((id) => stored.get(id))
 
       .filter((p): p is Photo => Boolean(p))
 
@@ -2201,16 +2241,22 @@ const draftAll = async () => {
             {photos.length > 0 && (
               <div className="thumbs" aria-label="Selected photos">
                 {photos.map((p) => (
-                  <div className="thumb" key={p.id}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={p.previewUrl} alt="" />
-                    <button
-                      type="button"
-                      aria-label="Remove photo"
-                      onClick={() => removePhoto(p.id)}
-                    >
-                      ✕
-                    </button>
+                  <div className="photo-tile" key={p.id}>
+                    <div className="thumb">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={p.previewUrl} alt="" />
+                      <button
+                        type="button"
+                        aria-label="Remove photo"
+                        onClick={() => removePhoto(p.id)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <RotatePhotoButton
+                      busy={rotatingPhotoIds.includes(p.id)}
+                      onRotate={() => rotatePhoto(p.id)}
+                    />
                   </div>
                 ))}
               </div>
@@ -2265,6 +2311,8 @@ const draftAll = async () => {
           onRenameSku={renameSku}
           onMovePhoto={movePhoto}
           onRemovePhoto={removePhoto}
+          onRotatePhoto={rotatePhoto}
+          rotatingPhotoIds={rotatingPhotoIds}
           onReorderPhoto={reorderPhoto}
           onDeleteGroup={deleteGroup}
           onAddGroup={addGroup}
@@ -2304,6 +2352,8 @@ const draftAll = async () => {
           onDraft={draftGroup}
           onReorderPhoto={reorderPhoto}
           onRemovePhoto={removePhoto}
+          onRotatePhoto={rotatePhoto}
+          rotatingPhotoIds={rotatingPhotoIds}
           onDelete={deleteGroup}
           onDeleteAll={deleteAll}
           onArchive={(groupId) => {

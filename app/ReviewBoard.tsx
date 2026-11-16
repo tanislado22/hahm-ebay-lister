@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ItemGroup, Photo } from "@/lib/types";
+import { RotatePhotoButton } from "./RotatePhotoButton";
 
 interface ReviewBoardProps {
   groups: ItemGroup[];
@@ -20,6 +21,8 @@ interface ReviewBoardProps {
   skuNotice?: string;
   exactSku?: boolean;
   onRemovePhoto: (photoId: string) => void;
+  onRotatePhoto: (photoId: string) => void;
+  rotatingPhotoIds: readonly string[];
 }
 
 function MoveSelect({
@@ -69,6 +72,8 @@ function Thumb({
   photoById,
   onMovePhoto,
   onRemovePhoto,
+  onRotatePhoto,
+  rotating,
   drag,
 }: {
   photoId: string;
@@ -77,6 +82,8 @@ function Thumb({
   photoById: ReviewBoardProps["photoById"];
   onMovePhoto: ReviewBoardProps["onMovePhoto"];
   onRemovePhoto: ReviewBoardProps["onRemovePhoto"];
+  onRotatePhoto: ReviewBoardProps["onRotatePhoto"];
+  rotating: boolean;
   drag?: DragState;
 }) {
 const [zoomed, setZoomed] = useState(false); 
@@ -138,6 +145,7 @@ draggable={false}
 </button>
         {drag?.isCover && <span className="thumb-cover-badge">Cover</span>}
       </div>
+      <RotatePhotoButton busy={rotating} onRotate={() => onRotatePhoto(photoId)} />
       {zoomed && (
 
   <div
@@ -207,6 +215,8 @@ function PhotoGrid({
   photoById,
   onMovePhoto,
   onRemovePhoto,
+  onRotatePhoto,
+  rotatingPhotoIds,
   onReorderPhoto,
 }: {
   group: ItemGroup;
@@ -214,6 +224,8 @@ function PhotoGrid({
   photoById: ReviewBoardProps["photoById"];
   onMovePhoto: ReviewBoardProps["onMovePhoto"];
   onRemovePhoto: ReviewBoardProps["onRemovePhoto"];
+  onRotatePhoto: ReviewBoardProps["onRotatePhoto"];
+  rotatingPhotoIds: ReviewBoardProps["rotatingPhotoIds"];
   onReorderPhoto: ReviewBoardProps["onReorderPhoto"];
 }) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -235,6 +247,8 @@ function PhotoGrid({
           photoById={photoById}
           onMovePhoto={onMovePhoto}
           onRemovePhoto={onRemovePhoto}
+          onRotatePhoto={onRotatePhoto}
+          rotating={rotatingPhotoIds.includes(pid)}
           drag={{
             draggable: group.photoIds.length > 1,
             isCover: i === 0,
@@ -269,6 +283,8 @@ export function ReviewBoard({
   onRenameSku,
   onMovePhoto,
   onRemovePhoto,
+  onRotatePhoto,
+  rotatingPhotoIds,
   onReorderPhoto,
   onDeleteGroup,
   onAddGroup,
@@ -400,6 +416,8 @@ export function ReviewBoard({
                 photoById={photoById}
                 onMovePhoto={onMovePhoto}
                 onRemovePhoto={onRemovePhoto}
+                onRotatePhoto={onRotatePhoto}
+                rotatingPhotoIds={rotatingPhotoIds}
                 onReorderPhoto={onReorderPhoto}
               />
             )}
@@ -425,6 +443,8 @@ export function ReviewBoard({
                 photoById={photoById}
                 onMovePhoto={onMovePhoto}
                 onRemovePhoto={onRemovePhoto}
+                onRotatePhoto={onRotatePhoto}
+                rotating={rotatingPhotoIds.includes(pid)}
               />
             ))}
           </div>

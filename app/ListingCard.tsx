@@ -16,6 +16,7 @@ import { optimizePhotoCopy } from "@/lib/vinted/optimize-photo";
 import { vintedQueueHref } from "@/lib/vinted/queue-link";
 import { showsVintedPrepare, showsVintedQueue, VINTED_UNLINK_MESSAGE, vintedStatusLabel } from "@/lib/vinted/unlink";
 import { buildStoredZip, vintedPhotoFileName, vintedPhotoZipName } from "@/lib/vinted/photo-zip";
+import { RotatePhotoButton } from "./RotatePhotoButton";
 
 const TITLE_LIMIT = 80;
 
@@ -86,6 +87,8 @@ interface ListingCardProps {
   onDraft: (groupId: string) => void;
   onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
 onRemovePhoto: (photoId: string) => void;
+onRotatePhoto: (photoId: string) => void;
+rotatingPhotoIds: readonly string[];
 onDelete: (groupId: string) => void;
 onArchive?: (groupId: string) => void;
 catalogConfirmed?: boolean;
@@ -118,6 +121,8 @@ export function ListingCard({
   onDraft,
   onReorderPhoto,
   onRemovePhoto,
+  onRotatePhoto,
+  rotatingPhotoIds,
   onDelete,
   onArchive,
   catalogConfirmed = false,
@@ -668,9 +673,8 @@ const keyword = [
 
     return (
 
+      <div key={pid} style={{ display: "flex", flexDirection: "column", width: 124 }}>
       <div
-
-        key={pid}
 
         draggable={group.photoIds.length > 1}
 
@@ -842,6 +846,11 @@ const keyword = [
 )}
 
   
+      </div>
+        <RotatePhotoButton
+          busy={rotatingPhotoIds.includes(pid)}
+          onRotate={() => onRotatePhoto(pid)}
+        />
       </div>
 
     );

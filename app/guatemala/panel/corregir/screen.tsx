@@ -10,6 +10,8 @@ import {
   guatemalaConditionLabel,
 } from "@/lib/markets/guatemala-inventory";
 import { PUBLICATION_MESSAGES, publishReviewBlockers, staffCanConfirmPublish } from "@/lib/markets/guatemala-publish";
+import { applyRotatedPhoto, photoRevision, rotatePhotoClockwise } from "@/lib/photos/rotate";
+import { RotatePhotoButton } from "../../../RotatePhotoButton";
 
 interface DraftPhoto {
   id: string;
@@ -35,6 +37,7 @@ export function CorrectScreen({ clientId }: { clientId: string }) {
   const itemId = params.get("id") ?? "";
   const saving = useRef(false);
   const [photos, setPhotos] = useState<DraftPhoto[]>([]);
+  const [rotatingId, setRotatingId] = useState("");
   const [sku, setSku] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -57,7 +60,7 @@ export function CorrectScreen({ clientId }: { clientId: string }) {
     size,
     condition,
     price,
-    photos: photos.map((photo) => photo.id),
+    photos: photoRevision(photos),
   });
   useUnsavedChanges((loaded && !sold && savedSnapshot !== "" && draftSnapshot !== savedSnapshot) || Boolean(pending));
 
@@ -96,7 +99,7 @@ export function CorrectScreen({ clientId }: { clientId: string }) {
           size: item.size || "",
           condition: item.condition || "",
           price: item.priceGtq || "",
-          photos: photos.map((photo) => photo.id),
+          photos: photoRevision(photos),
         })
       );
       setLoaded(true);
@@ -122,10 +125,26 @@ export function CorrectScreen({ clientId }: { clientId: string }) {
     setStep("datos");
   }
 
-  async function save(republish: boolean) {
+  async function rotatePhoto(photo: DraftPhoto) {
+    if (rotatingId || saving.current || sold) return;
+    setRotatingId(photo.id);
+    setError("");
+    try {
+      const rotated = await rotatePhotoClockwise(photo);
+      const next = applyRotatedPhoto(photos, photo.id, { mediaType: rotated.mediaType, data: rotated.data });
+      setPhotos(next);
+      await save(false, next);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "No se pudo rotar la foto.");
+    } finally {
+      setRotatingId("");
+    }
+  }
+
+  async function save(republish: boolean, nextPhotos = photos) {
     if (saving.current || sold) return;
     if (republish && !staffCanConfirmPublish(step)) return;
-    const blockers = publishReviewBlockers({ sku, title, price, photoCount: photos.length });
+    const blockers = publishReviewBlockers({ sku, title, price, photoCount: nextPhotos.length });
     if (blockers.length) {
       setError(blockers[0]);
       setStep("datos");
@@ -135,7 +154,7 @@ export function CorrectScreen({ clientId }: { clientId: string }) {
     setPending(republish ? "Publicando…" : "Guardando…");
     setError("");
     setNotice("");
-    const payload = { itemId, title, description, brand, size, condition, price, photos };
+    const payload = { itemId, title, description, brand, size, condition, price, photos: nextPhotos };
     try {
       const corrected = await guatemalaRequest("/api/markets/guatemala/publicar/corregir", payload, { actor: "encargado" });
       const correctedBody = (await corrected.json()) as { ok?: boolean; error?: string; message?: string; item?: { sku?: string; status?: string } };
@@ -151,7 +170,7 @@ export function CorrectScreen({ clientId }: { clientId: string }) {
           size,
           condition,
           price,
-          photos: photos.map((photo) => photo.id),
+          photos: photoRevision(nextPhotos),
         })
       );
       if (correctedBody.item?.sku) setSku(correctedBody.item.sku);
@@ -250,6 +269,7 @@ export function CorrectScreen({ clientId }: { clientId: string }) {
             {photos.map((photo, index) => (
               <figure key={photo.id}>
                 <img src={photoUrl(photo)} alt={index === 0 ? "Foto de portada" : `Foto ${index + 1}`} />
+                <RotatePhotoButton busy={rotatingId === photo.id} onRotate={() => void rotatePhoto(photo)} />
                 <button type="button" onClick={() => { setPhotos((current) => current.filter((entry) => entry.id !== photo.id)); setStep("datos"); }}>Quitar</button>
               </figure>
             ))}

@@ -20,6 +20,8 @@ import {
   type PublishStep,
 } from "@/lib/markets/guatemala-publish";
 import type { GuatemalaCompReport } from "@/lib/types";
+import { applyRotatedPhoto, rotatePhotoClockwise } from "@/lib/photos/rotate";
+import { RotatePhotoButton } from "../../../RotatePhotoButton";
 
 interface DraftPhoto {
   id: string;
@@ -45,6 +47,7 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
   const priceTouched = useRef(false);
   const requestGeneration = useRef(0);
   const [photos, setPhotos] = useState<DraftPhoto[]>([]);
+  const [rotatingId, setRotatingId] = useState("");
   const [sku, setSku] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -123,6 +126,21 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
     setPending("");
     setStep("datos");
     setConfirmDiscard(false);
+  }
+
+  async function rotatePhoto(photo: DraftPhoto) {
+    if (rotatingId) return;
+    setRotatingId(photo.id);
+    setError("");
+    try {
+      const rotated = await rotatePhotoClockwise(photo);
+      setPhotos((current) => applyRotatedPhoto(current, photo.id, { mediaType: rotated.mediaType, data: rotated.data }));
+      setStep("datos");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "No se pudo rotar la foto.");
+    } finally {
+      setRotatingId("");
+    }
   }
 
   async function addPhotos(files: FileList | null) {
@@ -445,6 +463,7 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
             {photos.map((photo, index) => (
               <figure key={photo.id}>
                 <img src={`data:${photo.mediaType};base64,${photo.data}`} alt={index === 0 ? "Foto de portada" : `Foto ${index + 1}`} />
+                <RotatePhotoButton busy={rotatingId === photo.id} onRotate={() => void rotatePhoto(photo)} />
                 <button
                   type="button"
                   onClick={() => {

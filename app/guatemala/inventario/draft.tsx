@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { applyRotatedPhoto, photoRevision, rotatePhotoClockwise } from "@/lib/photos/rotate";
+import { RotatePhotoButton } from "../../RotatePhotoButton";
 import {
   GUATEMALA_CONDITION_CHOICES,
   GUATEMALA_INVENTORY_MESSAGES,
@@ -182,6 +184,8 @@ export function UnpublishedEditor({
   const [condition, setCondition] = useState(item.condition);
   const [price, setPrice] = useState(item.priceGtq);
   const [photos, setPhotos] = useState<InventoryPhoto[]>(item.photos);
+  const [savedPhotoRevision, setSavedPhotoRevision] = useState(() => photoRevision(item.photos));
+  const [rotatingId, setRotatingId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
@@ -192,7 +196,7 @@ export function UnpublishedEditor({
     size !== item.size ||
     condition !== item.condition ||
     price !== item.priceGtq ||
-    photos.map((photo) => photo.id).join() !== item.photos.map((photo) => photo.id).join();
+    photoRevision(photos) !== savedPhotoRevision;
   useUnsavedChanges(dirty || saving);
 
   async function addPhotos(files: FileList | null) {
@@ -214,7 +218,23 @@ export function UnpublishedEditor({
     setPhotos(next);
   }
 
-  async function save(publish: boolean) {
+  async function rotatePhoto(photo: InventoryPhoto) {
+    if (rotatingId || saving) return;
+    setRotatingId(photo.id);
+    setError("");
+    try {
+      const rotated = await rotatePhotoClockwise(photo);
+      const next = applyRotatedPhoto(photos, photo.id, { mediaType: rotated.mediaType, data: rotated.data });
+      setPhotos(next);
+      await save(false, next);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "No se pudo rotar la foto.");
+    } finally {
+      setRotatingId("");
+    }
+  }
+
+  async function save(publish: boolean, nextPhotos = photos) {
     if (saving) return;
     const prepared = prepareDraftUpdate({
       title,
@@ -223,7 +243,7 @@ export function UnpublishedEditor({
       size,
       condition,
       price,
-      photos,
+      photos: nextPhotos,
     });
     if (!prepared.ok) {
       setError(prepared.error);
@@ -255,6 +275,7 @@ export function UnpublishedEditor({
         return;
       }
       setNotice(body.message || GUATEMALA_INVENTORY_MESSAGES.draftSaved);
+      setSavedPhotoRevision(photoRevision(nextPhotos));
       onSaved();
     } catch {
       setError(GUATEMALA_INVENTORY_MESSAGES.retry);
@@ -280,7 +301,10 @@ export function UnpublishedEditor({
       {photos.length === 0 ? <p>Todavía no tiene fotos.</p> : <p>{photos.length} foto{photos.length === 1 ? "" : "s"}</p>}
       <div className="gt-inventory-photos">
         {photos.map((photo) => (
-          <img key={photo.id} src={`data:${photo.mediaType};base64,${photo.data}`} alt="" />
+          <figure key={photo.id}>
+            <img src={`data:${photo.mediaType};base64,${photo.data}`} alt="" />
+            <RotatePhotoButton busy={rotatingId === photo.id} onRotate={() => void rotatePhoto(photo)} />
+          </figure>
         ))}
       </div>
       {photos.length > 0 ? (

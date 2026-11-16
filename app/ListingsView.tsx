@@ -73,6 +73,8 @@ interface ListingsViewProps {
 
   onReorderPhoto: (groupId: string, fromIndex: number, toIndex: number) => void;
   onRemovePhoto: (photoId: string) => void;
+  onRotatePhoto: (photoId: string) => void;
+  rotatingPhotoIds: readonly string[];
   onDelete: (groupId: string) => void;
   onDeleteAll: () => void;
   onArchive?: (groupId: string) => void;
@@ -111,6 +113,8 @@ export function ListingsView({
   onDraft,
   onReorderPhoto,
   onRemovePhoto,
+  onRotatePhoto,
+  rotatingPhotoIds,
   onDelete,
   onDeleteAll,
   onArchive,
@@ -426,6 +430,8 @@ export function ListingsView({
             onDraft={onDraft}
             onReorderPhoto={onReorderPhoto}
             onRemovePhoto={onRemovePhoto}
+            onRotatePhoto={onRotatePhoto}
+            rotatingPhotoIds={rotatingPhotoIds}
             onDelete={onDelete}
             onArchive={onArchive}
             catalogConfirmed={catalogConfirmedIds.includes(group.id)}
