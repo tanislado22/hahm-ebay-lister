@@ -12,10 +12,20 @@ function clean(value) {
 
 function visible(el) {
   const rect = el.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0 && rect.height < 120;
+  return fieldIsFillable({
+    tag: el.tagName,
+    editable: el.isContentEditable,
+    width: rect.width,
+    height: rect.height,
+  });
 }
 
 function setNativeValue(el, value) {
+  if (el.isContentEditable) {
+    el.textContent = value || "";
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, data: value || "" }));
+    return;
+  }
   const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
   if (setter) setter.call(el, value);
@@ -33,22 +43,23 @@ function labelFor(el) {
 }
 
 function findField(aliases) {
-  const fields = [...document.querySelectorAll("input, textarea")].filter(
-    (el) => visible(el) && el.type !== "file" && el.type !== "radio" && el.type !== "checkbox"
-  );
-  for (const alias of aliases) {
-    const wanted = alias.toLowerCase();
-    const match = fields.find((el) => {
-      const placeholder = (el.getAttribute("placeholder") || "").toLowerCase();
-      const aria = (el.getAttribute("aria-label") || "").toLowerCase();
-      const name = (el.getAttribute("name") || "").toLowerCase();
-      if (placeholder.includes(wanted) || aria.includes(wanted) || name === wanted) return true;
-      const text = clean(labelFor(el)?.textContent).toLowerCase();
-      return text === wanted || text.startsWith(`${wanted} `);
-    });
-    if (match) return match;
-  }
-  return null;
+  const fields = [...document.querySelectorAll("input, textarea, [contenteditable='true']")].map((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      el,
+      tag: el.tagName,
+      type: el.getAttribute("type") || "",
+      editable: el.isContentEditable,
+      width: rect.width,
+      height: rect.height,
+      placeholder: el.getAttribute("placeholder") || "",
+      aria: el.getAttribute("aria-label") || "",
+      name: el.getAttribute("name") || "",
+      testId: el.getAttribute("data-testid") || "",
+      label: labelFor(el)?.textContent || "",
+    };
+  });
+  return matchFillableField(fields, aliases)?.el || null;
 }
 
 function norm(value) {
@@ -562,7 +573,7 @@ async function fillReadyItem(log) {
   fillField("Title", ["title", "what are you selling", "tell buyers"], item.title, log);
   fillField(
     "Description",
-    ["description", "describe your item", "describe"],
+    ["description", "describe your item", "describe", "tell buyers more"],
     descriptionWithSku(item.description, item.sku),
     log
   );

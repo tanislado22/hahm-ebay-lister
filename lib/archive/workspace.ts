@@ -71,12 +71,17 @@ export function restoreGroup(input: {
   photoIds: string[];
 }): ItemGroup {
   const stored = input.storedGroup && typeof input.storedGroup === "object" ? (input.storedGroup as Partial<ItemGroup>) : {};
-  const listing = stored.listing ?? {
-    title: input.title,
-    description: input.description,
-    suggested_price: input.price,
-    currency: input.currency || undefined,
+  const listing = {
+    ...(stored.listing ?? {
+      title: input.title,
+      description: input.description,
+      suggested_price: input.price,
+      currency: input.currency || undefined,
+    }),
   };
+  if (!String(listing.description || "").trim() && input.description) {
+    listing.description = input.description;
+  }
   const vintedStatus = (stored.vintedStatus || input.vintedStatus || "not_prepared") as VintedStatus;
   return {
     ...stored,

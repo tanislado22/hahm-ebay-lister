@@ -17,12 +17,12 @@ import {
   listVintedLinkTargets,
   saveConfirmedVintedLink,
 } from "@/lib/vinted/inventory-store";
+import { downloadEbayPhoto } from "@/lib/vinted/saved-photo";
 import { buildReadySnapshot } from "@/lib/vinted/snapshot";
 import { replaceVintedReadySnapshot } from "@/lib/vinted/snapshot-store";
 
 const NO_PREPARE = "No se preparó ningún artículo.";
 const MAX_PHOTOS = 12;
-const MAX_PHOTO_BYTES = 7 * 1024 * 1024;
 
 export interface PrepareDraft {
   sku: string;
@@ -111,23 +111,8 @@ export async function lookupPrepareDraft(
   };
 }
 
-function mediaTypeFor(url: string, header: string | null): string {
-  if (header && /^image\//i.test(header)) return header.split(";")[0].trim();
-  if (/\.png($|\?)/i.test(url)) return "image/png";
-  if (/\.webp($|\?)/i.test(url)) return "image/webp";
-  return "image/jpeg";
-}
-
 async function downloadPhoto(url: string): Promise<{ mediaType: string; data: string } | null> {
-  if (!/^https:\/\/(?:[a-z0-9-]+\.)*(?:ebayimg|ebaystatic)\.com\//i.test(url)) return null;
-  const response = await fetch(url);
-  if (!response.ok) return null;
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (!bytes.byteLength || bytes.byteLength > MAX_PHOTO_BYTES) return null;
-  return {
-    mediaType: mediaTypeFor(url, response.headers.get("content-type")),
-    data: bytes.toString("base64"),
-  };
+  return downloadEbayPhoto(url);
 }
 
 export async function commitPrepareDraft(

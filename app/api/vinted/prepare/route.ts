@@ -4,6 +4,7 @@ import { setVintedCurrentSku, upsertVintedReady } from "@/lib/inventory/links";
 import { workspaceKey } from "@/lib/inventory/workspace";
 import { prepareVintedFields } from "@/lib/vinted/prepare";
 import { vintedPrepareBlock } from "@/lib/archive/manual-sku";
+import { downloadEbayPhoto, materializeSavedPhotos } from "@/lib/vinted/saved-photo";
 import { buildReadySnapshot } from "@/lib/vinted/snapshot";
 import { photosForGroupId, replaceVintedReadySnapshot } from "@/lib/vinted/snapshot-store";
 import type { ListingResult } from "@/lib/types";
@@ -69,7 +70,8 @@ export async function POST(req: NextRequest) {
       const sku = block.sku;
       if (!item.listing) continue;
       if (items.length === 1) {
-        const photos = item.groupId ? await photosForGroupId(item.groupId) : [];
+        const stored = item.groupId ? await photosForGroupId(item.groupId) : [];
+        const photos = await materializeSavedPhotos(stored, downloadEbayPhoto);
         const snapshot = buildReadySnapshot({ sku, listing: item.listing, photos });
         currentSku = snapshot.sku;
         await setVintedCurrentSku(workspace, snapshot.sku);

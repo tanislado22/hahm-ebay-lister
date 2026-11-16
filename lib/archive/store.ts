@@ -28,6 +28,7 @@ import {
 import type { ItemGroup, ListingResult, Photo, VintedStatus } from "@/lib/types";
 import { prepareVintedFields } from "@/lib/vinted/prepare";
 import { buildReadySnapshot } from "@/lib/vinted/snapshot";
+import { downloadEbayPhoto, materializeSavedPhotos } from "@/lib/vinted/saved-photo";
 import { photosForGroupId, replaceVintedReadySnapshot } from "@/lib/vinted/snapshot-store";
 
 export const ARCHIVE_PAGE_SIZE = 20;
@@ -902,7 +903,8 @@ export async function prepareArchivedArticle(
     return { ok: false, error: "La preparación se detuvo antes de cambiar el artículo." };
   }
   try {
-    const photos = await photosForGroupId(restored.jobId);
+    const stored = await photosForGroupId(restored.jobId);
+    const photos = await materializeSavedPhotos(stored, downloadEbayPhoto);
     const snapshot = buildReadySnapshot({ sku, listing, photos });
     const fields = prepareVintedFields(sku, listing);
     const { setVintedCurrentSku, upsertVintedReady } = await import("@/lib/inventory/links");

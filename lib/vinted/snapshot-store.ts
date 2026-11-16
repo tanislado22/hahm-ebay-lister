@@ -1,5 +1,6 @@
 import { ensureInventoryTables, getSql } from "@/lib/db";
 import type { ReadyPhoto, ReadySnapshot } from "@/lib/vinted/snapshot";
+import { hasSavedPhoto, type SavedPhotoRef } from "@/lib/vinted/saved-photo";
 
 interface SnapshotRow {
   sku?: string;
@@ -122,6 +123,55 @@ export async function photosForGroupId(groupId: string): Promise<ReadyPhoto[]> {
   if (rows.length === 0) return [];
   const raw = (rows[0] as { data?: unknown }).data;
   const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-  const photos = (data as { photos?: ReadyPhoto[] } | null)?.photos;
-  return Array.isArray(photos) ? photos.filter((photo) => Boolean(photo?.data)) : [];
+  const photos = (data as { photos?: SavedPhotoRef[] } | null)?.photos;
+  return Array.isArray(photos) ? photos.filter((photo) => hasSavedPhoto(photo)) : [];
+}
+
+export async function savedPhotosForSku(sku: string): Promise<SavedPhotoRef[]> {
+  const wanted = sku.trim();
+  if (!wanted) return [];
+  const sql = getSql();
+  await ensureInventoryTables();
+  const jobs = await sql`
+    SELECT data
+    FROM jobs
+    WHERE data->'group'->>'sku' = ${wanted}
+    ORDER BY updated_at DESC
+    LIMIT 8
+  `;
+  for (const row of jobs) {
+    const photos = photosInJob((row as { data?: unknown }).data);
+    if (photos.length > 0) return photos;
+  }
+  const articles = await sql`
+    SELECT id
+    FROM article_archive
+    WHERE sku = ${wanted}
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `;
+  const articleId = String((articles[0] as { id?: string } | undefined)?.id ?? "");
+  if (!articleId) return [];
+  const rows = await sql`
+    SELECT media_type, bytes, url
+    FROM article_archive_photos
+    WHERE article_id = ${articleId}
+    ORDER BY position ASC, id ASC
+  `;
+  return rows
+    .map((row) => {
+      const record = row as { media_type?: string; bytes?: string; url?: string };
+      return {
+        mediaType: String(record.media_type ?? ""),
+        data: String(record.bytes ?? ""),
+        previewUrl: String(record.url ?? ""),
+      };
+    })
+    .filter((photo) => hasSavedPhoto(photo));
+}
+
+function photosInJob(raw: unknown): SavedPhotoRef[] {
+  const data = typeof raw === "string" ? JSON.parse(raw) : raw;
+  const photos = (data as { photos?: SavedPhotoRef[] } | null)?.photos;
+  return Array.isArray(photos) ? photos.filter((photo) => hasSavedPhoto(photo)) : [];
 }
