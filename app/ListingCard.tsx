@@ -17,6 +17,7 @@ import { vintedQueueHref } from "@/lib/vinted/queue-link";
 import { showsVintedPrepare, showsVintedQueue, VINTED_UNLINK_MESSAGE, vintedStatusLabel } from "@/lib/vinted/unlink";
 import { buildStoredZip, vintedPhotoFileName, vintedPhotoZipName } from "@/lib/vinted/photo-zip";
 import { RotatePhotoButton } from "./RotatePhotoButton";
+import { photoViewSrc } from "@/lib/photos/view";
 
 const TITLE_LIMIT = 80;
 
@@ -888,7 +889,7 @@ const keyword = [
 
     <img
 
-    src={`data:${zoomedPhoto.mediaType};base64,${zoomedPhoto.data}`}
+    src={photoViewSrc(zoomedPhoto)}
 
       alt="Item photo enlarged"
 

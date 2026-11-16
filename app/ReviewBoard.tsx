@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ItemGroup, Photo } from "@/lib/types";
 import { RotatePhotoButton } from "./RotatePhotoButton";
+import { photoViewSrc } from "@/lib/photos/view";
 
 interface ReviewBoardProps {
   groups: ItemGroup[];
@@ -176,7 +177,7 @@ draggable={false}
 
     <img
 
-      src={`data:${photo.mediaType};base64,${photo.data}`}
+      src={photoViewSrc(photo)}
 
 
 

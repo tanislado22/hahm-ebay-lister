@@ -102,19 +102,23 @@ export function photoForWorkspace(photo: {
   bytes: string;
   url: string;
 }): Photo {
-  if (photo.bytes) {
-    const mediaType = photo.mediaType || "image/jpeg";
+  const mediaType = photo.mediaType || "image/jpeg";
+  const stored = photo.bytes.trim();
+  if (stored.startsWith("data:") || stored.startsWith("https://") || stored.startsWith("http://")) {
+    return { id: photo.id, mediaType, data: stored, previewUrl: stored };
+  }
+  if (stored) {
     return {
       id: photo.id,
       mediaType,
-      data: photo.bytes,
-      previewUrl: `data:${mediaType};base64,${photo.bytes}`,
+      data: stored,
+      previewUrl: `data:${mediaType};base64,${stored}`,
     };
   }
   return {
     id: photo.id,
-    mediaType: photo.mediaType || "image/jpeg",
+    mediaType,
     data: "",
-    previewUrl: photo.url,
+    previewUrl: photo.url.trim(),
   };
 }
