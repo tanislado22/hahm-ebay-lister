@@ -11,19 +11,16 @@ export function photoViewSrc(photo: {
   const preview = (photo.previewUrl ?? "").trim();
   const raw = (photo.data ?? "").trim();
   if (!raw) return preview;
-  if (isDirectImageSrc(raw)) return raw;
+  if (isRemoteImageSrc(raw)) return raw;
+  // A JPEG's base64 starts with "/9j/". That is the picture, not a site path.
   const base64 = normalizedBase64(raw);
-  if (!base64) return preview;
-  return `data:${photo.mediaType?.trim() || "image/jpeg"};base64,${base64}`;
+  if (base64) return `data:${photo.mediaType?.trim() || "image/jpeg"};base64,${base64}`;
+  if (raw.startsWith("/")) return raw;
+  return preview;
 }
 
-function isDirectImageSrc(value: string): boolean {
-  return (
-    value.startsWith("data:") ||
-    value.startsWith("https://") ||
-    value.startsWith("http://") ||
-    value.startsWith("/")
-  );
+function isRemoteImageSrc(value: string): boolean {
+  return value.startsWith("data:") || value.startsWith("https://") || value.startsWith("http://");
 }
 
 function normalizedBase64(value: string): string {

@@ -909,6 +909,18 @@ textarea {
   background: var(--color-surface-sunk);
 }
 
+img.photo-lightbox {
+  width: auto;
+  height: auto;
+  max-width: 95vw;
+  max-height: 95vh;
+  aspect-ratio: auto;
+  object-fit: contain;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
 .board-thumb.draggable {
   cursor: grab;
 }

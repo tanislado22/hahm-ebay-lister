@@ -176,11 +176,8 @@ draggable={false}
   >
 
     <img
-
+      className="photo-lightbox"
       src={photoViewSrc(photo)}
-
-
-
       alt="Item photo enlarged"
 
       style={{

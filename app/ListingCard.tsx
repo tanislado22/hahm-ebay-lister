@@ -888,9 +888,8 @@ const keyword = [
   >
 
     <img
-
-    src={photoViewSrc(zoomedPhoto)}
-
+      className="photo-lightbox"
+      src={photoViewSrc(zoomedPhoto)}
       alt="Item photo enlarged"
 
       style={{

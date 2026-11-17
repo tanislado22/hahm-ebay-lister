@@ -41,4 +41,15 @@ describe("restored archive photos", () => {
       previewUrl: EBAY,
     })).toBe(EBAY);
   });
+
+  it("shows a prepared JPEG instead of treating its bytes as a path", () => {
+    const jpeg = "/9j/4AAQSkZJRgABAQAAAQABAAD/2w==";
+    const preview = "data:image/jpeg;base64,THUMBDATA";
+    expect(photoViewSrc({ mediaType: "image/jpeg", data: jpeg, previewUrl: preview })).toBe(
+      `data:image/jpeg;base64,${jpeg}`
+    );
+    expect(photoViewSrc({ mediaType: "image/jpeg", data: "/photos/front.jpg", previewUrl: preview })).toBe(
+      "/photos/front.jpg"
+    );
+  });
 });
