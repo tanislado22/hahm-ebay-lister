@@ -22,6 +22,13 @@ import {
 import type { GuatemalaCompReport } from "@/lib/types";
 import { applyRotatedPhoto, rotatePhotoClockwise } from "@/lib/photos/rotate";
 import { RotatePhotoButton } from "../../../RotatePhotoButton";
+import { RegistrationQrCamera } from "../../escanear/qr-camera";
+import {
+  applyRegistrationScan,
+  REGISTRATION_MESSAGES,
+  registrationFormShouldClear,
+} from "@/lib/markets/guatemala-registration";
+import { garmentQrText, scanLotLabel } from "@/lib/markets/guatemala-qr";
 
 interface DraftPhoto {
   id: string;
@@ -66,6 +73,12 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [lots, setLots] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
   const [lotId, setLotId] = useState("");
+  const [cameraOn, setCameraOn] = useState(false);
+  const [existing, setExisting] = useState<{ id: string; sku: string; title: string } | null>(null);
+  const [existingChoices, setExistingChoices] = useState<
+    { id: string; sku: string; title: string; lotNumber: number | null; lotName: string | null }[]
+  >([]);
+  const [savedNotice, setSavedNotice] = useState("");
   const skuTouched = useRef(false);
 
   useEffect(() => {
@@ -104,6 +117,10 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
 
   function discardDraft() {
     if (saving.current) return;
+    clearRegistrationForm();
+  }
+
+  function clearRegistrationForm() {
     const blank = emptyPublicationDraft();
     requestGeneration.current += 1;
     draftId.current = crypto.randomUUID();
@@ -126,6 +143,9 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
     setPending("");
     setStep("datos");
     setConfirmDiscard(false);
+    setCameraOn(false);
+    setExisting(null);
+    setExistingChoices([]);
   }
 
   async function rotatePhoto(photo: DraftPhoto) {
@@ -190,6 +210,7 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
     if (!body.available) {
       setSkuNote(GUATEMALA_INVENTORY_MESSAGES.skuInUse);
       setError(body.error || GUATEMALA_INVENTORY_MESSAGES.skuInUse);
+      await findExisting({ sku: trimmed }, false);
       return false;
     }
     setSkuNote("Ese SKU está libre.");
@@ -310,7 +331,127 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
     }
   }
 
-  async function publish() {
+  async function onQr(text: string) {
+    setCameraOn(false);
+    setSavedNotice("");
+    const applied = applyRegistrationScan(
+      { sku, lotId, title, description, brand, size, condition, price },
+      text
+    );
+    if (!applied.ok) {
+      setSkuNote(applied.error);
+      setError(applied.error);
+      return;
+    }
+    setError("");
+    setSkuNote("");
+    if (applied.scan.kind === "sku") {
+      skuTouched.current = true;
+      setSku(applied.form.sku);
+      setLotId(applied.form.lotId);
+      await findExisting({ sku: applied.form.sku }, true);
+      return;
+    }
+    await findExisting({ codigo: garmentQrText(applied.scan.itemId) }, true);
+  }
+
+  async function findExisting(query: { codigo?: string; sku?: string }, openAlone: boolean) {
+    const params = new URLSearchParams({ clientId });
+    if (query.codigo) params.set("codigo", query.codigo);
+    if (query.sku) params.set("sku", query.sku);
+    const response = await guatemalaRequest(
+      `/api/markets/guatemala/inventory/qr?${params.toString()}`,
+      undefined,
+      { actor: "encargado" }
+    );
+    const body = (await response.json()) as {
+      ok?: boolean;
+      choice?: "one" | "many";
+      garment?: { id: string; sku: string; title: string };
+      garments?: { id: string; sku: string; title: string; lotNumber: number | null; lotName: string | null }[];
+    };
+    if (!response.ok || !body.ok) {
+      setExisting(null);
+      setExistingChoices([]);
+      return;
+    }
+    if (body.choice === "many") {
+      setExisting(null);
+      setExistingChoices(body.garments ?? []);
+      setError(REGISTRATION_MESSAGES.already);
+      return;
+    }
+    const garment = body.garment;
+    if (!garment?.id) return;
+    const otherData = Boolean(
+      photos.length ||
+        title.trim() ||
+        description.trim() ||
+        brand.trim() ||
+        size.trim() ||
+        condition.trim() ||
+        price.trim() ||
+        lotId
+    );
+    if (openAlone && !otherData) {
+      window.location.assign(`/guatemala/panel/inventario?item=${encodeURIComponent(garment.id)}`);
+      return;
+    }
+    setExisting({ id: garment.id, sku: garment.sku, title: garment.title });
+    setExistingChoices([]);
+    setError(REGISTRATION_MESSAGES.already);
+  }
+
+  async function saveWithoutPhotos(thenScan: boolean) {
+    if (photos.length > 0) return;
+    if (saving.current || existing || existingChoices.length > 0) {
+      if (existing || existingChoices.length > 0) setError(REGISTRATION_MESSAGES.already);
+      return;
+    }
+    saving.current = true;
+    setPending(thenScan ? "Guardando…" : "Guardando…");
+    setError("");
+    try {
+      const response = await guatemalaRequest(
+        "/api/markets/guatemala/inventory/sin-fotos",
+        {
+          registro: true,
+          clientId,
+          sku,
+          title,
+          description,
+          brand,
+          size,
+          condition,
+          price,
+          lotId: lotId || null,
+        },
+        { actor: "encargado" }
+      );
+      const body = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        existing?: { id: string; sku: string; title: string } | null;
+      };
+      if (!response.ok || !body.ok) {
+        setError(body.error || GUATEMALA_INVENTORY_MESSAGES.retry);
+        if (body.existing?.id) setExisting(body.existing);
+        return;
+      }
+      if (!registrationFormShouldClear(true)) return;
+      clearRegistrationForm();
+      setSavedNotice(thenScan ? REGISTRATION_MESSAGES.scanNext : body.message || REGISTRATION_MESSAGES.saved);
+      if (thenScan) setCameraOn(true);
+    } catch {
+      setError(GUATEMALA_INVENTORY_MESSAGES.retry);
+    } finally {
+      saving.current = false;
+      setPending("");
+    }
+  }
+
+  async function publish(thenScan = false) {
     const ticket = requestGeneration.current;
     if (!staffCanConfirmPublish(step) || saving.current) return;
     const blockers = publishReviewBlockers({ sku, title, price, photoCount: photos.length });
@@ -344,6 +485,12 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
       if (!publicationResultIsCurrent(ticket, requestGeneration.current)) return;
       if (!response.ok || !body.ok || !body.item?.id) {
         setError(body.error || GUATEMALA_INVENTORY_MESSAGES.retry);
+        return;
+      }
+      if (thenScan && registrationFormShouldClear(true)) {
+        clearRegistrationForm();
+        setSavedNotice(REGISTRATION_MESSAGES.scanNext);
+        setCameraOn(true);
         return;
       }
       setPublishedId(body.item.id);
@@ -409,8 +556,9 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
 
   return (
     <main className="gt-publish">
-      <h1>Publicar artículo</h1>
-      <p>Sube las fotos, revisa los datos y confirma. La prenda se guarda como disponible en Tienda Guatemala.</p>
+      <h1>Agregar artículo</h1>
+      <p>Escanea el QR o escribe el SKU. Con fotos se publica en el catálogo. Sin fotos queda en el inventario, se puede vender y no sale en el catálogo.</p>
+      {savedNotice ? <p role="status">{savedNotice}</p> : null}
       {error ? (
         <p className="note note-error" role="alert">
           {error}
@@ -441,6 +589,9 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
             </button>
             <button type="button" className="btn btn-primary" onClick={() => void publish()} disabled={Boolean(pending)}>
               {pending ? "Publicando…" : "Publicar"}
+            </button>
+            <button type="button" className="btn btn-primary" onClick={() => void publish(true)} disabled={Boolean(pending)}>
+              {pending ? "Publicando…" : "Guardar y escanear siguiente"}
             </button>
           </div>
           {discardControl()}
@@ -497,11 +648,38 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
                 skuTouched.current = true;
                 setSku(event.target.value);
                 setSkuNote("");
+                setExisting(null);
+                setExistingChoices([]);
+                setSavedNotice("");
                 setStep("datos");
               }}
             />
           </label>
+          <div className="gt-publish-actions">
+            <button type="button" className="btn btn-primary" onClick={() => { setSavedNotice(""); setCameraOn(true); }}>
+              Escanear QR
+            </button>
+          </div>
+          <RegistrationQrCamera active={cameraOn} onCode={(text) => void onQr(text)} onClose={() => setCameraOn(false)} />
           {skuNote ? <p>{skuNote}</p> : null}
+          {existing ? (
+            <p>
+              {REGISTRATION_MESSAGES.already}{" "}
+              <a className="btn btn-primary" href={`/guatemala/panel/inventario?item=${encodeURIComponent(existing.id)}`}>
+                Abrir ficha
+              </a>
+            </p>
+          ) : null}
+          {existingChoices.length > 0 ? (
+            <div>
+              <p>Este SKU está en varias prendas. Elige una ficha. No se creó otra y no se cambió el lote.</p>
+              {existingChoices.map((choice) => (
+                <a key={choice.id} className="btn btn-ghost" href={`/guatemala/panel/inventario?item=${encodeURIComponent(choice.id)}`}>
+                  {choice.title || "Prenda"} · SKU {choice.sku} · {scanLotLabel(choice.lotNumber, choice.lotName)}
+                </a>
+              ))}
+            </div>
+          ) : null}
           <button type="button" className="btn btn-ghost" onClick={() => void checkSku()} disabled={Boolean(pending)}>
             Comprobar SKU
           </button>
@@ -550,6 +728,16 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
           <button type="button" className="btn btn-primary" onClick={() => void review()} disabled={Boolean(pending)}>
             Revisar
           </button>
+          {photos.length === 0 ? (
+            <div className="gt-publish-actions">
+              <button type="button" className="btn btn-primary" onClick={() => void saveWithoutPhotos(false)} disabled={Boolean(pending) || Boolean(existing) || existingChoices.length > 0}>
+                {pending ? "Guardando…" : "Guardar en inventario"}
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => void saveWithoutPhotos(true)} disabled={Boolean(pending) || Boolean(existing) || existingChoices.length > 0}>
+                Guardar y escanear siguiente
+              </button>
+            </div>
+          ) : null}
           {discardControl()}
         </section>
       )}

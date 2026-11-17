@@ -20,6 +20,23 @@
   margin-left: 0;
 }
 
+.gt-qr-reader {
+  width: min(100%, 28rem);
+  height: 0;
+  overflow: hidden;
+}
+
+.gt-qr-reader.is-live {
+  height: auto;
+  min-height: 16rem;
+  overflow: visible;
+}
+
+.gt-qr-reader video {
+  width: 100%;
+  border-radius: var(--radius);
+}
+
 .gt-entry,
 .gt-access {
   display: grid;

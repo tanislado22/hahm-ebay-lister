@@ -14,6 +14,7 @@ import {
 } from "@/lib/markets/guatemala-catalog";
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import { GUATEMALA_LOT_MESSAGES } from "@/lib/markets/guatemala-lots";
+import { preparePhotoLessRegistration, REGISTRATION_MESSAGES, registrationInsertDecision } from "@/lib/markets/guatemala-registration";
 import { activeGuatemalaLot, ensureGuatemalaLotTables } from "@/lib/markets/guatemala-lots-store";
 import { ensureGuatemalaQuantityTables, listCheckoutReportRows } from "@/lib/markets/guatemala-quantity-store";
 import { listSkuLessReportRows } from "@/lib/markets/guatemala-skuless-store";
@@ -673,6 +674,117 @@ export async function saveUnpublishedGuatemalaItem(input: {
   return {
     ok: true,
     message: GUATEMALA_INVENTORY_MESSAGES.unpublishedSaved,
+    item: {
+      id: String(row.id),
+      sku: String(row.sku),
+      title: String(row.title ?? ""),
+      priceGtq: normalizePriceText(row.price_gtq),
+      published: false,
+      status: "disponible",
+    },
+  };
+}
+
+export async function savePhotoLessRegistration(input: {
+  clientId: string;
+  actor: SaleActor;
+  sku?: unknown;
+  title?: unknown;
+  description?: unknown;
+  brand?: unknown;
+  size?: unknown;
+  condition?: unknown;
+  price?: unknown;
+  lotId?: unknown;
+}): Promise<
+  | { ok: true; item: { id: string; sku: string; title: string; priceGtq: string; published: false; status: "disponible" }; message: string }
+  | { ok: false; status: 400 | 403 | 409; error: string; existing?: { id: string; sku: string; title: string } }
+> {
+  const prepared = preparePhotoLessRegistration(input);
+  if (!prepared.ok) return prepared;
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  await ensureGuatemalaInventoryTables();
+  const sql = getSql();
+  const existingRows = await sql`
+    SELECT id, sku, title
+    FROM guatemala_inventory_items
+    WHERE client_id = ${input.clientId} AND sku = ${prepared.item.sku}
+    LIMIT 1
+  `;
+  const existing = existingRows[0]
+    ? { id: String(existingRows[0].id), sku: String(existingRows[0].sku), title: String(existingRows[0].title ?? "") }
+    : null;
+  const decision = registrationInsertDecision(existing);
+  if (decision.action === "open_existing") {
+    return { ok: false, status: 409, error: REGISTRATION_MESSAGES.already, existing: decision.item };
+  }
+  if (prepared.item.lotId && !(await activeGuatemalaLot(input.clientId, prepared.item.lotId))) {
+    return { ok: false, status: 400, error: GUATEMALA_LOT_MESSAGES.notFound };
+  }
+  const id = crypto.randomUUID();
+  const sourceGroupId = crypto.randomUUID();
+  const rows = await sql`
+    WITH locked AS (
+      SELECT pg_advisory_xact_lock(
+        hashtext('guatemala-sku'),
+        hashtext(${`${input.clientId}\u001f${prepared.item.sku}`})
+      ) AS sku_locked
+    )
+    INSERT INTO guatemala_inventory_items (
+      id, client_id, source_group_id, sku, title, description,
+      brand, size, condition, price_gtq, currency, status, lot_id, published,
+      created_by_role, created_by_account_id, created_by_username
+    )
+    SELECT
+      ${id},
+      ${input.clientId},
+      ${sourceGroupId},
+      ${prepared.item.sku},
+      ${prepared.item.title},
+      ${prepared.item.description},
+      ${prepared.item.brand},
+      ${prepared.item.size},
+      ${prepared.item.condition},
+      ${prepared.item.priceGtq}::numeric,
+      'GTQ',
+      ${GUATEMALA_INVENTORY_STATUS},
+      ${prepared.item.lotId},
+      FALSE,
+      ${input.actor.role},
+      ${input.actor.accountId},
+      ${input.actor.username}
+    FROM locked
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM guatemala_inventory_items AS taken
+      WHERE taken.client_id = ${input.clientId}
+        AND taken.sku = ${prepared.item.sku}
+    )
+    RETURNING id, sku, title, price_gtq::text AS price_gtq, status, published
+  `;
+  const row = rows[0];
+  if (!row) {
+    const again = await sql`
+      SELECT id, sku, title
+      FROM guatemala_inventory_items
+      WHERE client_id = ${input.clientId} AND sku = ${prepared.item.sku}
+      LIMIT 1
+    `;
+    const found = again[0];
+    return {
+      ok: false,
+      status: 409,
+      error: REGISTRATION_MESSAGES.already,
+      existing: found
+        ? { id: String(found.id), sku: String(found.sku), title: String(found.title ?? "") }
+        : undefined,
+    };
+  }
+  return {
+    ok: true,
+    message: REGISTRATION_MESSAGES.saved,
     item: {
       id: String(row.id),
       sku: String(row.sku),

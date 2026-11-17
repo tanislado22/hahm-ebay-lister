@@ -13,7 +13,7 @@ export default async function StaffHomePage() {
     <main>
       <h1>Tienda Guatemala</h1>
       <p>
-        Hola, {session.username}. Desde aquí puedes publicar una prenda, ver el inventario, registrar ventas, revisar
+        Hola, {session.username}. Desde aquí puedes agregar una prenda, ver el inventario, registrar ventas, revisar
         lotes de compra y consultar los reportes.
         {session.canManageExpenses ? " También puedes anotar gastos, ver los totales y registrar recuperaciones." : ""}
       </p>

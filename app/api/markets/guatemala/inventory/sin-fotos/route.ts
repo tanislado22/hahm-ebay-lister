@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeGuatemalaRequest } from "@/lib/markets/guatemala-guard";
 import { GUATEMALA_INVENTORY_MESSAGES } from "@/lib/markets/guatemala-inventory";
-import { saveUnpublishedGuatemalaItem } from "@/lib/markets/guatemala-inventory-store";
+import { savePhotoLessRegistration, saveUnpublishedGuatemalaItem } from "@/lib/markets/guatemala-inventory-store";
 
 export const dynamic = "force-dynamic";
 
@@ -16,15 +16,28 @@ export async function POST(request: NextRequest) {
   const access = await authorizeGuatemalaRequest(request, typeof body.clientId === "string" ? body.clientId : "", "publish");
   if (!access.ok) return access.response;
   try {
-    const result = await saveUnpublishedGuatemalaItem({
-      clientId: access.clientId,
-      actor: access.actor,
-      sku: body.sku,
-      itemType: body.itemType,
-      size: body.size,
-      price: body.price,
-      lotId: body.lotId,
-    });
+    const result = body.registro === true
+      ? await savePhotoLessRegistration({
+          clientId: access.clientId,
+          actor: access.actor,
+          sku: body.sku,
+          title: body.title,
+          description: body.description,
+          brand: body.brand,
+          size: body.size,
+          condition: body.condition,
+          price: body.price,
+          lotId: body.lotId,
+        })
+      : await saveUnpublishedGuatemalaItem({
+          clientId: access.clientId,
+          actor: access.actor,
+          sku: body.sku,
+          itemType: body.itemType,
+          size: body.size,
+          price: body.price,
+          lotId: body.lotId,
+        });
     if (!result.ok) {
       return NextResponse.json(
         { ok: false, error: result.error, existing: result.existing ?? null },

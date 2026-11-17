@@ -35,7 +35,7 @@ export default async function StaffLayout({ children }: { children: React.ReactN
             Escanear QR
           </a>
           <a className="btn btn-primary" href="/guatemala/panel/publicar">
-            Publicar artículo
+            Agregar artículo
           </a>
           <a className="btn btn-primary" href="/guatemala/panel/inventario">
             Inventario

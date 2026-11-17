@@ -8,7 +8,7 @@ import { PublishScreen } from "./screen";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Publicar artículo · Tienda Guatemala",
+  title: "Agregar artículo · Tienda Guatemala",
 };
 
 export default async function PublishPage() {
