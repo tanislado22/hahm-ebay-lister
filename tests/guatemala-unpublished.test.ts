@@ -48,9 +48,9 @@ describe("artículos sin fotos de Tienda Guatemala", () => {
     expect(prepareUnpublishedItem({ clientId: "tienda", sku: "L1-9", itemType: "blusa", price: "0", lotId: "lote-1" }).ok).toBe(
       false
     );
-    expect(prepareUnpublishedItem({ clientId: "tienda", sku: "L1-9", itemType: "blusa", price: "10", lotId: "" }).ok).toBe(
-      false
-    );
+    const withoutLot = prepareUnpublishedItem({ clientId: "tienda", sku: "L1-001", itemType: "blusa", price: "10", lotId: "" });
+    expect(withoutLot.ok && withoutLot.item.sku).toBe("L1-001");
+    expect(withoutLot.ok && withoutLot.item.lotId).toBeNull();
   });
 
   it("distingue la pendiente de publicar de la vendida sin publicar", () => {

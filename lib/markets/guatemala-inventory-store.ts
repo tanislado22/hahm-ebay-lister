@@ -607,7 +607,7 @@ export async function saveUnpublishedGuatemalaItem(input: {
     return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
   }
   await ensureGuatemalaInventoryTables();
-  if (!(await activeGuatemalaLot(input.clientId, prepared.item.lotId))) {
+  if (prepared.item.lotId && !(await activeGuatemalaLot(input.clientId, prepared.item.lotId))) {
     return { ok: false, status: 400, error: GUATEMALA_LOT_MESSAGES.notFound };
   }
   const sql = getSql();

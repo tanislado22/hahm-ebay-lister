@@ -11,6 +11,9 @@ import {
   prepareUnpublishedItem,
   type InventoryPhoto,
 } from "@/lib/markets/guatemala-inventory";
+import { REGISTRATION_MESSAGES, skuFromRegistrationScan } from "@/lib/markets/guatemala-registration";
+import { garmentQrText } from "@/lib/markets/guatemala-qr";
+import { RegistrationQrCamera } from "../escanear/qr-camera";
 import { useUnsavedChanges } from "../return-home";
 import "../gastos/expenses.css";
 
@@ -45,11 +48,76 @@ export function QuickAddForm({
   const [error, setError] = useState("");
   const [existing, setExisting] = useState<ExistingSku | null>(null);
   const [saving, setSaving] = useState(false);
-  const dirty = Boolean(sku || itemType || size || price || lotId);
+  const [cameraOn, setCameraOn] = useState(false);
+  const dirty = Boolean(sku || itemType || size || price || lotId || cameraOn);
   useUnsavedChanges(dirty && !saving);
+
+  async function warnIfSkuExists(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed || !clientId) {
+      setExisting(null);
+      return;
+    }
+    try {
+      const response = await request(
+        `/api/markets/guatemala/inventory/qr?clientId=${encodeURIComponent(clientId)}&sku=${encodeURIComponent(trimmed)}`
+      );
+      const body = (await response.json()) as {
+        ok?: boolean;
+        choice?: "one" | "many";
+        garment?: ExistingSku;
+        garments?: ExistingSku[];
+      };
+      if (!response.ok || !body.ok) {
+        setExisting(null);
+        return;
+      }
+      const found = body.choice === "many" ? body.garments?.[0] : body.garment;
+      setExisting(found?.sku ? found : { id: "", sku: trimmed, title: "" });
+      setError(REGISTRATION_MESSAGES.already);
+    } catch {
+      setError(GUATEMALA_INVENTORY_MESSAGES.retry);
+    }
+  }
+
+  async function fillSku(raw: string) {
+    setCameraOn(false);
+    const scan = skuFromRegistrationScan(raw);
+    if (!scan.ok) {
+      setError(scan.error);
+      return;
+    }
+    if (scan.kind === "item") {
+      try {
+        const response = await request(
+          `/api/markets/guatemala/inventory/qr?clientId=${encodeURIComponent(clientId)}&codigo=${encodeURIComponent(garmentQrText(scan.itemId))}`
+        );
+        const body = (await response.json()) as { ok?: boolean; garment?: ExistingSku };
+        if (response.ok && body.ok && body.garment?.sku) {
+          setSku(body.garment.sku);
+          setExisting(body.garment);
+          setError(REGISTRATION_MESSAGES.already);
+          return;
+        }
+      } catch {
+        setError(GUATEMALA_INVENTORY_MESSAGES.retry);
+        return;
+      }
+      setError(REGISTRATION_MESSAGES.already);
+      return;
+    }
+    setSku(scan.sku);
+    setError("");
+    setExisting(null);
+    await warnIfSkuExists(scan.sku);
+  }
 
   async function save() {
     if (saving) return;
+    if (existing) {
+      setError(REGISTRATION_MESSAGES.already);
+      return;
+    }
     const prepared = prepareUnpublishedItem({ clientId, sku, itemType, size, price, lotId });
     if (!prepared.ok) {
       setExisting(null);
@@ -95,15 +163,38 @@ export function QuickAddForm({
         void save();
       }}
     >
-      <h3>Agregar sin fotos</h3>
+      <h3>Agregar artículo sin foto</h3>
       <p className="gt-expense-note">
-        Queda en el inventario como disponible y sin publicar. No sale en el catálogo hasta que le agregues fotos y lo publiques.
+        Queda en el inventario como disponible y sin publicar. No sale en el catálogo hasta que le agregues fotos y lo publiques. El lote es opcional.
       </p>
-      {lots.length === 0 ? <p>Primero crea un lote de compra. El artículo tiene que quedar en un lote.</p> : null}
       <label>
         SKU
-        <input value={sku} autoCapitalize="off" autoCorrect="off" spellCheck={false} onChange={(event) => setSku(event.target.value)} />
+        <input
+          value={sku}
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(event) => {
+            setSku(event.target.value);
+            setExisting(null);
+            setError("");
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            void warnIfSkuExists(event.currentTarget.value);
+          }}
+          onBlur={(event) => void warnIfSkuExists(event.currentTarget.value)}
+        />
       </label>
+      <div className="gt-inventory-actions">
+        <button type="button" className="btn btn-primary" onClick={() => setCameraOn(true)}>
+          Escanear SKU
+        </button>
+      </div>
+      <p>Puedes escribir el SKU o usar un lector. El artículo se guarda al pulsar Guardar.</p>
+      <RegistrationQrCamera active={cameraOn} onCode={(text) => void fillSku(text)} onClose={() => setCameraOn(false)} />
       <label>
         Tipo de artículo
         <select value={itemType} onChange={(event) => setItemType(event.target.value)}>
@@ -129,7 +220,7 @@ export function QuickAddForm({
       <label>
         Lote
         <select value={lotId} onChange={(event) => setLotId(event.target.value)}>
-          <option value="">Elige un lote</option>
+          <option value="">Sin lote</option>
           {lots.map((lot) => (
             <option key={lot.id} value={lot.id}>
               Lote {lot.lotNumber} · {lot.name}
@@ -148,7 +239,7 @@ export function QuickAddForm({
         </button>
       ) : null}
       <div className="gt-inventory-actions">
-        <button type="submit" className="btn btn-primary" disabled={saving || lots.length === 0}>
+        <button type="submit" className="btn btn-primary" disabled={saving || Boolean(existing)}>
           {saving ? "Guardando…" : "Guardar sin publicar"}
         </button>
       </div>

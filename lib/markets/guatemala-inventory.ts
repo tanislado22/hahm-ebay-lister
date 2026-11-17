@@ -115,7 +115,7 @@ export interface PreparedUnpublishedItem {
   title: string;
   size: string;
   priceGtq: string;
-  lotId: string;
+  lotId: string | null;
 }
 
 export interface PreparedDraftUpdate {
@@ -331,10 +331,9 @@ export function prepareUnpublishedItem(input: {
   const priceGtq = quetzalPriceText(input.price);
   if (!priceGtq) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.priceInvalid };
   const lotId = typeof input.lotId === "string" ? input.lotId.trim() : "";
-  if (!lotId) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.lotRequired };
   return {
     ok: true,
-    item: { clientId, sku, itemType: itemType.id, title: itemType.label, size, priceGtq, lotId },
+    item: { clientId, sku, itemType: itemType.id, title: itemType.label, size, priceGtq, lotId: lotId || null },
   };
 }
 

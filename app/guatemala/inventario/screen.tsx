@@ -1131,7 +1131,7 @@ export function InventoryScreen({
             </h2>
             <div className="gt-inventory-actions">
               <button type="button" className="btn btn-primary" onClick={() => setQuickAddOpen((open) => !open)}>
-                Agregar sin fotos
+                Agregar artículo sin foto
               </button>
               <button type="button" className="btn btn-primary" onClick={() => { setQuantitySale([]); setSkuLessOpen(false); }}>
                 Registrar venta
