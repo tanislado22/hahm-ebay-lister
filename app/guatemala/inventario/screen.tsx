@@ -22,6 +22,7 @@ import { GARMENT_QR_SPEC, garmentQrText } from "@/lib/markets/guatemala-qr";
 import { SaleTender } from "./tender";
 import { useOnlineStatus } from "../pwa/shell";
 import { QuickAddForm, UnpublishedEditor } from "./draft";
+import { PhotoSearchPanel } from "./photo-search";
 import { QuantitySalePanel, SkuLessSaleForm } from "./quantity";
 import "./inventory.css";
 import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
@@ -149,6 +150,7 @@ export function InventoryScreen({
   const [lotChoices, setLotChoices] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
   const [assignLotId, setAssignLotId] = useState("");
   const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [photoSearchOpen, setPhotoSearchOpen] = useState(false);
   const [quantitySale, setQuantitySale] = useState<{ id: string; sku: string; title: string; lotLabel: string; status: string }[] | null>(null);
   const [skuLessOpen, setSkuLessOpen] = useState(false);
   const [listVersion, setListVersion] = useState(0);
@@ -1130,13 +1132,19 @@ export function InventoryScreen({
               {availableGarmentLabel(available)}
             </h2>
             <div className="gt-inventory-actions">
-              <button type="button" className="btn btn-primary" onClick={() => setQuickAddOpen((open) => !open)}>
+              <button type="button" className="btn btn-primary" onClick={() => { setPhotoSearchOpen(false); setQuickAddOpen((open) => !open); }}>
                 Agregar artículo sin foto
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => { setQuickAddOpen(false); setPhotoSearchOpen((open) => !open); }}>
+                Buscar prenda por foto
               </button>
               <button type="button" className="btn btn-primary" onClick={() => { setQuantitySale([]); setSkuLessOpen(false); }}>
                 Registrar venta
               </button>
             </div>
+            {photoSearchOpen ? (
+              <PhotoSearchPanel clientId={clientId} request={storeRequest} onOpen={openItem} />
+            ) : null}
             {quickAddOpen ? (
               <QuickAddForm
                 clientId={clientId}

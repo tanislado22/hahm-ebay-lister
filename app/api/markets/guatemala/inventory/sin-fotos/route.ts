@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
           size: body.size,
           price: body.price,
           lotId: body.lotId,
+          photo: body.photo,
         });
     if (!result.ok) {
       return NextResponse.json(

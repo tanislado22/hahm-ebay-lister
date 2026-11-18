@@ -15,6 +15,16 @@ import {
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import { GUATEMALA_LOT_MESSAGES } from "@/lib/markets/guatemala-lots";
 import { preparePhotoLessRegistration, REGISTRATION_MESSAGES, registrationInsertDecision } from "@/lib/markets/guatemala-registration";
+import {
+  decodeInventoryPhoto,
+  photoSearchLotLabel,
+  photoSearchMessage,
+  rankPhotoFingerprints,
+  FLAT_PHOTO_TEXTURE,
+  PHOTO_SEARCH_MESSAGES,
+  type PhotoSearchClarity,
+} from "@/lib/markets/guatemala-photo-search";
+import { describeImageBytes, fingerprintImageBytes, previewImageBytes } from "@/lib/markets/guatemala-photo-image";
 import { activeGuatemalaLot, ensureGuatemalaLotTables } from "@/lib/markets/guatemala-lots-store";
 import { ensureGuatemalaQuantityTables, listCheckoutReportRows } from "@/lib/markets/guatemala-quantity-store";
 import { listSkuLessReportRows } from "@/lib/markets/guatemala-skuless-store";
@@ -597,12 +607,16 @@ export async function saveUnpublishedGuatemalaItem(input: {
   size?: unknown;
   price?: unknown;
   lotId?: unknown;
+  photo?: unknown;
 }): Promise<
   | { ok: true; item: { id: string; sku: string; title: string; priceGtq: string; published: false; status: "disponible" }; message: string }
   | { ok: false; status: 400 | 403 | 409; error: string; existing?: { id: string; sku: string; title: string } }
 > {
   const prepared = prepareUnpublishedItem({ ...input, clientId: input.clientId });
   if (!prepared.ok) return prepared;
+  const photoRecord = input.photo && typeof input.photo === "object" ? (input.photo as { mediaType?: unknown; data?: unknown }) : {};
+  const decodedPhoto = decodeInventoryPhoto(photoRecord.mediaType, photoRecord.data);
+  if (!decodedPhoto.ok) return { ok: false, status: 400, error: decodedPhoto.error };
   if (!(await clientIsGuatemala(input.clientId))) {
     return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
   }
@@ -671,17 +685,119 @@ export async function saveUnpublishedGuatemalaItem(input: {
         : undefined,
     };
   }
+  const itemId = String(row.id);
+  if (decodedPhoto.photo) {
+    try {
+      await sql`
+        INSERT INTO guatemala_inventory_photos (id, item_id, position, media_type, data)
+        VALUES (${crypto.randomUUID()}, ${itemId}, 0, ${decodedPhoto.photo.mediaType}, ${decodedPhoto.photo.data})
+      `;
+    } catch (error) {
+      await sql`DELETE FROM guatemala_inventory_items WHERE id = ${itemId} AND client_id = ${input.clientId}`;
+      throw error;
+    }
+  }
   return {
     ok: true,
     message: GUATEMALA_INVENTORY_MESSAGES.unpublishedSaved,
     item: {
-      id: String(row.id),
+      id: itemId,
       sku: String(row.sku),
       title: String(row.title ?? ""),
       priceGtq: normalizePriceText(row.price_gtq),
       published: false,
       status: "disponible",
     },
+  };
+}
+
+export interface PhotoSearchMatch {
+  id: string;
+  sku: string;
+  size: string;
+  lotNumber: number | null;
+  lotName: string | null;
+  lotLabel: string;
+  published: boolean;
+  similarity: number;
+  photo: { mediaType: "image/jpeg"; data: string };
+}
+
+export async function searchGuatemalaGarmentsByPhoto(input: {
+  clientId: string;
+  mediaType?: unknown;
+  data?: unknown;
+}): Promise<
+  | { ok: true; clarity: PhotoSearchClarity; message: string; matches: PhotoSearchMatch[] }
+  | { ok: false; status: 400 | 403; error: string }
+> {
+  const decoded = decodeInventoryPhoto(input.mediaType, input.data);
+  if (!decoded.ok || !decoded.photo) return { ok: false, status: 400, error: PHOTO_SEARCH_MESSAGES.unreadable };
+  if (!(await clientIsGuatemala(input.clientId))) {
+    return { ok: false, status: 403, error: GUATEMALA_INVENTORY_MESSAGES.notGuatemala };
+  }
+  const query = await describeImageBytes(decoded.photo.bytes);
+  if (!query) return { ok: false, status: 400, error: PHOTO_SEARCH_MESSAGES.unreadable };
+  if (query.texture < FLAT_PHOTO_TEXTURE) {
+    return { ok: true, clarity: "none", message: PHOTO_SEARCH_MESSAGES.none, matches: [] };
+  }
+  await ensureGuatemalaInventoryTables();
+  await ensureGuatemalaLotTables();
+  const sql = getSql();
+  const rows = await sql`
+    SELECT item.id, item.sku, item.size, item.published,
+      lot.lot_number, lot.name AS lot_name,
+      photo.media_type, photo.data
+    FROM guatemala_inventory_items AS item
+    JOIN LATERAL (
+      SELECT media_type, data
+      FROM guatemala_inventory_photos
+      WHERE item_id = item.id
+      ORDER BY position ASC
+      LIMIT 1
+    ) AS photo ON TRUE
+    LEFT JOIN guatemala_purchase_lots AS lot
+      ON lot.id = item.lot_id AND lot.client_id = item.client_id
+    WHERE item.client_id = ${input.clientId}
+  `;
+  const candidates: { id: string; fingerprint: number[]; row: Record<string, unknown> }[] = [];
+  for (const row of rows) {
+    const record = row as Record<string, unknown>;
+    const bytes = Buffer.from(String(record.data ?? ""), "base64");
+    const fingerprint = await fingerprintImageBytes(bytes);
+    if (!fingerprint) continue;
+    candidates.push({ id: String(record.id), fingerprint, row: record });
+  }
+  if (candidates.length === 0) {
+    return { ok: true, clarity: "none", message: PHOTO_SEARCH_MESSAGES.empty, matches: [] };
+  }
+  const ranked = rankPhotoFingerprints(query.fingerprint, candidates, query.texture);
+  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate.row]));
+  const matches: PhotoSearchMatch[] = [];
+  for (const hit of ranked.ranked) {
+    const row = byId.get(hit.id);
+    if (!row) continue;
+    const preview = await previewImageBytes(Buffer.from(String(row.data ?? ""), "base64"));
+    if (!preview) continue;
+    const lotNumber = row.lot_number == null ? null : Number(row.lot_number);
+    const lotName = row.lot_name == null ? null : String(row.lot_name);
+    matches.push({
+      id: hit.id,
+      sku: String(row.sku ?? ""),
+      size: String(row.size ?? ""),
+      lotNumber: Number.isFinite(lotNumber) ? lotNumber : null,
+      lotName,
+      lotLabel: photoSearchLotLabel(Number.isFinite(lotNumber) ? lotNumber : null, lotName),
+      published: row.published === true || row.published === "t" || row.published === "true",
+      similarity: hit.similarity,
+      photo: preview,
+    });
+  }
+  return {
+    ok: true,
+    clarity: ranked.clarity,
+    message: photoSearchMessage(ranked.clarity, matches.length),
+    matches,
   };
 }
 

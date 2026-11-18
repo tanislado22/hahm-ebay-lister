@@ -257,6 +257,34 @@
   font-size: 1.05rem;
 }
 
+.gt-photo-search-preview img,
+.gt-photo-search-results img {
+  width: min(100%, 220px);
+  height: auto;
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.gt-photo-search-results {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gt-photo-search-results li {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.gt-expense-form fieldset {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 0.6rem;
+}
+
 @media (max-width: 640px) {
   .gt-inventory-actions .btn,
   .gt-filter {

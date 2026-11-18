@@ -49,7 +49,8 @@ export function QuickAddForm({
   const [existing, setExisting] = useState<ExistingSku | null>(null);
   const [saving, setSaving] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
-  const dirty = Boolean(sku || itemType || size || price || lotId || cameraOn);
+  const [photo, setPhoto] = useState<{ mediaType: string; data: string } | null>(null);
+  const dirty = Boolean(sku || itemType || size || price || lotId || cameraOn || photo);
   useUnsavedChanges(dirty && !saving);
 
   async function warnIfSkuExists(value: string) {
@@ -135,6 +136,7 @@ export function QuickAddForm({
         size: prepared.item.size,
         price: prepared.item.priceGtq,
         lotId: prepared.item.lotId,
+        photo: photo ? { mediaType: photo.mediaType, data: photo.data } : undefined,
       });
       const body = (await response.json()) as {
         ok?: boolean;
@@ -165,7 +167,7 @@ export function QuickAddForm({
     >
       <h3>Agregar artículo sin foto</h3>
       <p className="gt-expense-note">
-        Queda en el inventario como disponible y sin publicar. No sale en el catálogo hasta que le agregues fotos y lo publiques. El lote es opcional.
+        Queda en el inventario como disponible y sin publicar. La foto, si la tomas, se guarda en esta misma ficha y no sale en el catálogo. El lote es opcional.
       </p>
       <label>
         SKU
@@ -238,6 +240,48 @@ export function QuickAddForm({
           Buscar artículo existente
         </button>
       ) : null}
+      <fieldset>
+        <legend>Tomar o subir foto (opcional)</legend>
+        <div className="gt-inventory-actions">
+          <label className="btn btn-primary">
+            Tomar foto
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                void chooseOptionalPhoto(file, setPhoto, setError);
+              }}
+            />
+          </label>
+          <label className="btn">
+            Elegir imagen
+            <input
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                void chooseOptionalPhoto(file, setPhoto, setError);
+              }}
+            />
+          </label>
+        </div>
+        {photo ? (
+          <div className="gt-photo-search-preview">
+            <img src={`data:${photo.mediaType};base64,${photo.data}`} alt="Vista previa de la prenda" />
+            <button type="button" className="btn" onClick={() => setPhoto(null)}>
+              Quitar foto
+            </button>
+          </div>
+        ) : (
+          <p>Puedes guardar el artículo sin foto.</p>
+        )}
+      </fieldset>
       <div className="gt-inventory-actions">
         <button type="submit" className="btn btn-primary" disabled={saving || Boolean(existing)}>
           {saving ? "Guardando…" : "Guardar sin publicar"}
@@ -453,6 +497,21 @@ export function UnpublishedEditor({
       </div>
     </form>
   );
+}
+
+async function chooseOptionalPhoto(
+  file: File | undefined,
+  setPhoto: (photo: { mediaType: string; data: string } | null) => void,
+  setError: (message: string) => void
+) {
+  if (!file) return;
+  const next = await shrinkPhoto(file);
+  if (!next?.data) {
+    setError("No se pudo leer esa foto. Prueba con otra.");
+    return;
+  }
+  setPhoto({ mediaType: next.mediaType, data: next.data });
+  setError("");
 }
 
 async function shrinkPhoto(file: File): Promise<InventoryPhoto | null> {
