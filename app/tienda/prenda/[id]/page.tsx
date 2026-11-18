@@ -12,6 +12,7 @@ import {
   guatemalaWhatsappUrl,
   publicArticleUrl,
 } from "@/lib/markets/guatemala-whatsapp";
+import { AddToCartButton, CartButton } from "../../cart";
 import { PhotoGallery } from "../../gallery";
 import { WhatsappLink } from "../../whatsapp-link";
 
@@ -53,6 +54,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           <h1>Variedades San Andrés</h1>
           <p>Precios en quetzales</p>
         </div>
+        <CartButton />
       </header>
       <p>
         <Link className="vsa-back" href={home}>Volver al catálogo</Link>
@@ -71,6 +73,16 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             {item.categoryLabel ? <p>Categoría: {item.categoryLabel}</p> : null}
             <p>SKU {item.sku}</p>
             {item.description ? <p className="vsa-description">{item.description}</p> : null}
+            {item.availability === "disponible" ? (
+              <AddToCartButton item={{
+                id: item.id,
+                sku: item.sku,
+                title: item.title || "Prenda sin título",
+                size: item.size,
+                priceGtq: item.priceGtq,
+                coverPhotoId: item.photoIds[0] ?? null,
+              }} />
+            ) : null}
             <WhatsappLink href={guatemalaWhatsappUrl(guatemalaArticleWhatsappMessage({
               title: item.title,
               sku: item.sku,

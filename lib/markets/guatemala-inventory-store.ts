@@ -12,6 +12,7 @@ import {
   type PublicCatalogDetail,
   type PublicCatalogFacets,
 } from "@/lib/markets/guatemala-catalog";
+import { publicCartQuoteView, type PublicCartQuote } from "@/lib/markets/guatemala-cart";
 import { GUATEMALA_MARKET } from "@/lib/markets/guatemala";
 import { GUATEMALA_LOT_MESSAGES } from "@/lib/markets/guatemala-lots";
 import { preparePhotoLessRegistration, REGISTRATION_MESSAGES, registrationInsertDecision } from "@/lib/markets/guatemala-registration";
@@ -2298,6 +2299,65 @@ export async function readPublicGuatemalaCatalogItem(
   const item = publicCatalogDetail([publicSource(clientId, row, photos)], clientId, String(row.id));
   if (!item) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.notFound };
   return { ok: true, item };
+}
+
+/** Lee el precio y la disponibilidad actuales. No aparta ni vende. */
+export async function quotePublicGuatemalaCart(
+  ids: readonly string[]
+): Promise<{ ok: true; lines: PublicCartQuote[] } | { ok: false; status: 404; error: string }> {
+  const clientId = await readyPublicCatalogClient();
+  if (!clientId) return { ok: false, status: 404, error: GUATEMALA_CATALOG_MESSAGES.unavailable };
+  if (ids.length === 0) return { ok: true, lines: [] };
+  const sql = getSql();
+  const rows = await sql`
+    SELECT item.id, item.sku, item.title, item.size, item.price_gtq::text AS price_gtq,
+      item.status, item.published, photo.id AS photo_id,
+      EXISTS (
+        SELECT 1 FROM guatemala_inventory_sales AS sale
+        WHERE sale.item_id = item.id AND sale.client_id = item.client_id
+          AND sale.voided_at IS NULL AND sale.is_test = FALSE
+      ) AS sold,
+      EXISTS (
+        SELECT 1 FROM guatemala_inventory_sales AS sale
+        WHERE sale.item_id = item.id AND sale.client_id = item.client_id
+          AND sale.voided_at IS NULL AND sale.is_test = TRUE
+      ) AS test_sale
+    FROM guatemala_inventory_items AS item
+    LEFT JOIN LATERAL (
+      SELECT id FROM guatemala_inventory_photos
+      WHERE item_id = item.id AND media_type ~ '^image/(jpeg|png|webp)$'
+      ORDER BY position ASC
+      LIMIT 1
+    ) AS photo ON TRUE
+    WHERE item.client_id = ${clientId}
+      AND item.id = ANY(${[...ids]})
+  `;
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  return {
+    ok: true,
+    lines: ids.map((id) => {
+      const row = byId.get(id);
+      if (!row) return { id, available: false };
+      const record = row as Record<string, unknown>;
+      const sold = record.sold === true || record.sold === "t" || record.sold === "true";
+      const testSale = record.test_sale === true || record.test_sale === "t" || record.test_sale === "true";
+      return publicCartQuoteView({
+        id,
+        clientId,
+        sku: String(record.sku ?? ""),
+        title: String(record.title ?? ""),
+        description: "",
+        brand: "",
+        size: String(record.size ?? ""),
+        condition: "",
+        priceGtq: normalizePriceText(record.price_gtq),
+        status: itemStatus(record.status),
+        published: publishedFlag(record.published),
+        photos: record.photo_id ? [{ id: String(record.photo_id), mediaType: "image/jpeg", data: "" }] : [],
+        sales: testSale ? [{ isTest: true, voidedAt: null }] : sold ? [{ isTest: false, voidedAt: null }] : [],
+      }, clientId);
+    }),
+  };
 }
 
 export async function readPublicCatalogPhoto(

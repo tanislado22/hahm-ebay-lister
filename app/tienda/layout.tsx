@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { StoreCartProvider } from "./cart";
 import "./tienda.css";
 
 export const metadata: Metadata = {
@@ -7,5 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default function StoreLayout({ children }: { children: React.ReactNode }) {
-  return <div className="vsa-page">{children}</div>;
+  return (
+    <div className="vsa-page">
+      <StoreCartProvider>{children}</StoreCartProvider>
+    </div>
+  );
 }

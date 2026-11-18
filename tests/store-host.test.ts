@@ -30,6 +30,7 @@ describe("dominio de Variedades San Andrés", () => {
     expect(isPublicStoreApi("/api/markets/guatemala/catalog")).toBe(true);
     expect(isPublicStoreApi("/api/markets/guatemala/catalog/foto/abc")).toBe(true);
     expect(isPublicStoreApi("/api/markets/guatemala/catalog/prenda")).toBe(true);
+    expect(isPublicStoreApi("/api/markets/guatemala/catalog/carrito")).toBe(true);
     expect(isPublicStoreApi("/api/markets/guatemala/price-guides")).toBe(false);
   });
 });
