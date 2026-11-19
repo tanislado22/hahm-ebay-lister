@@ -183,9 +183,11 @@ export function QuickAddForm({
         clientId,
         itemType: identified.itemType,
         brand: identified.brand,
+        size: identified.size,
         condition: identified.condition,
         lotId,
         individualCost: showCosts ? individualCost : undefined,
+        photos: [garmentPhoto, labelPhoto].filter((photo): photo is { mediaType: string; data: string } => Boolean(photo)),
       });
       const body = (await response.json()) as { ok?: boolean; advice?: QuotedSalePrice };
       if (!response.ok || !body.ok || !body.advice) {
@@ -709,6 +711,7 @@ function SaleAdvicePanel({
       {showCosts && advice.costSource === "lot" && advice.costGtq ? (
         <p>Los gastos del lote ya están en ese costo y no se suman otra vez.</p>
       ) : null}
+      {showCosts && advice.marketEstimateGtq != null ? <p>Precio estimado: {quetzalLabel(advice.marketEstimateGtq)}</p> : null}
       {showCosts && advice.salaryGtq && advice.estimatedMonthlySales ? (
         <p>
           Sueldo {quetzalLabel(advice.salaryGtq)} ÷ {advice.estimatedMonthlySales} prendas

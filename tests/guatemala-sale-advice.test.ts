@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildSaleEstimatePrompt, saleEstimateReferenceLines } from "@/lib/markets/guatemala-sale-estimate";
 import type { StorePriceGuide } from "@/lib/markets/guatemala-price-match";
 import {
   adviseSalePrice,
@@ -9,7 +10,9 @@ import {
   minimumSaleQuetzales,
   monthlyExpenseShare,
   preparePricingSettings,
+  applyMarketEstimate,
   presentSaleAdvice,
+  saleEstimateQuetzales,
   saleAdviceGaps,
   priceIsBelowMinimum,
   recommendListedPrice,
@@ -231,6 +234,67 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
     expect(missing.status).toBe("need-settings");
     expect(missing.notice).toBe("Configura el sueldo mensual del encargado y las prendas estimadas al mes en Configurar precios.");
     expect(presentSaleAdvice(missing, "encargado").notice).toBe("El dueño todavía no configuró los precios.");
+  });
+
+  it("muestra la estimación de Q55 cuando supera el mínimo de Q46 y el mínimo cuando no", () => {
+    const configured = preparePricingSettings({
+      monthlySalaryGtq: "2000",
+      otherMonthlyExpensesGtq: "2000",
+      expectedMonthlySales: "400",
+      minimumProfitGtq: "8",
+    });
+    expect(configured.ok).toBe(true);
+    if (!configured.ok) return;
+    const advice = adviseSalePrice({
+      itemType: "playera",
+      brand: "Gildan",
+      condition: "GOOD",
+      lotAverage: "32.79",
+      settings: configured.settings,
+      guides: [],
+    });
+    expect(advice.minimumGtq).toBe(46);
+    expect(saleEstimateQuetzales('{"priceGtq":55}')).toBe(55);
+    const higher = applyMarketEstimate(advice, 55);
+    expect(higher.recommendedGtq).toBe(55);
+    expect(higher.minimumGtq).toBe(46);
+    expect(higher.notice).toBe("");
+    const staff = presentSaleAdvice(higher, "encargado");
+    expect(staff).toEqual({ status: "ready", minimumGtq: 46, recommendedGtq: 55, notice: "" });
+    expect(JSON.stringify(staff)).not.toContain("32.79");
+    expect(JSON.stringify(staff)).not.toContain("2000");
+    expect(JSON.stringify(staff)).not.toContain("5.00");
+    expect(JSON.stringify(staff)).not.toContain("cost");
+    const lower = applyMarketEstimate(advice, 40);
+    expect(lower.recommendedGtq).toBe(46);
+    expect(lower.minimumGtq).toBe(46);
+    expect(lower.notice).toBe("El precio estimado está por debajo del mínimo de venta");
+    expect(presentSaleAdvice(lower, "encargado").notice).toBe("El precio estimado está por debajo del mínimo de venta");
+    expect(JSON.stringify(presentSaleAdvice(lower, "encargado"))).not.toContain("40");
+    expect(presentSaleAdvice(lower, "propietario").marketEstimateGtq).toBe(40);
+    expect(applyMarketEstimate(advice, 46).notice).toBe("");
+    expect(applyMarketEstimate(advice, null).recommendedGtq).toBe(46);
+    const prompt = buildSaleEstimatePrompt({
+      itemType: "playera",
+      brand: "Gildan",
+      size: "XL",
+      condition: "GOOD",
+      references: saleEstimateReferenceLines({
+        guides: [],
+        report: {
+          listed: [{ source: "megapaca", sourceLabel: "Megapaca", title: "Playera", priceGtq: 50, url: "https://megapaca.store/p", brand: "Gildan", itemType: "camiseta", condition: "usado", size: "XL" }],
+          sold: [],
+          advertised: { count: 1, low: 50, high: 50, median: 50, label: "" },
+          storeSales: { count: 0, low: null, high: null, median: null, label: "" },
+        },
+      }),
+    });
+    expect(prompt).toContain("Playera");
+    expect(prompt).toContain("Gildan");
+    expect(prompt).toContain("XL");
+    expect(prompt).toContain("Usada · Buena");
+    expect(prompt).toContain("Q50");
+    expect(prompt).not.toContain("32.79");
   });
 
   it("deja escribir la marca y la talla cuando la etiqueta no se lee", () => {

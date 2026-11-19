@@ -19,6 +19,7 @@ export const SALE_ADVICE_MESSAGES = {
   noReference: "Sin referencia de precio",
   review: "Revisar con el dueño",
   labelUnread: "La etiqueta no se leyó. Escribe la marca y la talla a mano.",
+  estimateBelowMinimum: "El precio estimado está por debajo del mínimo de venta",
   belowMinimum: "Este precio está por debajo del mínimo.",
   salaryInvalid: "Escribe el sueldo mensual en quetzales, o cero si no aplica.",
   expensesInvalid: "Escribe los demás gastos mensuales en quetzales, o cero si no hay.",
@@ -44,6 +45,7 @@ export interface SaleAdvice {
   estimatedMonthlySales?: number | null;
   minimumGtq: number | null;
   recommendedGtq: number | null;
+  marketEstimateGtq?: number | null;
   profitGtq: string | null;
   notice: string;
 }
@@ -189,6 +191,50 @@ export function recommendListedPrice(input: { low: number; high: number; minimum
   return price;
 }
 
+export function saleEstimateQuetzales(raw: string): number | null {
+  try {
+    const data = JSON.parse(raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { priceGtq?: unknown };
+    return wholeSaleQuetzales(data?.priceGtq);
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      const data = JSON.parse(match[0]) as { priceGtq?: unknown };
+      return wholeSaleQuetzales(data?.priceGtq);
+    } catch {
+      return null;
+    }
+  }
+}
+
+export function wholeSaleQuetzales(value: unknown): number | null {
+  const amount = typeof value === "number" ? value : Number(typeof value === "string" ? value.trim() : Number.NaN);
+  if (!Number.isFinite(amount)) return null;
+  const quetzales = Math.round(amount);
+  if (quetzales < 1 || quetzales > 5000) return null;
+  return quetzales;
+}
+
+// The minimum stays on the cost formula. A higher market estimate becomes the
+// suggested price. A lower one stays hidden behind the minimum.
+export function applyMarketEstimate(advice: SaleAdvice, estimateGtq: number | null): SaleAdvice {
+  if (advice.status !== "ready" || advice.minimumGtq == null) return advice;
+  const estimate = wholeSaleQuetzales(estimateGtq);
+  if (estimate == null) return advice;
+  const recommended = estimate > advice.minimumGtq ? estimate : advice.minimumGtq;
+  const profit =
+    advice.costGtq && advice.expenseShareGtq
+      ? estimatedProfitGtq(recommended, advice.costGtq, advice.expenseShareGtq)
+      : advice.profitGtq;
+  return {
+    ...advice,
+    recommendedGtq: recommended,
+    marketEstimateGtq: estimate,
+    profitGtq: profit,
+    notice: estimate < advice.minimumGtq ? SALE_ADVICE_MESSAGES.estimateBelowMinimum : "",
+  };
+}
+
 export function estimatedProfitGtq(priceGtq: number, costGtq: string, expenseShareGtq: string): string | null {
   const price = Math.round(priceGtq * 100);
   const cost = cents(costGtq);
@@ -243,6 +289,7 @@ export interface QuotedSalePrice {
   status: SaleAdvice["status"];
   minimumGtq: number | null;
   recommendedGtq: number | null;
+  marketEstimateGtq?: number | null;
   notice: string;
   costGtq?: string | null;
   costSource?: GarmentCostSource;
@@ -266,6 +313,7 @@ export function presentSaleAdvice(advice: SaleAdvice, role: "propietario" | "enc
     costGtq: advice.costGtq,
     costSource: advice.costSource,
     expenseShareGtq: advice.expenseShareGtq,
+    marketEstimateGtq: advice.marketEstimateGtq,
     salaryGtq: advice.salaryGtq,
     estimatedMonthlySales: advice.estimatedMonthlySales,
     profitGtq: advice.profitGtq,
@@ -278,6 +326,7 @@ function staffSaleNotice(advice: SaleAdvice): string {
   if (advice.status === "waiting") return advice.notice || SALE_ADVICE_MESSAGES.needDetails;
   if (advice.status === "no-reference") return SALE_ADVICE_MESSAGES.noReference;
   if (advice.status === "review") return SALE_ADVICE_MESSAGES.review;
+  if (advice.notice === SALE_ADVICE_MESSAGES.estimateBelowMinimum) return advice.notice;
   return "";
 }
 
