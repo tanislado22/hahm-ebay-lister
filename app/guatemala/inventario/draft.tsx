@@ -12,14 +12,12 @@ import {
   type InventoryPhoto,
 } from "@/lib/markets/guatemala-inventory";
 import { REGISTRATION_MESSAGES, skuFromRegistrationScan } from "@/lib/markets/guatemala-registration";
-import type { StorePriceGuide } from "@/lib/markets/guatemala-price-match";
 import {
   SALE_ADVICE_MESSAGES,
-  adviseSalePrice,
   priceIsBelowMinimum,
   quetzalLabel,
   supportPhotoSuggestions,
-  type PricingSettingsInput,
+  type QuotedSalePrice,
 } from "@/lib/markets/guatemala-sale-advice";
 import { garmentQrText } from "@/lib/markets/guatemala-qr";
 import { RegistrationQrCamera } from "../escanear/qr-camera";
@@ -42,12 +40,12 @@ export function QuickAddForm({
   request,
   onCreated,
   onSearchExisting,
-  showStaffMargin = false,
+  showCosts = false,
 }: {
   clientId: string;
-  lots: { id: string; lotNumber: number; name: string; averageGtq?: string | null }[];
+  lots: { id: string; lotNumber: number; name: string }[];
   request: StoreRequest;
-  showStaffMargin?: boolean;
+  showCosts?: boolean;
   onCreated: (sku: string) => void;
   onSearchExisting: (sku: string) => void;
 }) {
@@ -67,50 +65,55 @@ export function QuickAddForm({
   const [cameraOn, setCameraOn] = useState(false);
   const [garmentPhoto, setGarmentPhoto] = useState<{ mediaType: string; data: string } | null>(null);
   const [labelPhoto, setLabelPhoto] = useState<{ mediaType: string; data: string } | null>(null);
-  const [guides, setGuides] = useState<StorePriceGuide[]>([]);
-  const [settings, setSettings] = useState<PricingSettingsInput | null>(null);
+  const [advice, setAdvice] = useState<QuotedSalePrice | null>(null);
   const readKey = useRef("");
   const dirty = Boolean(sku || itemType || brand || size || condition || individualCost || price || lotId || cameraOn || garmentPhoto || labelPhoto);
   useUnsavedChanges(dirty && !saving);
-  const lotAverage = lots.find((lot) => lot.id === lotId)?.averageGtq ?? null;
-  const advice = adviseSalePrice({
-    itemType,
-    brand,
-    condition,
-    individualCost,
-    lotAverage,
-    settings,
-    guides,
-  });
-  const belowMinimum = priceIsBelowMinimum(price, advice.minimumGtq);
+  const belowMinimum = priceIsBelowMinimum(price, advice?.minimumGtq ?? null);
 
   useEffect(() => {
     if (!clientId) return;
     let cancel = false;
-    void (async () => {
-      try {
-        const [guideResponse, settingsResponse] = await Promise.all([
-          request(`/api/markets/guatemala/price-guides?clientId=${encodeURIComponent(clientId)}`),
-          request(`/api/markets/guatemala/pricing-settings?clientId=${encodeURIComponent(clientId)}`),
-        ]);
-        const guideBody = (await guideResponse.json()) as { ok?: boolean; guides?: StorePriceGuide[] };
-        const settingsBody = (await settingsResponse.json()) as { ok?: boolean; settings?: PricingSettingsInput | null };
-        if (cancel) return;
-        setGuides(guideResponse.ok && guideBody.ok ? guideBody.guides ?? [] : []);
-        setSettings(settingsResponse.ok && settingsBody.ok ? settingsBody.settings ?? null : null);
-      } catch {
-        if (!cancel) {
-          setGuides([]);
-          setSettings(null);
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await request("/api/markets/guatemala/sale-advice", {
+            clientId,
+            itemType,
+            brand,
+            condition,
+            lotId,
+            individualCost: showCosts ? individualCost : undefined,
+          });
+          const body = (await response.json()) as { ok?: boolean; advice?: QuotedSalePrice };
+          if (cancel) return;
+          if (!response.ok || !body.ok || !body.advice) {
+            setAdvice(null);
+            return;
+          }
+          const quote = body.advice;
+          setAdvice(
+            showCosts
+              ? quote
+              : {
+                  status: quote.status,
+                  minimumGtq: quote.minimumGtq,
+                  recommendedGtq: quote.recommendedGtq,
+                  notice: quote.notice,
+                }
+          );
+        } catch {
+          if (!cancel) setAdvice(null);
         }
-      }
-    })();
+      })();
+    }, 200);
     return () => {
       cancel = true;
+      clearTimeout(timer);
     };
-    // storeRequest is recreated on each render. The selected store is the client id.
+    // storeRequest is recreated on each render. The quote follows the garment fields.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId]);
+  }, [clientId, itemType, brand, condition, lotId, individualCost, showCosts]);
 
   useEffect(() => {
     if (!garmentPhoto || !labelPhoto) return;
@@ -239,7 +242,7 @@ export function QuickAddForm({
         condition: prepared.item.condition,
         price: prepared.item.priceGtq,
         lotId: prepared.item.lotId,
-        cost: advice.costSource === "individual" ? advice.costGtq : undefined,
+        cost: showCosts ? individualCost : undefined,
         supportPhotos: [garmentPhoto && { role: "prenda", ...garmentPhoto }, labelPhoto && { role: "etiqueta", ...labelPhoto }].filter(
           (entry) => entry
         ),
@@ -348,20 +351,22 @@ export function QuickAddForm({
           ))}
         </select>
       </label>
-      <label>
-        Costo individual
-        <div className="gt-sale-price">
-          <span aria-hidden="true">Q</span>
-          <input
-            id="costo-individual"
-            inputMode="decimal"
-            autoComplete="off"
-            placeholder="Si esta prenda tiene el suyo"
-            value={individualCost}
-            onChange={(event) => setIndividualCost(event.target.value)}
-          />
-        </div>
-      </label>
+      {showCosts ? (
+        <label>
+          Costo individual
+          <div className="gt-sale-price">
+            <span aria-hidden="true">Q</span>
+            <input
+              id="costo-individual"
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder="Si esta prenda tiene el suyo"
+              value={individualCost}
+              onChange={(event) => setIndividualCost(event.target.value)}
+            />
+          </div>
+        </label>
+      ) : null}
       <label>
         Lote
         <select value={lotId} onChange={(event) => setLotId(event.target.value)}>
@@ -385,7 +390,12 @@ export function QuickAddForm({
           onChange={(event) => setPrice(event.target.value)}
         />
       </div>
-      <SaleAdvicePanel advice={advice} belowMinimum={belowMinimum} showStaffMargin={showStaffMargin} onUse={setPrice} />
+      {belowMinimum ? (
+        <p className="note note-error" role="alert">
+          {SALE_ADVICE_MESSAGES.belowMinimum}
+        </p>
+      ) : null}
+      <SaleAdvicePanel advice={advice} showCosts={showCosts} onUse={setPrice} />
       {error ? (
         <p className="note note-error" role="alert">
           {error}
@@ -671,47 +681,41 @@ function SupportPhotoField({
 
 function SaleAdvicePanel({
   advice,
-  belowMinimum,
-  showStaffMargin,
+  showCosts,
   onUse,
 }: {
-  advice: ReturnType<typeof adviseSalePrice>;
-  belowMinimum: boolean;
-  showStaffMargin: boolean;
+  advice: QuotedSalePrice | null;
+  showCosts: boolean;
   onUse: (price: string) => void;
 }) {
-  if (advice.status === "waiting") return null;
+  if (!advice || advice.status === "waiting") return null;
   const cost =
-    advice.costGtq == null
-      ? ""
-      : advice.costSource === "individual"
+    showCosts && advice.costGtq
+      ? advice.costSource === "individual"
         ? `Costo usado: ${quetzalLabel(advice.costGtq)} de esta prenda.`
-        : `Costo usado: ${quetzalLabel(advice.costGtq)}, promedio del lote.`;
+        : `Costo usado: ${quetzalLabel(advice.costGtq)}, promedio del lote.`
+      : "";
   return (
     <section className="gt-price-advice" aria-label="Precio sugerido">
       {cost ? <p>{cost}</p> : null}
+      {showCosts && advice.costSource === "lot" && advice.costGtq ? (
+        <p>Los gastos del lote ya están en ese costo y no se suman otra vez.</p>
+      ) : null}
+      {showCosts && advice.expenseShareGtq ? <p>Gastos de la tienda por prenda: {quetzalLabel(advice.expenseShareGtq)}</p> : null}
       {advice.status === "ready" && advice.recommendedGtq != null ? (
-        <p>Precio recomendado: {quetzalLabel(advice.recommendedGtq)}</p>
+        <p>Precio sugerido {quetzalLabel(advice.recommendedGtq)}</p>
       ) : null}
       {advice.notice ? <p>{advice.notice}</p> : null}
-      {showStaffMargin && advice.minimumGtq != null ? (
-        <p>No poner el precio por debajo de: {quetzalLabel(advice.minimumGtq)}</p>
-      ) : null}
-      {showStaffMargin && advice.status === "ready" && advice.recommendedGtq != null && advice.profitGtq ? (
+      {advice.minimumGtq != null ? <p>No vender por debajo de {quetzalLabel(advice.minimumGtq)}</p> : null}
+      {showCosts && advice.status === "ready" && advice.recommendedGtq != null && advice.profitGtq ? (
         <p>
           Ganancia estimada a {quetzalLabel(advice.recommendedGtq)}: {quetzalLabel(advice.profitGtq)}
         </p>
       ) : null}
       {advice.status === "ready" && advice.recommendedGtq != null ? (
         <button type="button" className="btn btn-primary" onClick={() => onUse(advice.recommendedGtq!.toFixed(2))}>
-          Usar {quetzalLabel(advice.recommendedGtq)}
+          Usar precio sugerido
         </button>
-      ) : null}
-      {belowMinimum ? (
-        <p className="note note-error" role="alert">
-          {SALE_ADVICE_MESSAGES.belowMinimum}
-          {showStaffMargin && advice.minimumGtq != null ? ` No lo pongas por debajo de ${quetzalLabel(advice.minimumGtq)}.` : ""}
-        </p>
       ) : null}
     </section>
   );

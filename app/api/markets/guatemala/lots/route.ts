@@ -33,11 +33,19 @@ export async function GET(request: NextRequest) {
     }
     const result = await listGuatemalaPurchaseLots(access.clientId);
     if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+    const namesOnly = request.nextUrl.searchParams.get("uso") === "alta";
     return NextResponse.json({
       ok: true,
-      lots: result.lots,
-      note: GUATEMALA_LOT_MESSAGES.notProfit,
-      permissions: access.lotPermissions,
+      lots: namesOnly
+        ? result.lots.map((lot) => ({
+            id: lot.id,
+            lotNumber: lot.lotNumber,
+            name: lot.name,
+            status: lot.status,
+          }))
+        : result.lots,
+      note: namesOnly ? undefined : GUATEMALA_LOT_MESSAGES.notProfit,
+      permissions: namesOnly ? undefined : access.lotPermissions,
     });
   } catch (error) {
     console.error("[guatemala/lots] list failed", error instanceof Error ? error.name : "Error");

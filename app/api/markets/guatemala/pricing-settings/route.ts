@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   const clientId = request.nextUrl.searchParams.get("clientId") ?? "";
-  const access = await authorizeGuatemalaRequest(request, clientId, "read");
+  const access = await authorizeGuatemalaRequest(request, clientId, "manage");
   if (!access.ok) return access.response;
   try {
     const settings = await readPricingSettings(access.clientId);

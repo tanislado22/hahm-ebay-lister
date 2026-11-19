@@ -150,7 +150,7 @@ export function InventoryScreen({
   const [publicationError, setPublicationError] = useState("");
   const [publicationNotice, setPublicationNotice] = useState("");
   const [savingPublication, setSavingPublication] = useState(false);
-  const [lotChoices, setLotChoices] = useState<{ id: string; lotNumber: number; name: string; averageGtq?: string | null }[]>([]);
+  const [lotChoices, setLotChoices] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
   const [assignLotId, setAssignLotId] = useState("");
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [photoSearchOpen, setPhotoSearchOpen] = useState(false);
@@ -289,9 +289,9 @@ export function InventoryScreen({
 
   useEffect(() => {
     if (!clientId) return;
-    void storeRequest(`/api/markets/guatemala/lots?clientId=${encodeURIComponent(clientId)}`)
+    void storeRequest(`/api/markets/guatemala/lots?clientId=${encodeURIComponent(clientId)}&uso=alta`)
       .then((response) => response.json())
-      .then((body: { ok?: boolean; lots?: { id: string; lotNumber: number; name: string; status: string; averageGtq?: string | null }[] }) => {
+      .then((body: { ok?: boolean; lots?: { id: string; lotNumber: number; name: string; status: string }[] }) => {
         if (!body.ok) return;
         setLotChoices((body.lots ?? []).filter((lot) => lot.status === "activo"));
       })
@@ -1190,7 +1190,7 @@ export function InventoryScreen({
               <QuickAddForm
                 clientId={clientId}
                 lots={lotChoices}
-                showStaffMargin={staffMode}
+                showCosts={!staffMode}
                 request={storeRequest}
                 onCreated={(sku) => {
                   setQuickAddOpen(false);

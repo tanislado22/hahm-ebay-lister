@@ -11,6 +11,8 @@ export const SALE_ADVICE_MESSAGES = {
   needCost: "Escribe el costo de la prenda para calcular el precio.",
   needSettings: "El dueño todavía no configuró el sueldo, los gastos mensuales, las ventas estimadas y la ganancia mínima.",
   needDetails: "Elige el tipo y confirma el estado para calcular el precio.",
+  staffNeedCost: "Todavía no se puede sugerir el precio.",
+  staffNeedSettings: "El dueño todavía no configuró los precios.",
   noReference: "Sin referencia de precio",
   review: "Revisar con el dueño",
   labelUnread: "La etiqueta no se leyó. Escribe la marca y la talla a mano.",
@@ -85,12 +87,18 @@ export function preparePricingSettings(input: {
   };
 }
 
+// The lot average already contains the lot's own expenses. This share is only the
+// store overhead, so those expenses are not added a second time.
 export function monthlyExpenseShare(settings: PricingSettingsInput): string | null {
   const salary = cents(settings.monthlySalaryGtq);
   const other = cents(settings.otherMonthlyExpensesGtq);
   if (salary == null || other == null || settings.expectedMonthlySales <= 0) return null;
   const share = Math.round((salary + other) / settings.expectedMonthlySales);
   return formatCents(share);
+}
+
+export function garmentCostInputForActor(role: "propietario" | "encargado", cost: unknown): unknown {
+  return role === "propietario" ? cost : undefined;
 }
 
 export function chooseGarmentCost(input: { individual?: unknown; lotAverage?: unknown }): {
@@ -207,6 +215,44 @@ export function adviseSalePrice(input: {
     profitGtq: estimatedProfitGtq(recommended, chosen.costGtq, share),
     notice: "",
   };
+}
+
+export interface QuotedSalePrice {
+  status: SaleAdvice["status"];
+  minimumGtq: number | null;
+  recommendedGtq: number | null;
+  notice: string;
+  costGtq?: string | null;
+  costSource?: GarmentCostSource;
+  expenseShareGtq?: string | null;
+  profitGtq?: string | null;
+}
+
+export function presentSaleAdvice(advice: SaleAdvice, role: "propietario" | "encargado"): QuotedSalePrice {
+  const notice = role === "encargado" ? staffSaleNotice(advice) : advice.notice;
+  const prices: QuotedSalePrice = {
+    status: advice.status,
+    minimumGtq: advice.minimumGtq,
+    recommendedGtq: advice.recommendedGtq,
+    notice,
+  };
+  if (role !== "propietario") return prices;
+  return {
+    ...prices,
+    costGtq: advice.costGtq,
+    costSource: advice.costSource,
+    expenseShareGtq: advice.expenseShareGtq,
+    profitGtq: advice.profitGtq,
+  };
+}
+
+function staffSaleNotice(advice: SaleAdvice): string {
+  if (advice.status === "need-settings") return SALE_ADVICE_MESSAGES.staffNeedSettings;
+  if (advice.status === "need-cost") return SALE_ADVICE_MESSAGES.staffNeedCost;
+  if (advice.status === "waiting") return SALE_ADVICE_MESSAGES.needDetails;
+  if (advice.status === "no-reference") return SALE_ADVICE_MESSAGES.noReference;
+  if (advice.status === "review") return SALE_ADVICE_MESSAGES.review;
+  return "";
 }
 
 export function priceIsBelowMinimum(price: unknown, minimumGtq: number | null): boolean {

@@ -4,10 +4,12 @@ import {
   adviseSalePrice,
   chooseGarmentCost,
   estimatedProfitGtq,
+  garmentCostInputForActor,
   listedPriceRange,
   minimumSaleQuetzales,
   monthlyExpenseShare,
   preparePricingSettings,
+  presentSaleAdvice,
   priceIsBelowMinimum,
   recommendListedPrice,
   supportPhotoSuggestions,
@@ -124,6 +126,41 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
       { itemType: "pantalon", brand: "Zara", condition: "GOOD" }
     );
     expect(range).toEqual({ low: 65, high: 75 });
+  });
+
+  it("redondea el ejemplo del lote 1 a Q20 y no vuelve a sumar los gastos del lote", () => {
+    const configured = preparePricingSettings({
+      monthlySalaryGtq: "0",
+      otherMonthlyExpensesGtq: "2000",
+      expectedMonthlySales: "400",
+      minimumProfitGtq: "8",
+    });
+    expect(configured.ok).toBe(true);
+    if (!configured.ok) return;
+    expect(monthlyExpenseShare(configured.settings)).toBe("5.00");
+    expect(minimumSaleQuetzales("6.14", "5.00", "8.00")).toBe(20);
+    const guides = [
+      guide({ scope: "general", garment: "pantalon", condition: "usado", priceGtq: 30, lowGtq: 30, highGtq: 30 }),
+    ];
+    const advice = adviseSalePrice({
+      itemType: "pantalon",
+      condition: "GOOD",
+      lotAverage: "6.14",
+      settings: configured.settings,
+      guides,
+    });
+    expect(advice.minimumGtq).toBe(20);
+    expect(advice.recommendedGtq).toBe(30);
+    const staff = presentSaleAdvice(advice, "encargado");
+    expect(staff).toEqual({ status: "ready", minimumGtq: 20, recommendedGtq: 30, notice: "" });
+    expect(JSON.stringify(staff)).not.toContain("6.14");
+    expect(JSON.stringify(staff)).not.toContain("cost");
+    const owner = presentSaleAdvice(advice, "propietario");
+    expect(owner.costGtq).toBe("6.14");
+    expect(owner.costSource).toBe("lot");
+    expect(garmentCostInputForActor("encargado", "6.14")).toBeUndefined();
+    expect(garmentCostInputForActor("propietario", "6.14")).toBe("6.14");
+    expect(preparePricingSettings({ ...configured.settings, expectedMonthlySales: "0" }).ok).toBe(false);
   });
 
   it("deja escribir la marca y la talla cuando la etiqueta no se lee", () => {

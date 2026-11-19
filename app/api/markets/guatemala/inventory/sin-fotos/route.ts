@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeGuatemalaRequest } from "@/lib/markets/guatemala-guard";
 import { GUATEMALA_INVENTORY_MESSAGES } from "@/lib/markets/guatemala-inventory";
 import { savePhotoLessRegistration, saveUnpublishedGuatemalaItem } from "@/lib/markets/guatemala-inventory-store";
+import { garmentCostInputForActor } from "@/lib/markets/guatemala-sale-advice";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
           condition: body.condition,
           price: body.price,
           lotId: body.lotId,
-          cost: body.cost,
+          cost: garmentCostInputForActor(access.actor.role === "propietario" ? "propietario" : "encargado", body.cost),
           photo: body.photo,
           supportPhotos: body.supportPhotos,
         });
