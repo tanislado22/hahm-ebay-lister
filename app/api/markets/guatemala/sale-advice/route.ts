@@ -56,10 +56,18 @@ export async function POST(request: NextRequest) {
             size,
             condition,
             photos: readAdvicePhotos(body.photos),
-            guides: guides ?? [],
           })
         : null;
-    return NextResponse.json({ ok: true, advice: presentSaleAdvice(applyMarketEstimate(advice, estimate), role) });
+    const priced = applyMarketEstimate(advice, estimate?.quote ?? null);
+    return NextResponse.json({
+      ok: true,
+      advice: presentSaleAdvice(
+        estimate
+          ? { ...priced, referenceNote: estimate.references.note, referenceLines: estimate.references.lines }
+          : priced,
+        role
+      ),
+    });
   } catch (error) {
     console.error("[guatemala/sale-advice] quote failed", error instanceof Error ? error.name : "Error");
     return NextResponse.json({ ok: false, error: "No se pudo calcular el precio." }, { status: 500 });

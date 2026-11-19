@@ -723,6 +723,14 @@ function SaleAdvicePanel({
       ) : null}
       {advice.notice ? <p>{advice.notice}</p> : null}
       {advice.minimumGtq != null ? <p>Véndelo como mínimo en {quetzalLabel(advice.minimumGtq)}</p> : null}
+      {showCosts && advice.referenceNote ? <p>{advice.referenceNote}</p> : null}
+      {showCosts && advice.referenceLines && advice.referenceLines.length > 0 ? (
+        <ul>
+          {advice.referenceLines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      ) : null}
       {showCosts && advice.status === "ready" && advice.recommendedGtq != null && advice.profitGtq ? (
         <p>
           Ganancia estimada a {quetzalLabel(advice.recommendedGtq)}: {quetzalLabel(advice.profitGtq)}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSaleEstimatePrompt, saleEstimateReferenceLines } from "@/lib/markets/guatemala-sale-estimate";
+import { buildSaleEstimatePrompt, selectUsedGuatemalaReferences } from "@/lib/markets/guatemala-sale-estimate";
 import type { StorePriceGuide } from "@/lib/markets/guatemala-price-match";
 import {
   adviseSalePrice,
@@ -290,22 +290,139 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
       brand: "Gildan",
       size: "XL",
       condition: "GOOD",
-      references: saleEstimateReferenceLines({
-        guides: [],
-        report: {
-          listed: [{ source: "megapaca", sourceLabel: "Megapaca", title: "Playera", priceGtq: 50, url: "https://megapaca.store/p", brand: "Gildan", itemType: "camiseta", condition: "usado", size: "XL" }],
-          sold: [],
-          advertised: { count: 1, low: 50, high: 50, median: 50, label: "" },
-          storeSales: { count: 0, low: null, high: null, median: null, label: "" },
-        },
-      }),
+      references: selectUsedGuatemalaReferences({
+        itemType: "playera",
+        brand: "Gildan",
+        advertised: [
+          {
+            sourceLabel: "Megapaca",
+            title: "Playera",
+            priceGtq: 50,
+            brand: "Gildan",
+            itemType: "camiseta",
+            condition: "usado",
+            size: "XL",
+          },
+        ],
+      }).lines,
     });
     expect(prompt).toContain("Playera");
     expect(prompt).toContain("Gildan");
     expect(prompt).toContain("XL");
     expect(prompt).toContain("Usada · Buena");
     expect(prompt).toContain("Q50");
+    expect(prompt).toContain("Precio anunciado");
+    expect(prompt).toContain("ropa usada");
     expect(prompt).not.toContain("32.79");
+  });
+
+  it("usa jeans usados pagados y, si faltan, jeans comparables sin ropa nueva", () => {
+    const few = selectUsedGuatemalaReferences({
+      itemType: "pantalon",
+      brand: "Citizens of Humanity",
+      sales: [
+        { title: "Pantalón Citizens of Humanity", brand: "Citizens of Humanity", condition: "GOOD", priceGtq: 180, size: "28" },
+        { title: "Jeans Levi's", brand: "Levi's", condition: "GOOD", priceGtq: 90 },
+        { title: "Jeans Citizens of Humanity", brand: "Citizens of Humanity", condition: "nuevo", priceGtq: 901 },
+        { title: "Pantalón de vestir", brand: "Zara", condition: "GOOD", priceGtq: 77 },
+      ],
+      advertised: [
+        { title: "Jeans Citizens of Humanity", brand: "Citizens of Humanity", itemType: "jeans", condition: "usado", priceGtq: 220, sourceLabel: "Megapaca" },
+        { title: "Jeans Gap", brand: "Gap", itemType: "jeans", condition: "usado", priceGtq: 75, sourceLabel: "Econopaca" },
+        { title: "Jeans Citizens of Humanity precio original", brand: "Citizens of Humanity", itemType: "jeans", condition: "usado", priceGtq: 1500, sourceLabel: "Megapaca" },
+      ],
+    });
+    expect(few.widened).toBe(true);
+    expect(few.basis).toBe("paid");
+    expect(few.note).toContain("jeans usados comparables");
+    expect(few.note).toContain("precios anunciados");
+    expect(few.lines[0]).toContain("Pagado en Variedades San Andrés");
+    expect(few.lines[0]).toContain("Q180");
+    expect(few.lines.some((line) => line.includes("Levi"))).toBe(true);
+    expect(few.lines.some((line) => line.includes("Precio anunciado en Megapaca") && line.includes("Q220"))).toBe(true);
+    const text = few.lines.join("\n");
+    expect(text).not.toContain("901");
+    expect(text).not.toContain("1500");
+    expect(text).not.toContain("77");
+    expect(text).not.toContain("Gap");
+
+    const paid = selectUsedGuatemalaReferences({
+      itemType: "pantalon",
+      brand: "Citizens of Humanity",
+      sales: [180, 160, 140].map((priceGtq) => ({
+        title: "Jeans Citizens of Humanity",
+        brand: "Citizens of Humanity",
+        condition: "GOOD",
+        priceGtq,
+      })),
+      advertised: [
+        { title: "Jeans Gap", brand: "Gap", itemType: "jeans", condition: "usado", priceGtq: 75, sourceLabel: "Econopaca" },
+      ],
+    });
+    expect(paid.widened).toBe(false);
+    expect(paid.basis).toBe("paid");
+    expect(paid.lines).toHaveLength(3);
+    expect(paid.lines.join("\n")).not.toContain("Gap");
+
+    const ads = selectUsedGuatemalaReferences({
+      itemType: "pantalon",
+      brand: "Citizens of Humanity",
+      sales: [],
+      advertised: [120, 130, 140].map((priceGtq) => ({
+        title: "Jeans Citizens of Humanity",
+        brand: "Citizens of Humanity",
+        itemType: "jeans",
+        condition: "usado",
+        priceGtq,
+        sourceLabel: "Megapaca",
+      })),
+    });
+    expect(ads.basis).toBe("advertised");
+    expect(ads.widened).toBe(false);
+    expect(ads.note).toContain("precios anunciados");
+    expect(ads.lines.every((line) => line.startsWith("Precio anunciado"))).toBe(true);
+
+    const missing = selectUsedGuatemalaReferences({
+      itemType: "pantalon",
+      brand: "Citizens of Humanity",
+      sales: [{ title: "Playera Gildan", brand: "Gildan", condition: "GOOD", priceGtq: 40 }],
+      advertised: [
+        { title: "Jeans nuevos", brand: "Citizens of Humanity", itemType: "jeans", condition: "nuevo", priceGtq: 800, sourceLabel: "Megapaca" },
+      ],
+    });
+    expect(missing.basis).toBe("estimate");
+    expect(missing.lines).toEqual([]);
+    expect(missing.note).toContain("Este precio es una estimación");
+
+    const configured = preparePricingSettings({
+      monthlySalaryGtq: "2000",
+      otherMonthlyExpensesGtq: "2000",
+      expectedMonthlySales: "400",
+      minimumProfitGtq: "8",
+    });
+    expect(configured.ok).toBe(true);
+    if (!configured.ok) return;
+    const advice = adviseSalePrice({
+      itemType: "playera",
+      brand: "Gildan",
+      condition: "GOOD",
+      lotAverage: "32.79",
+      settings: configured.settings,
+      guides: [],
+    });
+    const shown = presentSaleAdvice(
+      { ...advice, referenceNote: missing.note, referenceLines: ["Pagado en Variedades San Andrés: Jeans Q180."] },
+      "encargado"
+    );
+    expect(JSON.stringify(shown)).not.toContain("estimación");
+    expect(JSON.stringify(shown)).not.toContain("Variedades");
+    expect(shown.minimumGtq).toBe(46);
+    const owner = presentSaleAdvice(
+      { ...advice, referenceNote: missing.note, referenceLines: missing.lines },
+      "propietario"
+    );
+    expect(owner.referenceNote).toContain("Este precio es una estimación");
+    expect(owner.minimumGtq).toBe(46);
   });
 
   it("deja escribir la marca y la talla cuando la etiqueta no se lee", () => {

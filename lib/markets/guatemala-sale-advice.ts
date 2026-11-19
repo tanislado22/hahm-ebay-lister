@@ -47,6 +47,8 @@ export interface SaleAdvice {
   recommendedGtq: number | null;
   marketEstimateGtq?: number | null;
   reasonableUpToGtq?: number | null;
+  referenceNote?: string;
+  referenceLines?: string[];
   profitGtq: string | null;
   notice: string;
 }
@@ -319,6 +321,8 @@ export interface QuotedSalePrice {
   recommendedGtq: number | null;
   marketEstimateGtq?: number | null;
   reasonableUpToGtq?: number | null;
+  referenceNote?: string;
+  referenceLines?: string[];
   notice: string;
   costGtq?: string | null;
   costSource?: GarmentCostSource;
@@ -344,6 +348,8 @@ export function presentSaleAdvice(advice: SaleAdvice, role: "propietario" | "enc
     expenseShareGtq: advice.expenseShareGtq,
     marketEstimateGtq: advice.marketEstimateGtq,
     reasonableUpToGtq: advice.reasonableUpToGtq,
+    referenceNote: advice.referenceNote,
+    referenceLines: advice.referenceLines,
     salaryGtq: advice.salaryGtq,
     estimatedMonthlySales: advice.estimatedMonthlySales,
     profitGtq: advice.profitGtq,
