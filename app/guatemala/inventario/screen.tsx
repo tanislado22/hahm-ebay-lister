@@ -10,6 +10,7 @@ import {
   formatStoredQuetzales,
   guatemalaConditionLabel,
   guatemalaInventoryStatusLabel,
+  inventoryLaunch,
   inventoryListFilter,
   quetzalPriceText,
   type InventoryListFilter,
@@ -110,6 +111,7 @@ export function InventoryScreen({
   const online = useOnlineStatus();
   const clientId = lockedClientId || params.get("clientId") || "";
   const itemId = params.get("item") ?? "";
+  const launch = inventoryLaunch(params.get("accion"));
   const filter = inventoryListFilter(params.get("estado"));
   const lotFilter = params.get("lote") || "";
   function storeRequest(path: string, body?: unknown) {
@@ -154,6 +156,21 @@ export function InventoryScreen({
   const [quantitySale, setQuantitySale] = useState<{ id: string; sku: string; title: string; lotLabel: string; status: string }[] | null>(null);
   const [skuLessOpen, setSkuLessOpen] = useState(false);
   const [listVersion, setListVersion] = useState(0);
+
+  useEffect(() => {
+    if (itemId || !launch) return;
+    if (launch === "sin-foto") {
+      setPhotoSearchOpen(false);
+      setSkuLessOpen(false);
+      setQuantitySale(null);
+      setQuickAddOpen(true);
+      return;
+    }
+    setQuickAddOpen(false);
+    setPhotoSearchOpen(false);
+    setSkuLessOpen(false);
+    setQuantitySale([]);
+  }, [itemId, launch]);
 
   useEffect(() => {
     const controller = new AbortController();

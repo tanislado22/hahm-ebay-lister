@@ -556,7 +556,7 @@ export function PublishScreen({ clientId = "" }: { clientId?: string }) {
 
   return (
     <main className="gt-publish">
-      <h1>Agregar artículo</h1>
+      <h1>Agregar artículo con foto</h1>
       <p>Escanea el QR o escribe el SKU. Con fotos se publica en el catálogo. Sin fotos queda en el inventario, se puede vender y no sale en el catálogo.</p>
       {savedNotice ? <p role="status">{savedNotice}</p> : null}
       {error ? (

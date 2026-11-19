@@ -469,6 +469,12 @@ export function availableGarmentLabel(count: number): string {
   return count === 1 ? "1 prenda disponible" : `${count} prendas disponibles`;
 }
 
+export type InventoryLaunch = "sin-foto" | "venta";
+
+export function inventoryLaunch(value: unknown): InventoryLaunch | null {
+  return value === "sin-foto" || value === "venta" ? value : null;
+}
+
 export function inventoryListFilter(value: unknown): InventoryListFilter {
   if (
     value === "vendidas" ||
