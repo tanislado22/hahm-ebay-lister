@@ -5,6 +5,7 @@ import {
   garmentKind,
   type StorePriceGuide,
 } from "@/lib/markets/guatemala-price-match";
+import { sumExpenseAmounts } from "@/lib/markets/guatemala-expenses";
 import { GUATEMALA_CONDITION_CHOICES, unpublishedItemType } from "@/lib/markets/guatemala-inventory";
 
 export const SALE_ADVICE_MESSAGES = {
@@ -15,6 +16,8 @@ export const SALE_ADVICE_MESSAGES = {
   needType: "Elige el tipo de artículo.",
   needCondition: "Confirma el estado de la prenda.",
   staffNeedSettings: "El dueño todavía no configuró los precios.",
+  needSalary: "Falta el sueldo de este mes en Gastos, en Sueldo del empleado.",
+  needBatchCount: "Falta el conteo de la tanda.",
   noReference: "Sin referencia de precio",
   review: "Revisar con el dueño",
   labelUnread: "La etiqueta no se leyó. Escribe la marca y la talla a mano.",
@@ -103,6 +106,36 @@ export function garmentCostInputForActor(role: "propietario" | "encargado", cost
   return role === "propietario" ? cost : undefined;
 }
 
+// The month's salary is the Gastos category "sueldo". It is recorded once there
+// and is not typed again into the price settings.
+export function recordedSalaryGtq(expenses: readonly { category: string; amountGtq: string }[]): string | null {
+  const salary = expenses.filter((expense) => expense.category === "sueldo");
+  if (salary.length === 0) return null;
+  const total = sumExpenseAmounts(salary);
+  return moneyText(total);
+}
+
+// Divide by the tanda's fixed count, never by the pieces still unsold.
+export function salaryShareForBatch(salaryGtq: string | null | undefined, batchCount: number | null | undefined): string | null {
+  const salary = salaryGtq ? moneyText(salaryGtq) : null;
+  if (!salary || batchCount == null || !Number.isInteger(batchCount) || batchCount < 1) return null;
+  const amount = cents(salary);
+  if (amount == null || amount <= 0) return null;
+  return formatCents(Math.round(amount / batchCount));
+}
+
+export function saleAdviceSalaryGaps(input: {
+  monthlySalaryGtq?: string | null;
+  batchCount?: number | null;
+}): string[] {
+  const gaps: string[] = [];
+  if (!input.monthlySalaryGtq || !moneyText(input.monthlySalaryGtq)) gaps.push(SALE_ADVICE_MESSAGES.needSalary);
+  if (input.batchCount == null || !Number.isInteger(input.batchCount) || input.batchCount < 1) {
+    gaps.push(SALE_ADVICE_MESSAGES.needBatchCount);
+  }
+  return gaps;
+}
+
 export function saleAdviceGaps(input: { itemType?: string; condition?: string }): string[] {
   const gaps: string[] = [];
   if (!unpublishedItemType(input.itemType)) gaps.push(SALE_ADVICE_MESSAGES.needType);
@@ -188,11 +221,13 @@ export function adviseSalePrice(input: {
   condition?: string;
   individualCost?: unknown;
   lotAverage?: unknown;
+  monthlySalaryGtq?: string | null;
+  batchCount?: number | null;
   settings?: PricingSettingsInput | null;
   guides?: readonly StorePriceGuide[];
 }): SaleAdvice {
   const chosen = chooseGarmentCost({ individual: input.individualCost, lotAverage: input.lotAverage });
-  const share = input.settings ? monthlyExpenseShare(input.settings) : null;
+  const share = salaryShareForBatch(input.monthlySalaryGtq, input.batchCount);
   const base = {
     costSource: chosen.source,
     costGtq: chosen.costGtq,
@@ -206,6 +241,8 @@ export function adviseSalePrice(input: {
     return { ...base, status: "waiting", notice: gaps.join(" ") };
   }
   if (!chosen.costGtq) return { ...base, status: "need-cost", notice: SALE_ADVICE_MESSAGES.needCost };
+  const salaryGaps = saleAdviceSalaryGaps(input);
+  if (salaryGaps.length > 0) return { ...base, status: "need-settings", notice: salaryGaps.join(" ") };
   if (!input.settings || !share) return { ...base, status: "need-settings", notice: SALE_ADVICE_MESSAGES.needSettings };
   const minimum = minimumSaleQuetzales(chosen.costGtq, share, input.settings.minimumProfitGtq);
   if (minimum == null) return { ...base, status: "need-settings", notice: SALE_ADVICE_MESSAGES.needSettings };
