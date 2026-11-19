@@ -19,7 +19,7 @@ export const SALE_ADVICE_MESSAGES = {
   noReference: "Sin referencia de precio",
   review: "Revisar con el dueño",
   labelUnread: "La etiqueta no se leyó. Escribe la marca y la talla a mano.",
-  estimateBelowMinimum: "El precio estimado está por debajo del mínimo de venta",
+  estimateBelowMinimum: "Sin margen para rebaja",
   belowMinimum: "Este precio está por debajo del mínimo.",
   salaryInvalid: "Escribe el sueldo mensual en quetzales, o cero si no aplica.",
   expensesInvalid: "Escribe los demás gastos mensuales en quetzales, o cero si no hay.",
@@ -46,6 +46,7 @@ export interface SaleAdvice {
   minimumGtq: number | null;
   recommendedGtq: number | null;
   marketEstimateGtq?: number | null;
+  reasonableUpToGtq?: number | null;
   profitGtq: string | null;
   notice: string;
 }
@@ -191,16 +192,34 @@ export function recommendListedPrice(input: { low: number; high: number; minimum
   return price;
 }
 
+export const DISCOUNT_ROOM_GTQ = 5;
+
+export interface MarketEstimate {
+  priceGtq: number;
+  reasonableUpToGtq: number;
+}
+
+export function saleEstimateQuote(raw: string): MarketEstimate | null {
+  const data = readEstimateJson(raw);
+  const price = wholeSaleQuetzales(data?.priceGtq);
+  if (price == null) return null;
+  const ceiling = wholeSaleQuetzales(data?.reasonableUpToGtq) ?? price;
+  return { priceGtq: price, reasonableUpToGtq: Math.max(price, ceiling) };
+}
+
 export function saleEstimateQuetzales(raw: string): number | null {
+  return saleEstimateQuote(raw)?.priceGtq ?? null;
+}
+
+function readEstimateJson(raw: string): { priceGtq?: unknown; reasonableUpToGtq?: unknown } | null {
+  const text = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try {
-    const data = JSON.parse(raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { priceGtq?: unknown };
-    return wholeSaleQuetzales(data?.priceGtq);
+    return JSON.parse(text) as { priceGtq?: unknown; reasonableUpToGtq?: unknown };
   } catch {
-    const match = raw.match(/\{[\s\S]*\}/);
+    const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
     try {
-      const data = JSON.parse(match[0]) as { priceGtq?: unknown };
-      return wholeSaleQuetzales(data?.priceGtq);
+      return JSON.parse(match[0]) as { priceGtq?: unknown; reasonableUpToGtq?: unknown };
     } catch {
       return null;
     }
@@ -215,13 +234,21 @@ export function wholeSaleQuetzales(value: unknown): number | null {
   return quetzales;
 }
 
-// The minimum stays on the cost formula. A higher market estimate becomes the
-// suggested price. A lower one stays hidden behind the minimum.
-export function applyMarketEstimate(advice: SaleAdvice, estimateGtq: number | null): SaleAdvice {
+// Keep Q5 of room to discount when the AI price sits close to the minimum.
+// A price that already clears that room is published as recommended. Otherwise
+// publish the minimum plus Q5 only when the AI still calls that price reasonable.
+export function applyMarketEstimate(advice: SaleAdvice, estimate: number | MarketEstimate | null): SaleAdvice {
   if (advice.status !== "ready" || advice.minimumGtq == null) return advice;
-  const estimate = wholeSaleQuetzales(estimateGtq);
-  if (estimate == null) return advice;
-  const recommended = estimate > advice.minimumGtq ? estimate : advice.minimumGtq;
+  const quote =
+    typeof estimate === "number"
+      ? { priceGtq: estimate, reasonableUpToGtq: estimate }
+      : estimate;
+  const price = wholeSaleQuetzales(quote?.priceGtq);
+  if (price == null) return advice;
+  const ceiling = wholeSaleQuetzales(quote?.reasonableUpToGtq) ?? price;
+  const withRoom = advice.minimumGtq + DISCOUNT_ROOM_GTQ;
+  const high = Math.max(price, ceiling);
+  const recommended = price >= withRoom ? price : high >= withRoom ? withRoom : high > advice.minimumGtq ? high : advice.minimumGtq;
   const profit =
     advice.costGtq && advice.expenseShareGtq
       ? estimatedProfitGtq(recommended, advice.costGtq, advice.expenseShareGtq)
@@ -229,9 +256,10 @@ export function applyMarketEstimate(advice: SaleAdvice, estimateGtq: number | nu
   return {
     ...advice,
     recommendedGtq: recommended,
-    marketEstimateGtq: estimate,
+    marketEstimateGtq: price,
+    reasonableUpToGtq: Math.max(price, ceiling),
     profitGtq: profit,
-    notice: estimate < advice.minimumGtq ? SALE_ADVICE_MESSAGES.estimateBelowMinimum : "",
+    notice: price < advice.minimumGtq && recommended === advice.minimumGtq ? SALE_ADVICE_MESSAGES.estimateBelowMinimum : "",
   };
 }
 
@@ -290,6 +318,7 @@ export interface QuotedSalePrice {
   minimumGtq: number | null;
   recommendedGtq: number | null;
   marketEstimateGtq?: number | null;
+  reasonableUpToGtq?: number | null;
   notice: string;
   costGtq?: string | null;
   costSource?: GarmentCostSource;
@@ -314,6 +343,7 @@ export function presentSaleAdvice(advice: SaleAdvice, role: "propietario" | "enc
     costSource: advice.costSource,
     expenseShareGtq: advice.expenseShareGtq,
     marketEstimateGtq: advice.marketEstimateGtq,
+    reasonableUpToGtq: advice.reasonableUpToGtq,
     salaryGtq: advice.salaryGtq,
     estimatedMonthlySales: advice.estimatedMonthlySales,
     profitGtq: advice.profitGtq,

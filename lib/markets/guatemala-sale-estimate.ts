@@ -3,7 +3,7 @@ import { toImageBlock, type WireImage } from "@/lib/images";
 import { GUATEMALA_CONDITION_CHOICES, unpublishedItemType } from "@/lib/markets/guatemala-inventory";
 import { quoteGuatemalaPrice } from "@/lib/markets/guatemala-price-quote";
 import type { StorePriceGuide } from "@/lib/markets/guatemala-price-match";
-import { saleEstimateQuetzales } from "@/lib/markets/guatemala-sale-advice";
+import { saleEstimateQuote, type MarketEstimate } from "@/lib/markets/guatemala-sale-advice";
 import type { GuatemalaCompReport } from "@/lib/types";
 
 const ESTIMATE_MODEL = "claude-sonnet-4-6";
@@ -53,7 +53,8 @@ export function buildSaleEstimatePrompt(input: {
       : "No hay referencias de prendas similares. Estima con el tipo, la marca, el estado y las fotos.";
   return [
     "Estima el precio de venta de esta prenda en una tienda de ropa de Guatemala.",
-    "Responde solo JSON con un número entero de quetzales: {\"priceGtq\": 0}.",
+    "Responde solo JSON: {\"priceGtq\": 0, \"reasonableUpToGtq\": 0}.",
+    "priceGtq es el precio que cobrarías. reasonableUpToGtq es el precio más alto que aún sería razonable para esta prenda; puede ser igual.",
     "Usa las referencias de prendas similares cuando apliquen. Si no hay, igual da un precio razonable.",
     "No uses el costo de compra ni una ganancia fija.",
     "",
@@ -75,7 +76,7 @@ export async function estimateGuatemalaSaleQuetzales(input: {
   condition: string;
   photos?: readonly WireImage[];
   guides?: readonly StorePriceGuide[];
-}): Promise<number | null> {
+}): Promise<MarketEstimate | null> {
   let report: GuatemalaCompReport | null = null;
   try {
     report = await quoteGuatemalaPrice(input.clientId, {
@@ -115,7 +116,7 @@ export async function estimateGuatemalaSaleQuetzales(input: {
       { timeout: ESTIMATE_TIMEOUT_MS, maxRetries: 0 }
     );
     const text = response.content.find((block) => block.type === "text");
-    return text && text.type === "text" ? saleEstimateQuetzales(text.text) : null;
+    return text && text.type === "text" ? saleEstimateQuote(text.text) : null;
   } catch (error) {
     const fatal = anthropicAuthError(error);
     console.error("[guatemala/sale-estimate] model failed", fatal ? fatal.status : error instanceof Error ? error.name : "Error");

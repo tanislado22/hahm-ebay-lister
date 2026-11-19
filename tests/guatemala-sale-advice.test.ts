@@ -254,7 +254,18 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
       guides: [],
     });
     expect(advice.minimumGtq).toBe(46);
-    expect(saleEstimateQuetzales('{"priceGtq":55}')).toBe(55);
+    expect(saleEstimateQuetzales('{"priceGtq":55,"reasonableUpToGtq":60}')).toBe(55);
+    const roomy = applyMarketEstimate(advice, { priceGtq: 70, reasonableUpToGtq: 80 });
+    expect(roomy.recommendedGtq).toBe(70);
+    expect(roomy.minimumGtq).toBe(46);
+    const close = applyMarketEstimate(advice, { priceGtq: 48, reasonableUpToGtq: 55 });
+    expect(close.recommendedGtq).toBe(51);
+    expect(close.minimumGtq).toBe(46);
+    expect(close.notice).toBe("");
+    const staffClose = presentSaleAdvice(close, "encargado");
+    expect(staffClose).toEqual({ status: "ready", minimumGtq: 46, recommendedGtq: 51, notice: "" });
+    expect(JSON.stringify(staffClose)).not.toContain("48");
+    expect(applyMarketEstimate(advice, { priceGtq: 48, reasonableUpToGtq: 50 }).recommendedGtq).toBe(50);
     const higher = applyMarketEstimate(advice, 55);
     expect(higher.recommendedGtq).toBe(55);
     expect(higher.minimumGtq).toBe(46);
@@ -265,11 +276,11 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
     expect(JSON.stringify(staff)).not.toContain("2000");
     expect(JSON.stringify(staff)).not.toContain("5.00");
     expect(JSON.stringify(staff)).not.toContain("cost");
-    const lower = applyMarketEstimate(advice, 40);
+    const lower = applyMarketEstimate(advice, { priceGtq: 40, reasonableUpToGtq: 44 });
     expect(lower.recommendedGtq).toBe(46);
     expect(lower.minimumGtq).toBe(46);
-    expect(lower.notice).toBe("El precio estimado está por debajo del mínimo de venta");
-    expect(presentSaleAdvice(lower, "encargado").notice).toBe("El precio estimado está por debajo del mínimo de venta");
+    expect(lower.notice).toBe("Sin margen para rebaja");
+    expect(presentSaleAdvice(lower, "encargado").notice).toBe("Sin margen para rebaja");
     expect(JSON.stringify(presentSaleAdvice(lower, "encargado"))).not.toContain("40");
     expect(presentSaleAdvice(lower, "propietario").marketEstimateGtq).toBe(40);
     expect(applyMarketEstimate(advice, 46).notice).toBe("");
