@@ -5,6 +5,7 @@ import {
   QR_MESSAGES,
   SALE_SCAN_MESSAGES,
   addGarmentToSale,
+  chargeGarmentTotal,
   fichaForCharge,
   takeGarmentScan,
   type SaleScanItem,
@@ -24,28 +25,19 @@ function book(items: SaleScanItem[]): QuantityBook {
 }
 
 describe("escaneo para vender en Tienda Guatemala", () => {
-  it("mantiene los dos altas y abre la ficha al escanear, sin guardar el cobro", () => {
+  it("cobra varias prendas en un solo formulario y no guarda hasta Guardar venta", () => {
     const layout = readFileSync("app/guatemala/panel/layout.tsx", "utf8");
-    expect(layout.indexOf("Agregar artículo con foto")).toBeGreaterThan(-1);
-    expect(layout.indexOf("Agregar artículo sin foto")).toBeGreaterThan(layout.indexOf("Agregar artículo con foto"));
-    expect(layout).toContain("Escanear para cobrar");
-    expect(layout).toContain('href="/guatemala/panel/publicar"');
-    expect(layout).toContain('href="/guatemala/panel/inventario?accion=sin-foto"');
-    expect(layout).toContain('href="/guatemala/panel/inventario?accion=escanear"');
-    expect(layout).not.toContain(">Agregar artículo<");
-    const screen = readFileSync("app/guatemala/inventario/screen.tsx", "utf8");
-    expect(screen).toContain("ChargeScanPanel");
-    expect(screen).toContain('cobro: "1"');
-    expect(screen).toContain("setSaleStep(\"form\")");
-    const confirmAt = screen.indexOf("async function confirmSale");
-    expect(screen.indexOf("/sale", confirmAt)).toBeGreaterThan(confirmAt);
-    expect(screen).not.toContain('startCamera={launch === "escanear"}');
-    const scanner = readFileSync("app/guatemala/inventario/sale-scan.tsx", "utf8");
-    expect(scanner).toContain("fichaForCharge");
-    expect(scanner).not.toContain("quantity-sales");
-    expect(fichaForCharge({ id: "playera", status: "disponible" })).toEqual({ open: true, itemId: "playera" });
+    expect(layout.indexOf("Cobrar venta")).toBeLessThan(layout.indexOf("Agregar artículo con foto"));
+    expect(layout.indexOf("Agregar artículo con foto")).toBeLessThan(layout.indexOf("Agregar artículo sin foto"));
+    expect(layout).not.toContain("Registrar venta");
+    const panel = readFileSync("app/guatemala/inventario/quantity.tsx", "utf8");
+    expect(panel).toContain("Escanear QR");
+    expect(panel).toContain("Escribir SKU");
+    expect(panel).toContain("Guardar venta");
+    expect(panel.indexOf("lookupScanned")).toBeLessThan(panel.indexOf('"/api/markets/guatemala/quantity-sales"'));
+    expect(chargeGarmentTotal(["40", "15.50", "20"])).toBe("75.50");
+    expect(chargeGarmentTotal([])).toBeNull();
     expect(fichaForCharge({ id: "playera", status: "vendida" })).toEqual({ open: false, notice: QR_MESSAGES.sold });
-    expect(fichaForCharge(null)).toEqual({ open: false, notice: QR_MESSAGES.unknownCode });
   });
 
   it("suma una prenda disponible y no la vende hasta el cobro", () => {

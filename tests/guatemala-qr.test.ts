@@ -201,8 +201,8 @@ describe("etiqueta QR de Tienda Guatemala", () => {
     const saleRoute = readFileSync(`${root}/app/api/markets/guatemala/inventory/[itemId]/sale/route.ts`, "utf8");
     expect(saleRoute).toContain('authorizeGuatemalaRequest(request, typeof body?.clientId === "string" ? body.clientId : "", "sell")');
     const layout = readFileSync(`${root}/app/guatemala/panel/layout.tsx`, "utf8");
-    expect(layout).toContain("Escanear para cobrar");
-    expect(layout).toContain("/guatemala/panel/inventario?accion=escanear");
+    expect(layout).toContain("Cobrar venta");
+    expect(layout).toContain("/guatemala/panel/inventario?accion=venta");
     const config = readFileSync(`${root}/next.config.mjs`, "utf8");
     expect(config).toContain("camera=(self)");
     expect(config).not.toContain("camera=()");

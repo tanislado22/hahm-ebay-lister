@@ -9,5 +9,5 @@ export default async function StaffScanPage() {
   const token = (await cookies()).get(STAFF_COOKIE)?.value;
   const session = await staffSessionFromToken(token);
   if (!session) redirect("/guatemala/entrada");
-  redirect("/guatemala/panel/inventario?accion=escanear");
+  redirect("/guatemala/panel/inventario?accion=venta");
 }

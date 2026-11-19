@@ -25,7 +25,6 @@ import { useOnlineStatus } from "../pwa/shell";
 import { QuickAddForm, UnpublishedEditor } from "./draft";
 import { PhotoSearchPanel } from "./photo-search";
 import { QuantitySalePanel, SkuLessSaleForm } from "./quantity";
-import { ChargeScanPanel } from "./sale-scan";
 import "./inventory.css";
 import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
 import { PurgePanel } from "./purge";
@@ -155,7 +154,7 @@ export function InventoryScreen({
   const [assignLotId, setAssignLotId] = useState("");
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [photoSearchOpen, setPhotoSearchOpen] = useState(false);
-  const [quantitySale, setQuantitySale] = useState<{ id: string; sku: string; title: string; lotLabel: string; status: string }[] | null>(null);
+  const [quantitySale, setQuantitySale] = useState<{ id: string; sku: string; title: string; lotLabel: string; status: string; priceGtq: string }[] | null>(null);
   const [saleSession, setSaleSession] = useState(0);
   const [skuLessOpen, setSkuLessOpen] = useState(false);
   const [listVersion, setListVersion] = useState(0);
@@ -168,13 +167,6 @@ export function InventoryScreen({
       setSkuLessOpen(false);
       setQuantitySale(null);
       setQuickAddOpen(true);
-      return;
-    }
-    if (launch === "escanear") {
-      setQuickAddOpen(false);
-      setPhotoSearchOpen(false);
-      setSkuLessOpen(false);
-      setQuantitySale(null);
       return;
     }
     setQuickAddOpen(false);
@@ -598,23 +590,12 @@ export function InventoryScreen({
           clientId={clientId}
           request={storeRequest}
           initialItems={quantitySale}
+          heading={launch === "venta" || launch === "escanear" ? "Cobrar venta" : "Registrar venta"}
           onClose={() => setQuantitySale(null)}
           onSaved={() => setListVersion((current) => current + 1)}
           onOpenSkuLess={() => {
             setQuantitySale(null);
             setSkuLessOpen(true);
-          }}
-        />
-      ) : null}
-
-      {launch === "escanear" && !itemId ? (
-        <ChargeScanPanel
-          clientId={clientId}
-          request={storeRequest}
-          onOpen={(id) => {
-            const search = new URLSearchParams({ item: id, cobro: "1" });
-            if (!staffMode && clientId) search.set("clientId", clientId);
-            router.push(`${basePath}?${search.toString()}`);
           }}
         />
       ) : null}
@@ -901,6 +882,7 @@ export function InventoryScreen({
                           title: detail.title,
                           lotLabel: "Prenda con SKU",
                           status: detail.status,
+                          priceGtq: detail.priceGtq,
                         },
                       ]);
                       resetSaleForm();

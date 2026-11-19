@@ -161,7 +161,7 @@ export function SaleGarmentScanner({
         </p>
       ) : null}
       <div id="gt-sale-qr-reader" className={active ? "gt-qr-reader is-live" : "gt-qr-reader"} />
-      {active && !cameraError ? <p>Apunta la cámara al QR de la prenda. Escanear abre la ficha y no guarda la venta.</p> : null}
+      {active && !cameraError ? <p>Apunta la cámara al QR de la prenda. Escanear la agrega a esta venta y no la guarda.</p> : null}
       <div className="gt-inventory-actions">
         <button type="button" className="btn btn-ghost" onClick={onClose}>
           Cerrar cámara

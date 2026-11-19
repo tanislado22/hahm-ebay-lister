@@ -57,7 +57,7 @@ export const QR_MESSAGES = {
 export const PRICE_QR_MESSAGES = {
   notGarment: "Esta etiqueta es un precio compartido, no una prenda. Úsala en Registrar venta → Venta sin SKU.",
   notPrice: "Ese QR no es una etiqueta de precio. Usa VSAP:10 o Q10, o escribe las piezas y el total.",
-  garmentOnPrice: "Este QR identifica una prenda del inventario. Usa Escanear para cobrar.",
+  garmentOnPrice: "Este QR identifica una prenda del inventario. Usa Cobrar venta.",
   cameraDenied:
     "El navegador no tiene permiso para usar la cámara. Permite la cámara para este sitio y pulsa Escanear QR de precio de nuevo. En iPhone: Ajustes, Safari, Cámara, Permitir. En Android: el candado de la barra de direcciones, Permisos, Cámara, Permitir. También puedes escribir las piezas y el total.",
   cameraMissing: "Este celular no tiene una cámara que se pueda usar. Escribe las piezas y el total.",
@@ -225,6 +225,21 @@ export function fichaForCharge(garment: { id: string; status: string } | null):
   const decision = scanSaleDecision(garment.status);
   if (!decision.canSell) return { open: false, notice: decision.message };
   return { open: true, itemId: garment.id };
+}
+
+/** Sums the prices of the garments in one charge. Blank or invalid prices are left out. */
+export function chargeGarmentTotal(prices: readonly string[]): string | null {
+  let cents = 0;
+  let any = false;
+  for (const price of prices) {
+    const text = quetzalPriceText(price);
+    if (!text) continue;
+    const [whole, fraction = "00"] = text.split(".");
+    cents += Number(whole) * 100 + Number(fraction);
+    any = true;
+  }
+  if (!any) return null;
+  return `${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, "0")}`;
 }
 
 export function scanSaleDecision(status: string): { canSell: true } | { canSell: false; message: string } {

@@ -5,6 +5,7 @@ import { formatStoredQuetzales, quetzalPriceText } from "@/lib/markets/guatemala
 import {
   QR_MESSAGES,
   addGarmentToSale,
+  chargeGarmentTotal,
   garmentQrText,
   readScannedLabel,
   scanLotLabel,
@@ -24,7 +25,7 @@ import { SaleTender } from "./tender";
 
 type Request = (path: string, body?: unknown) => Promise<Response>;
 
-type SkuPick = { id: string; sku: string; title: string; lotLabel: string; status: string };
+type SkuPick = { id: string; sku: string; title: string; lotLabel: string; status: string; priceGtq: string };
 
 export function SkuLessSaleForm({
   clientId,
@@ -138,6 +139,7 @@ export function QuantitySalePanel({
   request,
   initialItems,
   startCamera = false,
+  heading = "Cobrar venta",
   onClose,
   onSaved,
   onOpenSkuLess,
@@ -146,6 +148,7 @@ export function QuantitySalePanel({
   request: Request;
   initialItems: SkuPick[];
   startCamera?: boolean;
+  heading?: string;
   onClose: () => void;
   onSaved: () => void;
   onOpenSkuLess: () => void;
@@ -179,6 +182,12 @@ export function QuantitySalePanel({
     if (!startCamera) return;
     document.getElementById("registrar-venta")?.scrollIntoView({ block: "start" });
   }, [startCamera]);
+  useEffect(() => {
+    const total = chargeGarmentTotal(initialItems.map((item) => item.priceGtq));
+    if (total) setChargedDraft(total);
+    // The opening list is the starting ticket. Later adds update the total themselves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const chargedPrice = quetzalPriceText(chargedDraft);
   const prepared = chargedPrice
@@ -204,6 +213,11 @@ export function QuantitySalePanel({
     setLines((current) => [...current, { groupId, quantity: "1" }]);
   }
 
+  function rememberTotal(nextItems: SkuPick[]) {
+    if (lines.length > 0) return;
+    setChargedDraft(chargeGarmentTotal(nextItems.map((item) => item.priceGtq)) ?? "");
+  }
+
   function applyPick(pick: SkuPick | undefined, source: "scan" | "sku") {
     if (!pick) return;
     const next = addGarmentToSale(itemsRef.current, pick);
@@ -215,20 +229,18 @@ export function QuantitySalePanel({
     }
     itemsRef.current = next.items;
     setItems(next.items);
+    rememberTotal(next.items);
     setScanNotice("");
     setError("");
     setChoices([]);
     setSkuDraft("");
-    if (source === "scan") {
-      setCameraOn(false);
-      window.setTimeout(() => document.getElementById("ticket-total")?.focus(), 0);
-    }
+    if (source === "scan") setCameraOn(false);
   }
 
   function picksFromBody(body: {
     choice?: "one" | "many";
-    garment?: { id: string; sku: string; title: string; status: string; lotNumber: number | null; lotName: string | null };
-    garments?: { id: string; sku: string; title: string; status: string; lotNumber: number | null; lotName: string | null }[];
+    garment?: { id: string; sku: string; title: string; status: string; priceGtq?: string; lotNumber: number | null; lotName: string | null };
+    garments?: { id: string; sku: string; title: string; status: string; priceGtq?: string; lotNumber: number | null; lotName: string | null }[];
   }): SkuPick[] {
     const found = body.choice === "many" ? body.garments ?? [] : body.garment ? [body.garment] : [];
     return found.map((garment) => ({
@@ -237,6 +249,7 @@ export function QuantitySalePanel({
       title: garment.title,
       lotLabel: scanLotLabel(garment.lotNumber, garment.lotName),
       status: garment.status,
+      priceGtq: garment.priceGtq ?? "",
     }));
   }
 
@@ -253,8 +266,8 @@ export function QuantitySalePanel({
       ok?: boolean;
       error?: string;
       choice?: "one" | "many";
-      garment?: { id: string; sku: string; title: string; status: string; lotNumber: number | null; lotName: string | null };
-      garments?: { id: string; sku: string; title: string; status: string; lotNumber: number | null; lotName: string | null }[];
+      garment?: { id: string; sku: string; title: string; status: string; priceGtq?: string; lotNumber: number | null; lotName: string | null };
+      garments?: { id: string; sku: string; title: string; status: string; priceGtq?: string; lotNumber: number | null; lotName: string | null }[];
     };
     if (!response.ok || !body.ok) {
       setError(body.error || "No se encontró la prenda.");
@@ -293,8 +306,8 @@ export function QuantitySalePanel({
         ok?: boolean;
         error?: string;
         choice?: "one" | "many";
-        garment?: { id: string; sku: string; title: string; status: string; lotNumber: number | null; lotName: string | null };
-        garments?: { id: string; sku: string; title: string; status: string; lotNumber: number | null; lotName: string | null }[];
+        garment?: { id: string; sku: string; title: string; status: string; priceGtq?: string; lotNumber: number | null; lotName: string | null };
+        garments?: { id: string; sku: string; title: string; status: string; priceGtq?: string; lotNumber: number | null; lotName: string | null }[];
       };
       if (!response.ok || !body.ok) {
         setScanNotice(body.error || (read.kind === "code" ? QR_MESSAGES.unknownCode : QR_MESSAGES.unknownSku));
@@ -364,24 +377,27 @@ export function QuantitySalePanel({
 
   return (
     <section className="panel" id="registrar-venta">
-      <h2>Registrar venta</h2>
-      {cameraOn ? (
-        <SaleGarmentScanner active={cameraOn && !saving} onText={onScannedText} onClose={() => setCameraOn(false)} />
-      ) : (
-        <div className="gt-inventory-actions">
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={saving}
-            onClick={() => {
-              setScanNotice("");
-              setCameraOn(true);
-            }}
-          >
-            Escanear otra prenda
-          </button>
-        </div>
-      )}
+      <h2>{heading}</h2>
+      <p>Agrega las prendas con el QR o el SKU. La venta se guarda solo al tocar Guardar venta.</p>
+      <div className="gt-inventory-actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={saving}
+          onClick={() => {
+            setScanNotice("");
+            setCameraOn(true);
+          }}
+        >
+          Escanear QR
+        </button>
+      </div>
+      {cameraOn ? <SaleGarmentScanner active={cameraOn && !saving} onText={onScannedText} onClose={() => setCameraOn(false)} /> : null}
+      <form className="gt-inventory-search" onSubmit={(event) => void searchSku(event)}>
+        <label htmlFor="ticket-sku">Escribir SKU</label>
+        <input id="ticket-sku" value={skuDraft} onChange={(event) => setSkuDraft(event.target.value)} autoComplete="off" />
+        <button type="submit" className="btn btn-ghost" disabled={saving}>Agregar</button>
+      </form>
       {scanNotice ? (
         <p className="note note-error" role="alert">
           {scanNotice}
@@ -432,29 +448,35 @@ export function QuantitySalePanel({
           </div>
         );
       })}
-      <form className="gt-inventory-search" onSubmit={(event) => void searchSku(event)}>
-        <label htmlFor="ticket-sku">Agregar prenda con SKU</label>
-        <input id="ticket-sku" value={skuDraft} onChange={(event) => setSkuDraft(event.target.value)} autoComplete="off" />
-        <button type="submit" className="btn btn-ghost">Buscar</button>
-      </form>
       {choices.length > 1 ? (
         <div className="gt-scan-choices">
           {choices.map((choice) => (
             <button key={choice.id} type="button" className="btn btn-ghost gt-scan-choice" onClick={() => applyPick(choice, choiceSource)}>
               {choice.title || "Prenda sin título"} · SKU {choice.sku} · {choice.lotLabel}
+              {choice.priceGtq ? ` · ${formatStoredQuetzales(choice.priceGtq)}` : ""}
             </button>
           ))}
         </div>
       ) : null}
       {items.map((item) => (
         <p key={item.id}>
-          SKU {item.sku} · {item.title || "Prenda sin título"} · {item.lotLabel}{" "}
-          <button type="button" className="btn btn-ghost" onClick={() => setItems((current) => current.filter((candidate) => candidate.id !== item.id))}>
+          SKU {item.sku} · {item.title || "Prenda sin título"} · {item.lotLabel}
+          {item.priceGtq ? ` · ${formatStoredQuetzales(item.priceGtq)}` : ""}{" "}
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              const next = itemsRef.current.filter((candidate) => candidate.id !== item.id);
+              itemsRef.current = next;
+              setItems(next);
+              rememberTotal(next);
+            }}
+          >
             Quitar
           </button>
         </p>
       ))}
-      <label htmlFor="ticket-total">Total cobrado</label>
+      <label htmlFor="ticket-total">Total</label>
       <div className="gt-sale-price">
         <span aria-hidden="true">Q</span>
         <input
@@ -478,7 +500,7 @@ export function QuantitySalePanel({
       {notice ? <p role="status">{notice}</p> : null}
       <div className="gt-inventory-actions">
         <button type="button" className="btn btn-primary" disabled={!ready || saving} onClick={() => void save()}>
-          {saving ? "Guardando…" : "Guardar"}
+          {saving ? "Guardando…" : "Guardar venta"}
         </button>
         <button type="button" className="btn btn-ghost" disabled={saving} onClick={onClose}>
           Cerrar
