@@ -124,7 +124,7 @@ function usableUsedReference(
   if ((/\bnuevo\b|\bnew\b/.test(titleText) && !/como nuevo/.test(titleText))) return false;
   const keys = [garmentKind(itemType)?.key, garmentKind(undefined, title)?.key];
   if (keys.includes(kind)) return true;
-  return kind === "jeans" && keys.includes("pantalon") && sameWantedBrand(wantedBrand, brand, title);
+  return kind === "jeans" && keys.includes("pantalon") && sameWantedBrand(wantedBrand ?? null, brand, title);
 }
 
 function sameWantedBrand(wanted: string | null, brand?: string, title?: string): boolean {
