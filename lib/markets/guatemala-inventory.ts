@@ -113,7 +113,9 @@ export interface PreparedUnpublishedItem {
   sku: string;
   itemType: string;
   title: string;
+  brand: string;
   size: string;
+  condition: string;
   priceGtq: string;
   lotId: string | null;
 }
@@ -317,6 +319,8 @@ export function prepareUnpublishedItem(input: {
   sku?: unknown;
   itemType?: unknown;
   size?: unknown;
+  brand?: unknown;
+  condition?: unknown;
   price?: unknown;
   lotId?: unknown;
 }): { ok: true; item: PreparedUnpublishedItem } | { ok: false; status: 400; error: string } {
@@ -328,12 +332,28 @@ export function prepareUnpublishedItem(input: {
   if (!itemType) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.typeRequired };
   const size = typeof input.size === "string" ? input.size.trim() : "";
   if (size.length > SIZE_MAX) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.sizeLong };
+  const brand = textField(input.brand).trim();
+  if (brand.length > BRAND_MAX) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.brandLong };
+  const condition = textField(input.condition).trim();
+  if (condition && !GUATEMALA_CONDITION_CHOICES.some((choice) => choice.value === condition)) {
+    return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.conditionInvalid };
+  }
   const priceGtq = quetzalPriceText(input.price);
   if (!priceGtq) return { ok: false, status: 400, error: GUATEMALA_INVENTORY_MESSAGES.priceInvalid };
   const lotId = typeof input.lotId === "string" ? input.lotId.trim() : "";
   return {
     ok: true,
-    item: { clientId, sku, itemType: itemType.id, title: itemType.label, size, priceGtq, lotId: lotId || null },
+    item: {
+      clientId,
+      sku,
+      itemType: itemType.id,
+      title: itemType.label,
+      brand,
+      size,
+      condition,
+      priceGtq,
+      lotId: lotId || null,
+    },
   };
 }
 

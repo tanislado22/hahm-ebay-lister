@@ -25,7 +25,9 @@ describe("artículos sin fotos de Tienda Guatemala", () => {
       sku: "L1-9",
       itemType: "blusa",
       title: "Blusa",
+      brand: "",
       size: "M",
+      condition: "",
       priceGtq: "80.00",
       lotId: "lote-1",
     });

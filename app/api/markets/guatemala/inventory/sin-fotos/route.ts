@@ -34,10 +34,14 @@ export async function POST(request: NextRequest) {
           actor: access.actor,
           sku: body.sku,
           itemType: body.itemType,
+          brand: body.brand,
           size: body.size,
+          condition: body.condition,
           price: body.price,
           lotId: body.lotId,
+          cost: body.cost,
           photo: body.photo,
+          supportPhotos: body.supportPhotos,
         });
     if (!result.ok) {
       return NextResponse.json(

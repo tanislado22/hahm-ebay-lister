@@ -42,6 +42,8 @@ async function createTables(): Promise<void> {
   `;
   await sql`ALTER TABLE guatemala_price_guides ALTER COLUMN scope SET DEFAULT 'general'`;
   await sql`ALTER TABLE guatemala_price_guides ALTER COLUMN scope SET NOT NULL`;
+  await sql`ALTER TABLE guatemala_price_guides ADD COLUMN IF NOT EXISTS low_gtq NUMERIC(12, 2)`;
+  await sql`ALTER TABLE guatemala_price_guides ADD COLUMN IF NOT EXISTS high_gtq NUMERIC(12, 2)`;
 }
 
 export async function listGuatemalaPriceGuides(clientId: string): Promise<StoredPriceGuide[]> {
@@ -49,7 +51,8 @@ export async function listGuatemalaPriceGuides(clientId: string): Promise<Stored
   const sql = getSql();
   const rows = await sql`
     SELECT id, scope, brand, garment, condition, price_gtq::text AS price_gtq,
-      adjustment_gtq::text AS adjustment_gtq, comparable_brands
+      adjustment_gtq::text AS adjustment_gtq, comparable_brands,
+      low_gtq::text AS low_gtq, high_gtq::text AS high_gtq
     FROM guatemala_price_guides
     WHERE client_id = ${clientId}
     ORDER BY brand, garment, condition
@@ -67,6 +70,8 @@ export async function saveGuatemalaPriceGuide(
     priceGtq?: unknown;
     adjustmentGtq?: unknown;
     comparableBrands?: unknown;
+    lowGtq?: unknown;
+    highGtq?: unknown;
   }
 ): Promise<{ ok: true; guide: StoredPriceGuide } | { ok: false; error: string }> {
   const prepared = preparePriceGuide(input);
@@ -85,7 +90,8 @@ export async function saveGuatemalaPriceGuide(
   `;
   await sql`
     INSERT INTO guatemala_price_guides (
-      id, client_id, scope, brand, garment, condition, price_gtq, adjustment_gtq, comparable_brands
+      id, client_id, scope, brand, garment, condition, price_gtq, adjustment_gtq, comparable_brands,
+      low_gtq, high_gtq
     )
     VALUES (
       ${id},
@@ -96,7 +102,9 @@ export async function saveGuatemalaPriceGuide(
       ${prepared.guide.condition},
       ${prepared.guide.priceGtq},
       ${prepared.guide.adjustmentGtq},
-      ${comparable}
+      ${comparable},
+      ${prepared.guide.lowGtq ?? null},
+      ${prepared.guide.highGtq ?? null}
     )
   `;
   return { ok: true, guide: { id, ...prepared.guide } };
@@ -127,6 +135,8 @@ function rowToGuide(row: Record<string, unknown>): StoredPriceGuide {
     priceGtq: row.price_gtq,
     adjustmentGtq: row.adjustment_gtq,
     comparableBrands: row.comparable_brands,
+    lowGtq: row.low_gtq,
+    highGtq: row.high_gtq,
   });
   return {
     id: String(row.id),

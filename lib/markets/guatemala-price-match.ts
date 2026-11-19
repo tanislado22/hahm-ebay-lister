@@ -49,6 +49,8 @@ export interface StorePriceGuide {
   priceGtq: number | null;
   adjustmentGtq: number | null;
   comparableBrands: string[];
+  lowGtq?: number | null;
+  highGtq?: number | null;
 }
 
 export interface StorePriceNeed {
@@ -315,6 +317,8 @@ export function preparePriceGuide(input: {
   priceGtq?: unknown;
   adjustmentGtq?: unknown;
   comparableBrands?: unknown;
+  lowGtq?: unknown;
+  highGtq?: unknown;
 }): { ok: true; guide: StorePriceGuide } | { ok: false; error: string } {
   const scope = input.scope === "brand" ? "brand" : "general";
   const brand = typeof input.brand === "string" ? input.brand.trim() : "";
@@ -330,6 +334,8 @@ export function preparePriceGuide(input: {
     if (price == null || price <= 0 || price > 20000) {
       return { ok: false, error: "Escribe el precio general en quetzales, mayor que cero." };
     }
+    const range = priceGuideRange(input.lowGtq, input.highGtq);
+    if (!range.ok) return range;
     return {
       ok: true,
       guide: {
@@ -340,6 +346,8 @@ export function preparePriceGuide(input: {
         priceGtq: roundMoney(price),
         adjustmentGtq: null,
         comparableBrands: [],
+        lowGtq: range.lowGtq,
+        highGtq: range.highGtq,
       },
     };
   }
@@ -364,8 +372,27 @@ export function preparePriceGuide(input: {
       priceGtq: null,
       adjustmentGtq: adjustment == null ? null : roundMoney(adjustment),
       comparableBrands,
+      lowGtq: null,
+      highGtq: null,
     },
   };
+}
+
+function priceGuideRange(
+  lowValue: unknown,
+  highValue: unknown
+): { ok: true; lowGtq: number | null; highGtq: number | null } | { ok: false; error: string } {
+  const lowBlank = lowValue == null || lowValue === "";
+  const highBlank = highValue == null || highValue === "";
+  if (lowBlank && highBlank) return { ok: true, lowGtq: null, highGtq: null };
+  if (lowBlank || highBlank) return { ok: false, error: "Escribe el precio más bajo y el más alto del rango." };
+  const low = finiteAmount(lowValue);
+  const high = finiteAmount(highValue);
+  if (low == null || high == null || low <= 0 || high <= 0 || low > 20000 || high > 20000) {
+    return { ok: false, error: "El rango tiene que ser en quetzales, mayor que cero." };
+  }
+  if (low > high) return { ok: false, error: "El precio más bajo no puede pasar del más alto." };
+  return { ok: true, lowGtq: roundMoney(low), highGtq: roundMoney(high) };
 }
 
 function finiteAmount(value: unknown): number | null {

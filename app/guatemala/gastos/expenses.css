@@ -87,6 +87,17 @@
   font-weight: 800;
 }
 
+.gt-price-advice {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0.8rem;
+}
+
+.gt-price-advice p {
+  margin: 0;
+  font-weight: 700;
+}
+
 @media (max-width: 640px) {
   .gt-expense-actions .btn,
   .gt-expense-form .gt-inventory-actions .btn {

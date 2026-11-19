@@ -6,6 +6,7 @@ import { guatemalaRequest } from "../request";
 import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
 import { GARMENT_KIND_CHOICES, storePriceProposal } from "@/lib/markets/guatemala-price-match";
 import type { StorePriceGuide } from "@/lib/markets/guatemala-price-match";
+import type { PricingSettingsInput } from "@/lib/markets/guatemala-sale-advice";
 
 interface GuideRow extends StorePriceGuide {
   id: string;
@@ -17,8 +18,17 @@ const EMPTY = {
   garment: "polo",
   condition: "nuevo",
   priceGtq: "",
+  lowGtq: "",
+  highGtq: "",
   adjustmentGtq: "",
   comparableBrands: "",
+};
+
+const EMPTY_SETTINGS = {
+  monthlySalaryGtq: "",
+  otherMonthlyExpensesGtq: "",
+  expectedMonthlySales: "",
+  minimumProfitGtq: "",
 };
 
 export function PriceGuideScreen() {
@@ -33,9 +43,13 @@ export function PriceGuideScreen() {
     condition: requestedCondition || EMPTY.condition,
   });
   const [savedForm, setSavedForm] = useState(form);
-  useUnsavedChanges(JSON.stringify(form) !== JSON.stringify(savedForm));
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [pricing, setPricing] = useState(EMPTY_SETTINGS);
+  const [savedPricing, setSavedPricing] = useState(EMPTY_SETTINGS);
+  const [pricingError, setPricingError] = useState("");
+  const [pricingNotice, setPricingNotice] = useState("");
+  useUnsavedChanges(JSON.stringify(form) !== JSON.stringify(savedForm) || JSON.stringify(pricing) !== JSON.stringify(savedPricing));
 
   async function load() {
     if (!clientId) {
@@ -43,7 +57,21 @@ export function PriceGuideScreen() {
       setError("Falta la tienda.");
       return;
     }
-    const response = await guatemalaRequest(`/api/markets/guatemala/price-guides?clientId=${encodeURIComponent(clientId)}`);
+    const [response, pricingResponse] = await Promise.all([
+      guatemalaRequest(`/api/markets/guatemala/price-guides?clientId=${encodeURIComponent(clientId)}`),
+      guatemalaRequest(`/api/markets/guatemala/pricing-settings?clientId=${encodeURIComponent(clientId)}`),
+    ]);
+    const pricingBody = (await pricingResponse.json()) as { ok?: boolean; settings?: PricingSettingsInput | null };
+    if (pricingResponse.ok && pricingBody.ok && pricingBody.settings) {
+      const next = {
+        monthlySalaryGtq: pricingBody.settings.monthlySalaryGtq,
+        otherMonthlyExpensesGtq: pricingBody.settings.otherMonthlyExpensesGtq,
+        expectedMonthlySales: String(pricingBody.settings.expectedMonthlySales),
+        minimumProfitGtq: pricingBody.settings.minimumProfitGtq,
+      };
+      setPricing(next);
+      setSavedPricing(next);
+    }
     const data = (await response.json()) as { ok?: boolean; guides?: GuideRow[]; error?: string };
     if (!response.ok || !data.ok) {
       setError(data.error || "No se pudo cargar la tabla de precios.");
@@ -81,6 +109,8 @@ export function PriceGuideScreen() {
       garment: form.garment,
       condition: form.condition,
       priceGtq: form.scope === "general" ? Number(form.priceGtq) : null,
+      lowGtq: form.scope === "general" && form.lowGtq !== "" ? Number(form.lowGtq) : null,
+      highGtq: form.scope === "general" && form.highGtq !== "" ? Number(form.highGtq) : null,
       adjustmentGtq: form.scope === "brand" && form.adjustmentGtq !== "" ? Number(form.adjustmentGtq) : null,
       comparableBrands: form.scope === "brand" ? form.comparableBrands : "",
     });
@@ -93,6 +123,28 @@ export function PriceGuideScreen() {
     setForm(next);
     setSavedForm(next);
     await load();
+  }
+
+  async function savePricing(event: FormEvent) {
+    event.preventDefault();
+    setPricingError("");
+    setPricingNotice("");
+    const response = await guatemalaRequest("/api/markets/guatemala/pricing-settings", {
+      clientId,
+      monthlySalaryGtq: pricing.monthlySalaryGtq,
+      otherMonthlyExpensesGtq: pricing.otherMonthlyExpensesGtq,
+      expectedMonthlySales: pricing.expectedMonthlySales,
+      minimumProfitGtq: pricing.minimumProfitGtq,
+    });
+    const data = (await response.json()) as { ok?: boolean; error?: string; expenseShareGtq?: string | null };
+    if (!response.ok || !data.ok) {
+      setPricingError(data.error || "No se pudo guardar la configuración.");
+      return;
+    }
+    setSavedPricing(pricing);
+    setPricingNotice(
+      data.expenseShareGtq ? `Cada prenda carga ${data.expenseShareGtq} quetzales de gastos de la tienda.` : "Configuración guardada."
+    );
   }
 
   async function remove(id: string) {
@@ -118,6 +170,32 @@ export function PriceGuideScreen() {
         Un ajuste de marca solo se aplica cuando lo guardas. La cifra se llama estimación de la tienda y no es un
         precio comprobado del mercado.
       </p>
+      <form onSubmit={(event) => void savePricing(event)} style={{ display: "grid", gap: "0.6rem", maxWidth: "36rem" }}>
+        <h2>Gastos para el precio mínimo</h2>
+        <p>
+          El sueldo y los demás gastos del mes se dividen entre las prendas que esperas vender. Esa parte se suma al
+          costo y a la ganancia mínima, y el resultado se redondea hacia arriba.
+        </p>
+        <label>
+          Sueldo mensual
+          <input value={pricing.monthlySalaryGtq} inputMode="decimal" onChange={(event) => setPricing({ ...pricing, monthlySalaryGtq: event.target.value })} required />
+        </label>
+        <label>
+          Demás gastos mensuales
+          <input value={pricing.otherMonthlyExpensesGtq} inputMode="decimal" onChange={(event) => setPricing({ ...pricing, otherMonthlyExpensesGtq: event.target.value })} required />
+        </label>
+        <label>
+          Prendas que esperas vender al mes
+          <input value={pricing.expectedMonthlySales} inputMode="numeric" onChange={(event) => setPricing({ ...pricing, expectedMonthlySales: event.target.value })} required />
+        </label>
+        <label>
+          Ganancia mínima por prenda
+          <input value={pricing.minimumProfitGtq} inputMode="decimal" onChange={(event) => setPricing({ ...pricing, minimumProfitGtq: event.target.value })} required />
+        </label>
+        {pricingError ? <p>{pricingError}</p> : null}
+        {pricingNotice ? <p>{pricingNotice}</p> : null}
+        <button className="btn btn-primary" type="submit">Guardar configuración</button>
+      </form>
       {error && <p>{error}</p>}
       {!loading && proposal && (
         <section>
@@ -163,6 +241,7 @@ export function PriceGuideScreen() {
           </select>
         </label>
         {form.scope === "general" ? (
+          <>
           <label>
             Precio general en quetzales
             <input
@@ -174,6 +253,29 @@ export function PriceGuideScreen() {
               required
             />
           </label>
+          <label>
+            Precio más bajo del rango
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={form.lowGtq}
+              onChange={(event) => setForm({ ...form, lowGtq: event.target.value })}
+              placeholder="Opcional"
+            />
+          </label>
+          <label>
+            Precio más alto del rango
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={form.highGtq}
+              onChange={(event) => setForm({ ...form, highGtq: event.target.value })}
+              placeholder="Opcional"
+            />
+          </label>
+          </>
         ) : (
           <>
             <label>
@@ -222,7 +324,9 @@ function guideLabel(guide: StorePriceGuide): string {
   const kind = GARMENT_KIND_CHOICES.find((choice) => choice.key === guide.garment)?.label ?? guide.garment;
   const condition = guide.condition === "nuevo" ? "nueva" : "usada";
   if (guide.scope === "general" && guide.priceGtq != null) {
-    return `${kind} · ${condition} · precio general · Q${guide.priceGtq.toFixed(2)}`;
+    const range =
+      guide.lowGtq != null && guide.highGtq != null ? ` · rango Q${guide.lowGtq.toFixed(2)} a Q${guide.highGtq.toFixed(2)}` : "";
+    return `${kind} · ${condition} · precio general · Q${guide.priceGtq.toFixed(2)}${range}`;
   }
   const adjustment =
     guide.adjustmentGtq == null

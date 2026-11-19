@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { applyRotatedPhoto, photoRevision, rotatePhotoClockwise } from "@/lib/photos/rotate";
 import { RotatePhotoButton } from "../../RotatePhotoButton";
 import {
@@ -12,6 +12,15 @@ import {
   type InventoryPhoto,
 } from "@/lib/markets/guatemala-inventory";
 import { REGISTRATION_MESSAGES, skuFromRegistrationScan } from "@/lib/markets/guatemala-registration";
+import type { StorePriceGuide } from "@/lib/markets/guatemala-price-match";
+import {
+  SALE_ADVICE_MESSAGES,
+  adviseSalePrice,
+  priceIsBelowMinimum,
+  quetzalLabel,
+  supportPhotoSuggestions,
+  type PricingSettingsInput,
+} from "@/lib/markets/guatemala-sale-advice";
 import { garmentQrText } from "@/lib/markets/guatemala-qr";
 import { RegistrationQrCamera } from "../escanear/qr-camera";
 import { useUnsavedChanges } from "../return-home";
@@ -33,25 +42,83 @@ export function QuickAddForm({
   request,
   onCreated,
   onSearchExisting,
+  showStaffMargin = false,
 }: {
   clientId: string;
-  lots: { id: string; lotNumber: number; name: string }[];
+  lots: { id: string; lotNumber: number; name: string; averageGtq?: string | null }[];
   request: StoreRequest;
+  showStaffMargin?: boolean;
   onCreated: (sku: string) => void;
   onSearchExisting: (sku: string) => void;
 }) {
   const [sku, setSku] = useState("");
   const [itemType, setItemType] = useState("");
+  const [brand, setBrand] = useState("");
   const [size, setSize] = useState("");
+  const [condition, setCondition] = useState("");
+  const [individualCost, setIndividualCost] = useState("");
   const [price, setPrice] = useState("");
   const [lotId, setLotId] = useState("");
   const [error, setError] = useState("");
+  const [labelNote, setLabelNote] = useState("");
   const [existing, setExisting] = useState<ExistingSku | null>(null);
   const [saving, setSaving] = useState(false);
+  const [readingPhotos, setReadingPhotos] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
-  const [photo, setPhoto] = useState<{ mediaType: string; data: string } | null>(null);
-  const dirty = Boolean(sku || itemType || size || price || lotId || cameraOn || photo);
+  const [garmentPhoto, setGarmentPhoto] = useState<{ mediaType: string; data: string } | null>(null);
+  const [labelPhoto, setLabelPhoto] = useState<{ mediaType: string; data: string } | null>(null);
+  const [guides, setGuides] = useState<StorePriceGuide[]>([]);
+  const [settings, setSettings] = useState<PricingSettingsInput | null>(null);
+  const readKey = useRef("");
+  const dirty = Boolean(sku || itemType || brand || size || condition || individualCost || price || lotId || cameraOn || garmentPhoto || labelPhoto);
   useUnsavedChanges(dirty && !saving);
+  const lotAverage = lots.find((lot) => lot.id === lotId)?.averageGtq ?? null;
+  const advice = adviseSalePrice({
+    itemType,
+    brand,
+    condition,
+    individualCost,
+    lotAverage,
+    settings,
+    guides,
+  });
+  const belowMinimum = priceIsBelowMinimum(price, advice.minimumGtq);
+
+  useEffect(() => {
+    if (!clientId) return;
+    let cancel = false;
+    void (async () => {
+      try {
+        const [guideResponse, settingsResponse] = await Promise.all([
+          request(`/api/markets/guatemala/price-guides?clientId=${encodeURIComponent(clientId)}`),
+          request(`/api/markets/guatemala/pricing-settings?clientId=${encodeURIComponent(clientId)}`),
+        ]);
+        const guideBody = (await guideResponse.json()) as { ok?: boolean; guides?: StorePriceGuide[] };
+        const settingsBody = (await settingsResponse.json()) as { ok?: boolean; settings?: PricingSettingsInput | null };
+        if (cancel) return;
+        setGuides(guideResponse.ok && guideBody.ok ? guideBody.guides ?? [] : []);
+        setSettings(settingsResponse.ok && settingsBody.ok ? settingsBody.settings ?? null : null);
+      } catch {
+        if (!cancel) {
+          setGuides([]);
+          setSettings(null);
+        }
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+    // storeRequest is recreated on each render. The selected store is the client id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  useEffect(() => {
+    if (!garmentPhoto || !labelPhoto) return;
+    const key = `${garmentPhoto.data}\n${labelPhoto.data}`;
+    if (readKey.current === key) return;
+    readKey.current = key;
+    void readSupportPair(garmentPhoto, labelPhoto);
+  }, [garmentPhoto, labelPhoto]);
 
   async function warnIfSkuExists(value: string) {
     const trimmed = value.trim();
@@ -113,13 +180,47 @@ export function QuickAddForm({
     await warnIfSkuExists(scan.sku);
   }
 
+  async function readSupportPair(
+    garment: { mediaType: string; data: string },
+    label: { mediaType: string; data: string }
+  ) {
+    setReadingPhotos(true);
+    setLabelNote("");
+    try {
+      const response = await request("/api/markets/guatemala/publicar/preparar", {
+        images: [
+          { mediaType: garment.mediaType, data: garment.data },
+          { mediaType: label.mediaType, data: label.data },
+        ],
+      });
+      const body = (await response.json()) as {
+        ok?: boolean;
+        listing?: { itemType?: string; title?: string; brand?: string; size?: string; condition?: string };
+      };
+      if (!response.ok || !body.ok || !body.listing) {
+        setLabelNote(SALE_ADVICE_MESSAGES.labelUnread);
+        return;
+      }
+      const suggestions = supportPhotoSuggestions(body.listing);
+      setItemType((current) => current || suggestions.itemType);
+      setBrand((current) => current || suggestions.brand);
+      setSize((current) => current || suggestions.size);
+      setCondition((current) => current || suggestions.condition);
+      setLabelNote(suggestions.labelReadable ? "" : SALE_ADVICE_MESSAGES.labelUnread);
+    } catch {
+      setLabelNote(SALE_ADVICE_MESSAGES.labelUnread);
+    } finally {
+      setReadingPhotos(false);
+    }
+  }
+
   async function save() {
     if (saving) return;
     if (existing) {
       setError(REGISTRATION_MESSAGES.already);
       return;
     }
-    const prepared = prepareUnpublishedItem({ clientId, sku, itemType, size, price, lotId });
+    const prepared = prepareUnpublishedItem({ clientId, sku, itemType, brand, size, condition, price, lotId });
     if (!prepared.ok) {
       setExisting(null);
       setError(prepared.error);
@@ -133,10 +234,15 @@ export function QuickAddForm({
         clientId,
         sku: prepared.item.sku,
         itemType: prepared.item.itemType,
+        brand: prepared.item.brand,
         size: prepared.item.size,
+        condition: prepared.item.condition,
         price: prepared.item.priceGtq,
         lotId: prepared.item.lotId,
-        photo: photo ? { mediaType: photo.mediaType, data: photo.data } : undefined,
+        cost: advice.costSource === "individual" ? advice.costGtq : undefined,
+        supportPhotos: [garmentPhoto && { role: "prenda", ...garmentPhoto }, labelPhoto && { role: "etiqueta", ...labelPhoto }].filter(
+          (entry) => entry
+        ),
       });
       const body = (await response.json()) as {
         ok?: boolean;
@@ -167,7 +273,7 @@ export function QuickAddForm({
     >
       <h3>Agregar artículo sin foto</h3>
       <p className="gt-expense-note">
-        Queda en el inventario como disponible y sin publicar. La foto, si la tomas, se guarda en esta misma ficha y no sale en el catálogo. El lote es opcional.
+        Queda en el inventario como disponible y sin publicar. Las fotos de la prenda y de la etiqueta son internas y no salen en el catálogo. El lote es opcional.
       </p>
       <label>
         SKU
@@ -197,6 +303,21 @@ export function QuickAddForm({
       </div>
       <p>Puedes escribir el SKU o usar un lector. El artículo se guarda al pulsar Guardar.</p>
       <RegistrationQrCamera active={cameraOn} onCode={(text) => void fillSku(text)} onClose={() => setCameraOn(false)} />
+      <SupportPhotoField
+        legend="Foto de la prenda"
+        photo={garmentPhoto}
+        onPhoto={setGarmentPhoto}
+        onError={setError}
+      />
+      <SupportPhotoField
+        legend="Foto de la etiqueta"
+        photo={labelPhoto}
+        onPhoto={setLabelPhoto}
+        onError={setError}
+      />
+      {readingPhotos ? <p role="status">Leyendo la prenda y la etiqueta…</p> : null}
+      {labelNote ? <p className="note">{labelNote}</p> : null}
+      <p className="gt-expense-note">Si la etiqueta falta o no se lee, escribe la marca y la talla.</p>
       <label>
         Tipo de artículo
         <select value={itemType} onChange={(event) => setItemType(event.target.value)}>
@@ -209,14 +330,36 @@ export function QuickAddForm({
         </select>
       </label>
       <label>
+        Marca
+        <input value={brand} placeholder="Opcional" onChange={(event) => setBrand(event.target.value)} />
+      </label>
+      <label>
         Talla
         <input value={size} placeholder="Opcional" onChange={(event) => setSize(event.target.value)} />
       </label>
       <label>
-        Precio
+        Estado de la prenda
+        <select value={condition} onChange={(event) => setCondition(event.target.value)}>
+          <option value="">Confirma el estado</option>
+          {GUATEMALA_CONDITION_CHOICES.map((choice) => (
+            <option key={choice.value} value={choice.value}>
+              {choice.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Costo individual
         <div className="gt-sale-price">
           <span aria-hidden="true">Q</span>
-          <input inputMode="decimal" autoComplete="off" placeholder="0.00" value={price} onChange={(event) => setPrice(event.target.value)} />
+          <input
+            id="costo-individual"
+            inputMode="decimal"
+            autoComplete="off"
+            placeholder="Si esta prenda tiene el suyo"
+            value={individualCost}
+            onChange={(event) => setIndividualCost(event.target.value)}
+          />
         </div>
       </label>
       <label>
@@ -230,6 +373,19 @@ export function QuickAddForm({
           ))}
         </select>
       </label>
+      <label htmlFor="precio-venta">Precio de venta</label>
+      <div className="gt-sale-price">
+        <span aria-hidden="true">Q</span>
+        <input
+          id="precio-venta"
+          inputMode="decimal"
+          autoComplete="off"
+          placeholder="0.00"
+          value={price}
+          onChange={(event) => setPrice(event.target.value)}
+        />
+      </div>
+      <SaleAdvicePanel advice={advice} belowMinimum={belowMinimum} showStaffMargin={showStaffMargin} onUse={setPrice} />
       {error ? (
         <p className="note note-error" role="alert">
           {error}
@@ -240,48 +396,7 @@ export function QuickAddForm({
           Buscar artículo existente
         </button>
       ) : null}
-      <fieldset>
-        <legend>Tomar o subir foto (opcional)</legend>
-        <div className="gt-inventory-actions">
-          <label className="btn btn-primary">
-            Tomar foto
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              hidden
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                void chooseOptionalPhoto(file, setPhoto, setError);
-              }}
-            />
-          </label>
-          <label className="btn">
-            Elegir imagen
-            <input
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                void chooseOptionalPhoto(file, setPhoto, setError);
-              }}
-            />
-          </label>
-        </div>
-        {photo ? (
-          <div className="gt-photo-search-preview">
-            <img src={`data:${photo.mediaType};base64,${photo.data}`} alt="Vista previa de la prenda" />
-            <button type="button" className="btn" onClick={() => setPhoto(null)}>
-              Quitar foto
-            </button>
-          </div>
-        ) : (
-          <p>Puedes guardar el artículo sin foto.</p>
-        )}
-      </fieldset>
+      <p className="gt-expense-note">Puedes guardar el artículo sin esas fotos.</p>
       <div className="gt-inventory-actions">
         <button type="submit" className="btn btn-primary" disabled={saving || Boolean(existing)}>
           {saving ? "Guardando…" : "Guardar sin publicar"}
@@ -496,6 +611,109 @@ export function UnpublishedEditor({
         </button>
       </div>
     </form>
+  );
+}
+
+function SupportPhotoField({
+  legend,
+  photo,
+  onPhoto,
+  onError,
+}: {
+  legend: string;
+  photo: { mediaType: string; data: string } | null;
+  onPhoto: (photo: { mediaType: string; data: string } | null) => void;
+  onError: (message: string) => void;
+}) {
+  return (
+    <fieldset>
+      <legend>{legend}</legend>
+      <div className="gt-inventory-actions">
+        <label className="btn btn-primary">
+          Tomar foto
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              void chooseOptionalPhoto(file, onPhoto, onError);
+            }}
+          />
+        </label>
+        <label className="btn">
+          Elegir imagen
+          <input
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              void chooseOptionalPhoto(file, onPhoto, onError);
+            }}
+          />
+        </label>
+      </div>
+      {photo ? (
+        <div className="gt-photo-search-preview">
+          <img src={`data:${photo.mediaType};base64,${photo.data}`} alt="" />
+          <button type="button" className="btn" onClick={() => onPhoto(null)}>
+            Quitar foto
+          </button>
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
+function SaleAdvicePanel({
+  advice,
+  belowMinimum,
+  showStaffMargin,
+  onUse,
+}: {
+  advice: ReturnType<typeof adviseSalePrice>;
+  belowMinimum: boolean;
+  showStaffMargin: boolean;
+  onUse: (price: string) => void;
+}) {
+  if (advice.status === "waiting") return null;
+  const cost =
+    advice.costGtq == null
+      ? ""
+      : advice.costSource === "individual"
+        ? `Costo usado: ${quetzalLabel(advice.costGtq)} de esta prenda.`
+        : `Costo usado: ${quetzalLabel(advice.costGtq)}, promedio del lote.`;
+  return (
+    <section className="gt-price-advice" aria-label="Precio sugerido">
+      {cost ? <p>{cost}</p> : null}
+      {advice.status === "ready" && advice.recommendedGtq != null ? (
+        <p>Precio recomendado: {quetzalLabel(advice.recommendedGtq)}</p>
+      ) : null}
+      {advice.notice ? <p>{advice.notice}</p> : null}
+      {showStaffMargin && advice.minimumGtq != null ? (
+        <p>No poner el precio por debajo de: {quetzalLabel(advice.minimumGtq)}</p>
+      ) : null}
+      {showStaffMargin && advice.status === "ready" && advice.recommendedGtq != null && advice.profitGtq ? (
+        <p>
+          Ganancia estimada a {quetzalLabel(advice.recommendedGtq)}: {quetzalLabel(advice.profitGtq)}
+        </p>
+      ) : null}
+      {advice.status === "ready" && advice.recommendedGtq != null ? (
+        <button type="button" className="btn btn-primary" onClick={() => onUse(advice.recommendedGtq!.toFixed(2))}>
+          Usar {quetzalLabel(advice.recommendedGtq)}
+        </button>
+      ) : null}
+      {belowMinimum ? (
+        <p className="note note-error" role="alert">
+          {SALE_ADVICE_MESSAGES.belowMinimum}
+          {showStaffMargin && advice.minimumGtq != null ? ` No lo pongas por debajo de ${quetzalLabel(advice.minimumGtq)}.` : ""}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

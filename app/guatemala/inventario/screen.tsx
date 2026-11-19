@@ -150,7 +150,7 @@ export function InventoryScreen({
   const [publicationError, setPublicationError] = useState("");
   const [publicationNotice, setPublicationNotice] = useState("");
   const [savingPublication, setSavingPublication] = useState(false);
-  const [lotChoices, setLotChoices] = useState<{ id: string; lotNumber: number; name: string }[]>([]);
+  const [lotChoices, setLotChoices] = useState<{ id: string; lotNumber: number; name: string; averageGtq?: string | null }[]>([]);
   const [assignLotId, setAssignLotId] = useState("");
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [photoSearchOpen, setPhotoSearchOpen] = useState(false);
@@ -291,7 +291,7 @@ export function InventoryScreen({
     if (!clientId) return;
     void storeRequest(`/api/markets/guatemala/lots?clientId=${encodeURIComponent(clientId)}`)
       .then((response) => response.json())
-      .then((body: { ok?: boolean; lots?: { id: string; lotNumber: number; name: string; status: string }[] }) => {
+      .then((body: { ok?: boolean; lots?: { id: string; lotNumber: number; name: string; status: string; averageGtq?: string | null }[] }) => {
         if (!body.ok) return;
         setLotChoices((body.lots ?? []).filter((lot) => lot.status === "activo"));
       })
@@ -1190,6 +1190,7 @@ export function InventoryScreen({
               <QuickAddForm
                 clientId={clientId}
                 lots={lotChoices}
+                showStaffMargin={staffMode}
                 request={storeRequest}
                 onCreated={(sku) => {
                   setQuickAddOpen(false);

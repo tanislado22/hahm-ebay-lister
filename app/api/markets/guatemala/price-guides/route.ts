@@ -45,6 +45,8 @@ export async function POST(request: NextRequest) {
       priceGtq: body.priceGtq,
       adjustmentGtq: body.adjustmentGtq,
       comparableBrands: body.comparableBrands,
+      lowGtq: body.lowGtq,
+      highGtq: body.highGtq,
     });
     if (!result.ok) return NextResponse.json(result, { status: 400 });
     return NextResponse.json(result);

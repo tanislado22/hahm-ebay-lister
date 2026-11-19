@@ -187,6 +187,15 @@ async function createGuatemalaInventoryTables(): Promise<void> {
     ON guatemala_inventory_items (client_id)
   `;
   await sql`
+    CREATE TABLE IF NOT EXISTS guatemala_support_photos (
+      id TEXT PRIMARY KEY,
+      item_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      data TEXT NOT NULL
+    )
+  `;
+  await sql`
     ALTER TABLE guatemala_inventory_items
     ADD COLUMN IF NOT EXISTS lot_id TEXT
   `;
@@ -600,6 +609,24 @@ export async function saveGuatemalaInventoryItem(
   return runInventorySave(postgresRepository(), input, clientIsGuatemala, createdBy);
 }
 
+function readSupportPhotos(
+  value: unknown
+): { ok: true; photos: { role: "prenda" | "etiqueta"; mediaType: string; data: string }[] } | { ok: false; error: string } {
+  if (value == null) return { ok: true, photos: [] };
+  if (!Array.isArray(value)) return { ok: false, error: "No se pudieron leer las fotos internas." };
+  const photos: { role: "prenda" | "etiqueta"; mediaType: string; data: string }[] = [];
+  for (const entry of value.slice(0, 2)) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as { role?: unknown; mediaType?: unknown; data?: unknown };
+    if (record.role !== "prenda" && record.role !== "etiqueta") continue;
+    const decoded = decodeInventoryPhoto(record.mediaType, record.data);
+    if (!decoded.ok) return { ok: false, error: decoded.error };
+    if (!decoded.photo) continue;
+    photos.push({ role: record.role, mediaType: decoded.photo.mediaType, data: decoded.photo.data });
+  }
+  return { ok: true, photos };
+}
+
 export async function saveUnpublishedGuatemalaItem(input: {
   clientId: string;
   actor: SaleActor;
@@ -608,13 +635,21 @@ export async function saveUnpublishedGuatemalaItem(input: {
   size?: unknown;
   price?: unknown;
   lotId?: unknown;
+  brand?: unknown;
+  condition?: unknown;
+  cost?: unknown;
   photo?: unknown;
+  supportPhotos?: unknown;
 }): Promise<
   | { ok: true; item: { id: string; sku: string; title: string; priceGtq: string; published: false; status: "disponible" }; message: string }
   | { ok: false; status: 400 | 403 | 409; error: string; existing?: { id: string; sku: string; title: string } }
 > {
   const prepared = prepareUnpublishedItem({ ...input, clientId: input.clientId });
   if (!prepared.ok) return prepared;
+  const support = readSupportPhotos(input.supportPhotos);
+  if (!support.ok) return { ok: false, status: 400, error: support.error };
+  const garmentCost = prepareGarmentCost({ cost: input.cost });
+  if (!garmentCost.ok) return garmentCost;
   const photoRecord = input.photo && typeof input.photo === "object" ? (input.photo as { mediaType?: unknown; data?: unknown }) : {};
   const decodedPhoto = decodeInventoryPhoto(photoRecord.mediaType, photoRecord.data);
   if (!decodedPhoto.ok) return { ok: false, status: 400, error: decodedPhoto.error };
@@ -647,9 +682,9 @@ export async function saveUnpublishedGuatemalaItem(input: {
       ${prepared.item.sku},
       ${prepared.item.title},
       '',
-      '',
+      ${prepared.item.brand},
       ${prepared.item.size},
-      '',
+      ${prepared.item.condition},
       ${prepared.item.priceGtq}::numeric,
       'GTQ',
       ${GUATEMALA_INVENTORY_STATUS},
@@ -697,6 +732,19 @@ export async function saveUnpublishedGuatemalaItem(input: {
       await sql`DELETE FROM guatemala_inventory_items WHERE id = ${itemId} AND client_id = ${input.clientId}`;
       throw error;
     }
+  }
+  if (garmentCost.costGtq) {
+    await sql`
+      UPDATE guatemala_inventory_items
+      SET cost_gtq = ${garmentCost.costGtq}::numeric
+      WHERE id = ${itemId} AND client_id = ${input.clientId}
+    `;
+  }
+  for (const supportPhoto of support.photos) {
+    await sql`
+      INSERT INTO guatemala_support_photos (id, item_id, role, media_type, data)
+      VALUES (${crypto.randomUUID()}, ${itemId}, ${supportPhoto.role}, ${supportPhoto.mediaType}, ${supportPhoto.data})
+    `;
   }
   return {
     ok: true,
