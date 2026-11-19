@@ -2,9 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import { formatStoredQuetzales, quetzalPriceText } from "@/lib/markets/guatemala-inventory";
-import { scanLotLabel, scanSaleDecision } from "@/lib/markets/guatemala-qr";
+import {
+  QR_MESSAGES,
+  addGarmentToSale,
+  garmentQrText,
+  readScannedLabel,
+  scanLotLabel,
+} from "@/lib/markets/guatemala-qr";
 import { addPricedPiece, removePricedPiece, skuLessCharge, type PricedPieceLine } from "@/lib/markets/guatemala-skuless";
 import { PriceQrScanner } from "./price-qr";
+import { SaleGarmentScanner } from "./sale-scan";
 import {
   QUANTITY_MESSAGES,
   pieceCount,
@@ -130,6 +137,7 @@ export function QuantitySalePanel({
   clientId,
   request,
   initialItems,
+  startCamera = false,
   onClose,
   onSaved,
   onOpenSkuLess,
@@ -137,6 +145,7 @@ export function QuantitySalePanel({
   clientId: string;
   request: Request;
   initialItems: SkuPick[];
+  startCamera?: boolean;
   onClose: () => void;
   onSaved: () => void;
   onOpenSkuLess: () => void;
@@ -144,8 +153,14 @@ export function QuantitySalePanel({
   const [groups, setGroups] = useState<QuantityGroupView[]>([]);
   const [lines, setLines] = useState<{ groupId: string; quantity: string }[]>([]);
   const [items, setItems] = useState<SkuPick[]>(initialItems);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const lookupRef = useRef(false);
+  const [cameraOn, setCameraOn] = useState(startCamera);
+  const [scanNotice, setScanNotice] = useState("");
   const [skuDraft, setSkuDraft] = useState("");
   const [choices, setChoices] = useState<SkuPick[]>([]);
+  const [choiceSource, setChoiceSource] = useState<"scan" | "sku">("sku");
   const [chargedDraft, setChargedDraft] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<SalePaymentMethod>("efectivo");
   const [cashDraft, setCashDraft] = useState("");
@@ -160,6 +175,10 @@ export function QuantitySalePanel({
   useEffect(() => {
     void loadGroups(clientId, requestRef.current, setGroups);
   }, [clientId]);
+  useEffect(() => {
+    if (!startCamera) return;
+    document.getElementById("registrar-venta")?.scrollIntoView({ block: "start" });
+  }, [startCamera]);
 
   const chargedPrice = quetzalPriceText(chargedDraft);
   const prepared = chargedPrice
@@ -185,6 +204,42 @@ export function QuantitySalePanel({
     setLines((current) => [...current, { groupId, quantity: "1" }]);
   }
 
+  function applyPick(pick: SkuPick | undefined, source: "scan" | "sku") {
+    if (!pick) return;
+    const next = addGarmentToSale(itemsRef.current, pick);
+    if (!next.added) {
+      if (source === "scan") setScanNotice(next.notice);
+      else setError(next.notice);
+      if (source === "sku") setChoices([]);
+      return;
+    }
+    itemsRef.current = next.items;
+    setItems(next.items);
+    setScanNotice("");
+    setError("");
+    setChoices([]);
+    setSkuDraft("");
+    if (source === "scan") {
+      setCameraOn(false);
+      window.setTimeout(() => document.getElementById("ticket-total")?.focus(), 0);
+    }
+  }
+
+  function picksFromBody(body: {
+    choice?: "one" | "many";
+    garment?: { id: string; sku: string; title: string; status: string; lotNumber: number | null; lotName: string | null };
+    garments?: { id: string; sku: string; title: string; status: string; lotNumber: number | null; lotName: string | null }[];
+  }): SkuPick[] {
+    const found = body.choice === "many" ? body.garments ?? [] : body.garment ? [body.garment] : [];
+    return found.map((garment) => ({
+      id: garment.id,
+      sku: garment.sku,
+      title: garment.title,
+      lotLabel: scanLotLabel(garment.lotNumber, garment.lotName),
+      status: garment.status,
+    }));
+  }
+
   async function searchSku(event: React.FormEvent) {
     event.preventDefault();
     const sku = skuDraft.trim();
@@ -205,32 +260,62 @@ export function QuantitySalePanel({
       setError(body.error || "No se encontró la prenda.");
       return;
     }
-    const found = body.choice === "many" ? body.garments ?? [] : body.garment ? [body.garment] : [];
-    const picks = found.map((garment) => ({
-      id: garment.id,
-      sku: garment.sku,
-      title: garment.title,
-      lotLabel: scanLotLabel(garment.lotNumber, garment.lotName),
-      status: garment.status,
-    }));
+    const picks = picksFromBody(body);
     if (picks.length > 1) {
+      setChoiceSource("sku");
       setChoices(picks);
       return;
     }
-    addSku(picks[0]);
+    applyPick(picks[0], "sku");
   }
 
-  function addSku(pick: SkuPick | undefined) {
-    if (!pick) return;
-    const decision = scanSaleDecision(pick.status);
-    if (!decision.canSell) {
-      setError(decision.message);
+  function onScannedText(text: string): boolean {
+    if (lookupRef.current || savingRef.current) return false;
+    lookupRef.current = true;
+    void lookupScanned(text).finally(() => {
+      lookupRef.current = false;
+    });
+    return true;
+  }
+
+  async function lookupScanned(text: string) {
+    const read = readScannedLabel(text);
+    if (!read.ok) {
+      setScanNotice(read.error);
       return;
     }
-    setChoices([]);
-    setSkuDraft("");
-    setError("");
-    setItems((current) => (current.some((item) => item.id === pick.id) ? current : [...current, pick]));
+    const params = new URLSearchParams({ clientId });
+    if (read.kind === "code") params.set("codigo", garmentQrText(read.itemId));
+    else params.set("sku", read.sku);
+    try {
+      const response = await request(`/api/markets/guatemala/inventory/qr?${params.toString()}`);
+      const body = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        choice?: "one" | "many";
+        garment?: { id: string; sku: string; title: string; status: string; lotNumber: number | null; lotName: string | null };
+        garments?: { id: string; sku: string; title: string; status: string; lotNumber: number | null; lotName: string | null }[];
+      };
+      if (!response.ok || !body.ok) {
+        setScanNotice(body.error || (read.kind === "code" ? QR_MESSAGES.unknownCode : QR_MESSAGES.unknownSku));
+        return;
+      }
+      const picks = picksFromBody(body);
+      if (picks.length > 1) {
+        setChoiceSource("scan");
+        setChoices(picks);
+        setScanNotice("");
+        setCameraOn(false);
+        return;
+      }
+      if (!picks[0]) {
+        setScanNotice(read.kind === "code" ? QR_MESSAGES.unknownCode : QR_MESSAGES.unknownSku);
+        return;
+      }
+      applyPick(picks[0], "scan");
+    } catch {
+      setScanNotice("No se pudo buscar la prenda.");
+    }
   }
 
   async function save() {
@@ -263,7 +348,9 @@ export function QuantitySalePanel({
       }
       setNotice(`Venta registrada por ${formatStoredQuetzales(body.chargedPriceGtq)}.`);
       setLines([]);
+      itemsRef.current = [];
       setItems([]);
+      setScanNotice("");
       requestIdRef.current = "";
       await loadGroups(clientId, request, setGroups);
       onSaved();
@@ -276,8 +363,30 @@ export function QuantitySalePanel({
   }
 
   return (
-    <section className="panel">
+    <section className="panel" id="registrar-venta">
       <h2>Registrar venta</h2>
+      {cameraOn ? (
+        <SaleGarmentScanner active={cameraOn && !saving} onText={onScannedText} onClose={() => setCameraOn(false)} />
+      ) : (
+        <div className="gt-inventory-actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={saving}
+            onClick={() => {
+              setScanNotice("");
+              setCameraOn(true);
+            }}
+          >
+            Escanear otra prenda
+          </button>
+        </div>
+      )}
+      {scanNotice ? (
+        <p className="note note-error" role="alert">
+          {scanNotice}
+        </p>
+      ) : null}
       <button type="button" className="btn btn-ghost" onClick={onOpenSkuLess}>
         Venta sin SKU
       </button>
@@ -331,7 +440,7 @@ export function QuantitySalePanel({
       {choices.length > 1 ? (
         <div className="gt-scan-choices">
           {choices.map((choice) => (
-            <button key={choice.id} type="button" className="btn btn-ghost gt-scan-choice" onClick={() => addSku(choice)}>
+            <button key={choice.id} type="button" className="btn btn-ghost gt-scan-choice" onClick={() => applyPick(choice, choiceSource)}>
               {choice.title || "Prenda sin título"} · SKU {choice.sku} · {choice.lotLabel}
             </button>
           ))}

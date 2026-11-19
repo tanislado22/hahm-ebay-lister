@@ -154,6 +154,7 @@ export function InventoryScreen({
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [photoSearchOpen, setPhotoSearchOpen] = useState(false);
   const [quantitySale, setQuantitySale] = useState<{ id: string; sku: string; title: string; lotLabel: string; status: string }[] | null>(null);
+  const [saleSession, setSaleSession] = useState(0);
   const [skuLessOpen, setSkuLessOpen] = useState(false);
   const [listVersion, setListVersion] = useState(0);
 
@@ -170,6 +171,7 @@ export function InventoryScreen({
     setPhotoSearchOpen(false);
     setSkuLessOpen(false);
     setQuantitySale([]);
+    setSaleSession((current) => current + 1);
   }, [itemId, launch]);
 
   useEffect(() => {
@@ -566,9 +568,11 @@ export function InventoryScreen({
       ) : null}
       {quantitySale ? (
         <QuantitySalePanel
+          key={saleSession}
           clientId={clientId}
           request={storeRequest}
           initialItems={quantitySale}
+          startCamera={launch === "escanear"}
           onClose={() => setQuantitySale(null)}
           onSaved={() => setListVersion((current) => current + 1)}
           onOpenSkuLess={() => {

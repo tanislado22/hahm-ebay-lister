@@ -57,7 +57,7 @@ export const QR_MESSAGES = {
 export const PRICE_QR_MESSAGES = {
   notGarment: "Esta etiqueta es un precio compartido, no una prenda. Úsala en Registrar venta → Venta sin SKU.",
   notPrice: "Ese QR no es una etiqueta de precio. Usa VSAP:10 o Q10, o escribe las piezas y el total.",
-  garmentOnPrice: "Este QR identifica una prenda del inventario. Usa Escanear QR para vender esa prenda.",
+  garmentOnPrice: "Este QR identifica una prenda del inventario. Usa Escanear para vender.",
   cameraDenied:
     "El navegador no tiene permiso para usar la cámara. Permite la cámara para este sitio y pulsa Escanear QR de precio de nuevo. En iPhone: Ajustes, Safari, Cámara, Permitir. En Android: el candado de la barra de direcciones, Permisos, Cámara, Permitir. También puedes escribir las piezas y el total.",
   cameraMissing: "Este celular no tiene una cámara que se pueda usar. Escribe las piezas y el total.",
@@ -175,6 +175,46 @@ export function scanQuery(input: { codigo?: unknown; sku?: unknown }): ScanQuery
 export function normalizeScanStatus(value: unknown): string {
   if (value === "disponible" || value === "vendida" || value === "retirada") return value;
   return "desconocido";
+}
+
+export const SALE_SCAN_MESSAGES = {
+  duplicate: "Ese SKU ya está en esta venta.",
+} as const;
+
+export interface SaleScanItem {
+  id: string;
+  sku: string;
+  title: string;
+  lotLabel: string;
+  status: string;
+}
+
+/** Adds one available garment to the open sale. Scanning does not save the sale. */
+export function addGarmentToSale<T extends SaleScanItem>(
+  items: readonly T[],
+  garment: T
+): { items: T[]; added: boolean; notice: string } {
+  const decision = scanSaleDecision(garment.status);
+  if (!decision.canSell) return { items: [...items], added: false, notice: decision.message };
+  const sku = garment.sku.trim();
+  if (items.some((item) => item.id === garment.id || item.sku.trim() === sku)) {
+    return { items: [...items], added: false, notice: SALE_SCAN_MESSAGES.duplicate };
+  }
+  return { items: [...items, garment], added: true, notice: "" };
+}
+
+export interface GarmentScanMemory {
+  text: string;
+}
+
+/** One hold of the same label counts once. A different label can be scanned right away. */
+export function takeGarmentScan(
+  memory: GarmentScanMemory | null,
+  raw: string
+): { memory: GarmentScanMemory; text: string | null } {
+  const text = raw.trim();
+  if (!text || (memory && memory.text === text)) return { memory: memory ?? { text }, text: null };
+  return { memory: { text }, text };
 }
 
 export function scanSaleDecision(status: string): { canSell: true } | { canSell: false; message: string } {
