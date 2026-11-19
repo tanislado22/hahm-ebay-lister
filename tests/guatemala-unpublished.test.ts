@@ -38,6 +38,14 @@ describe("artículos sin fotos de Tienda Guatemala", () => {
       "Gorra",
       "Cartera",
     ]);
+    const playera = prepareUnpublishedItem({
+      clientId: "tienda",
+      sku: "PLY-1",
+      itemType: "playera",
+      price: "45",
+    });
+    expect(playera.ok && playera.item).toMatchObject({ itemType: "playera", title: "Playera", priceGtq: "45.00" });
+    expect(UNPUBLISHED_ITEM_TYPES.find((type) => type.id === "playera")?.label).toBe("Playera");
     expect(prepareUnpublishedItem({ clientId: "tienda", sku: "L1-9", itemType: "gorra", price: "25", lotId: "lote-1" }).ok).toBe(
       true
     );

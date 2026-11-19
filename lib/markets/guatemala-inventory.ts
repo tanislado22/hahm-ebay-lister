@@ -64,7 +64,10 @@ export const UNPUBLISHED_ITEM_TYPES = (() => {
   );
   const preferred = PREFERRED_UNPUBLISHED_TYPES.filter((id) => labels.has(id));
   const rest = [...labels.keys()].filter((id) => !preferred.includes(id));
-  return [...preferred, ...rest].map((id) => ({ id, label: labels.get(id) ?? id }));
+  const types = [...preferred, ...rest].map((id) => ({ id, label: labels.get(id) ?? id }));
+  const camiseta = types.findIndex((type) => type.id === "camiseta");
+  types.splice(camiseta >= 0 ? camiseta : types.length, 0, { id: "playera", label: "Playera" });
+  return types;
 })();
 
 export function unpublishedItemType(value: unknown): { id: string; label: string } | null {

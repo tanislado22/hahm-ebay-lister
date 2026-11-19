@@ -168,6 +168,23 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
     expect(preparePricingSettings({ ...configured.settings, expectedMonthlySales: "0" }).ok).toBe(false);
   });
 
+  it("sugiere el precio de una playera y reserva el costo para el dueño", () => {
+    expect(settings.ok).toBe(true);
+    if (!settings.ok) return;
+    const advice = adviseSalePrice({
+      itemType: "playera",
+      condition: "GOOD",
+      lotAverage: "6.14",
+      settings: settings.settings,
+      guides: [guide({ scope: "general", garment: "camiseta", condition: "usado", priceGtq: 45, lowGtq: 45, highGtq: 45 })],
+    });
+    expect(advice.recommendedGtq).toBe(45);
+    const staff = presentSaleAdvice(advice, "encargado");
+    expect(staff).toEqual({ status: "ready", minimumGtq: 25, recommendedGtq: 45, notice: "" });
+    expect(JSON.stringify(staff)).not.toContain("6.14");
+    expect(JSON.stringify(staff)).not.toContain("cost");
+  });
+
   it("deja escribir la marca y la talla cuando la etiqueta no se lee", () => {
     expect(
       supportPhotoSuggestions({ itemType: "Pantalón", brand: "sin etiqueta", size: "", condition: "usado" })
