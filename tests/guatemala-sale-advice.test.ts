@@ -10,6 +10,7 @@ import {
   monthlyExpenseShare,
   preparePricingSettings,
   presentSaleAdvice,
+  saleAdviceGaps,
   priceIsBelowMinimum,
   recommendListedPrice,
   supportPhotoSuggestions,
@@ -158,6 +159,10 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
     const owner = presentSaleAdvice(advice, "propietario");
     expect(owner.costGtq).toBe("6.14");
     expect(owner.costSource).toBe("lot");
+    expect(presentSaleAdvice({ ...advice, status: "need-cost", minimumGtq: null, recommendedGtq: null, notice: "" }, "encargado").notice).toBe(
+      "Todavía no se puede calcular el mínimo."
+    );
+    expect(saleAdviceGaps({})).toEqual(["Elige el tipo de artículo.", "Confirma el estado de la prenda."]);
     expect(garmentCostInputForActor("encargado", "6.14")).toBeUndefined();
     expect(garmentCostInputForActor("propietario", "6.14")).toBe("6.14");
     expect(preparePricingSettings({ ...configured.settings, expectedMonthlySales: "0" }).ok).toBe(false);

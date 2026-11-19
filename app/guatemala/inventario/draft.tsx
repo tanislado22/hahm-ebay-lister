@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { applyRotatedPhoto, photoRevision, rotatePhotoClockwise } from "@/lib/photos/rotate";
 import { RotatePhotoButton } from "../../RotatePhotoButton";
 import {
@@ -16,6 +16,7 @@ import {
   SALE_ADVICE_MESSAGES,
   priceIsBelowMinimum,
   quetzalLabel,
+  saleAdviceGaps,
   supportPhotoSuggestions,
   type QuotedSalePrice,
 } from "@/lib/markets/guatemala-sale-advice";
@@ -62,66 +63,14 @@ export function QuickAddForm({
   const [existing, setExisting] = useState<ExistingSku | null>(null);
   const [saving, setSaving] = useState(false);
   const [readingPhotos, setReadingPhotos] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [garmentPhoto, setGarmentPhoto] = useState<{ mediaType: string; data: string } | null>(null);
   const [labelPhoto, setLabelPhoto] = useState<{ mediaType: string; data: string } | null>(null);
   const [advice, setAdvice] = useState<QuotedSalePrice | null>(null);
-  const readKey = useRef("");
   const dirty = Boolean(sku || itemType || brand || size || condition || individualCost || price || lotId || cameraOn || garmentPhoto || labelPhoto);
   useUnsavedChanges(dirty && !saving);
   const belowMinimum = priceIsBelowMinimum(price, advice?.minimumGtq ?? null);
-
-  useEffect(() => {
-    if (!clientId) return;
-    let cancel = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        try {
-          const response = await request("/api/markets/guatemala/sale-advice", {
-            clientId,
-            itemType,
-            brand,
-            condition,
-            lotId,
-            individualCost: showCosts ? individualCost : undefined,
-          });
-          const body = (await response.json()) as { ok?: boolean; advice?: QuotedSalePrice };
-          if (cancel) return;
-          if (!response.ok || !body.ok || !body.advice) {
-            setAdvice(null);
-            return;
-          }
-          const quote = body.advice;
-          setAdvice(
-            showCosts
-              ? quote
-              : {
-                  status: quote.status,
-                  minimumGtq: quote.minimumGtq,
-                  recommendedGtq: quote.recommendedGtq,
-                  notice: quote.notice,
-                }
-          );
-        } catch {
-          if (!cancel) setAdvice(null);
-        }
-      })();
-    }, 200);
-    return () => {
-      cancel = true;
-      clearTimeout(timer);
-    };
-    // storeRequest is recreated on each render. The quote follows the garment fields.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, itemType, brand, condition, lotId, individualCost, showCosts]);
-
-  useEffect(() => {
-    if (!garmentPhoto || !labelPhoto) return;
-    const key = `${garmentPhoto.data}\n${labelPhoto.data}`;
-    if (readKey.current === key) return;
-    readKey.current = key;
-    void readSupportPair(garmentPhoto, labelPhoto);
-  }, [garmentPhoto, labelPhoto]);
 
   async function warnIfSkuExists(value: string) {
     const trimmed = value.trim();
@@ -183,37 +132,91 @@ export function QuickAddForm({
     await warnIfSkuExists(scan.sku);
   }
 
-  async function readSupportPair(
-    garment: { mediaType: string; data: string },
-    label: { mediaType: string; data: string }
-  ) {
+  async function identifyFromPhotos(current: { itemType: string; brand: string; size: string; condition: string }) {
+    const images = [garmentPhoto, labelPhoto].filter((photo): photo is { mediaType: string; data: string } => Boolean(photo));
+    if (images.length === 0) return current;
     setReadingPhotos(true);
     setLabelNote("");
     try {
-      const response = await request("/api/markets/guatemala/publicar/preparar", {
-        images: [
-          { mediaType: garment.mediaType, data: garment.data },
-          { mediaType: label.mediaType, data: label.data },
-        ],
-      });
+      const response = await request("/api/markets/guatemala/publicar/preparar", { images });
       const body = (await response.json()) as {
         ok?: boolean;
         listing?: { itemType?: string; title?: string; brand?: string; size?: string; condition?: string };
       };
       if (!response.ok || !body.ok || !body.listing) {
         setLabelNote(SALE_ADVICE_MESSAGES.labelUnread);
-        return;
+        return current;
       }
       const suggestions = supportPhotoSuggestions(body.listing);
-      setItemType((current) => current || suggestions.itemType);
-      setBrand((current) => current || suggestions.brand);
-      setSize((current) => current || suggestions.size);
-      setCondition((current) => current || suggestions.condition);
+      const next = {
+        itemType: current.itemType || suggestions.itemType,
+        brand: current.brand || suggestions.brand,
+        size: current.size || suggestions.size,
+        condition: current.condition || suggestions.condition,
+      };
+      setItemType(next.itemType);
+      setBrand(next.brand);
+      setSize(next.size);
+      setCondition(next.condition);
       setLabelNote(suggestions.labelReadable ? "" : SALE_ADVICE_MESSAGES.labelUnread);
+      return next;
     } catch {
       setLabelNote(SALE_ADVICE_MESSAGES.labelUnread);
+      return current;
     } finally {
       setReadingPhotos(false);
+    }
+  }
+
+  async function suggestPrice() {
+    if (suggesting || saving) return;
+    setSuggesting(true);
+    setAdvice(null);
+    try {
+      const identified = await identifyFromPhotos({ itemType, brand, size, condition });
+      const gaps = saleAdviceGaps(identified);
+      if (gaps.length > 0) {
+        setAdvice({ status: "waiting", minimumGtq: null, recommendedGtq: null, notice: gaps.join(" ") });
+        return;
+      }
+      const response = await request("/api/markets/guatemala/sale-advice", {
+        clientId,
+        itemType: identified.itemType,
+        brand: identified.brand,
+        condition: identified.condition,
+        lotId,
+        individualCost: showCosts ? individualCost : undefined,
+      });
+      const body = (await response.json()) as { ok?: boolean; advice?: QuotedSalePrice };
+      if (!response.ok || !body.ok || !body.advice) {
+        setAdvice({
+          status: "need-settings",
+          minimumGtq: null,
+          recommendedGtq: null,
+          notice: "No se pudo calcular el precio. Inténtalo de nuevo.",
+        });
+        return;
+      }
+      const quote = body.advice;
+      setAdvice(
+        showCosts
+          ? quote
+          : {
+              status: quote.status,
+              minimumGtq: quote.minimumGtq,
+              recommendedGtq: quote.recommendedGtq,
+              notice: quote.notice,
+            }
+      );
+    } catch {
+      setAdvice({
+        status: "need-settings",
+        minimumGtq: null,
+        recommendedGtq: null,
+        notice: "No se pudo calcular el precio. Inténtalo de nuevo.",
+      });
+    } finally {
+      setSuggesting(false);
     }
   }
 
@@ -321,6 +324,12 @@ export function QuickAddForm({
       {readingPhotos ? <p role="status">Leyendo la prenda y la etiqueta…</p> : null}
       {labelNote ? <p className="note">{labelNote}</p> : null}
       <p className="gt-expense-note">Si la etiqueta falta o no se lee, escribe la marca y la talla.</p>
+      <div className="gt-inventory-actions">
+        <button type="button" className="btn btn-primary" onClick={() => void suggestPrice()} disabled={suggesting || saving}>
+          {suggesting ? "Calculando…" : "Sugerir precio"}
+        </button>
+      </div>
+      <SaleAdvicePanel advice={advice} showCosts={showCosts} onUse={setPrice} />
       <label>
         Tipo de artículo
         <select value={itemType} onChange={(event) => setItemType(event.target.value)}>
@@ -395,7 +404,6 @@ export function QuickAddForm({
           {SALE_ADVICE_MESSAGES.belowMinimum}
         </p>
       ) : null}
-      <SaleAdvicePanel advice={advice} showCosts={showCosts} onUse={setPrice} />
       {error ? (
         <p className="note note-error" role="alert">
           {error}
@@ -688,7 +696,7 @@ function SaleAdvicePanel({
   showCosts: boolean;
   onUse: (price: string) => void;
 }) {
-  if (!advice || advice.status === "waiting") return null;
+  if (!advice) return null;
   const cost =
     showCosts && advice.costGtq
       ? advice.costSource === "individual"
@@ -706,7 +714,7 @@ function SaleAdvicePanel({
         <p>Precio sugerido {quetzalLabel(advice.recommendedGtq)}</p>
       ) : null}
       {advice.notice ? <p>{advice.notice}</p> : null}
-      {advice.minimumGtq != null ? <p>No vender por debajo de {quetzalLabel(advice.minimumGtq)}</p> : null}
+      {advice.minimumGtq != null ? <p>Precio mínimo {quetzalLabel(advice.minimumGtq)}</p> : null}
       {showCosts && advice.status === "ready" && advice.recommendedGtq != null && advice.profitGtq ? (
         <p>
           Ganancia estimada a {quetzalLabel(advice.recommendedGtq)}: {quetzalLabel(advice.profitGtq)}

@@ -11,7 +11,9 @@ export const SALE_ADVICE_MESSAGES = {
   needCost: "Escribe el costo de la prenda para calcular el precio.",
   needSettings: "El dueño todavía no configuró el sueldo, los gastos mensuales, las ventas estimadas y la ganancia mínima.",
   needDetails: "Elige el tipo y confirma el estado para calcular el precio.",
-  staffNeedCost: "Todavía no se puede sugerir el precio.",
+  staffNeedCost: "Todavía no se puede calcular el mínimo.",
+  needType: "Elige el tipo de artículo.",
+  needCondition: "Confirma el estado de la prenda.",
   staffNeedSettings: "El dueño todavía no configuró los precios.",
   noReference: "Sin referencia de precio",
   review: "Revisar con el dueño",
@@ -99,6 +101,13 @@ export function monthlyExpenseShare(settings: PricingSettingsInput): string | nu
 
 export function garmentCostInputForActor(role: "propietario" | "encargado", cost: unknown): unknown {
   return role === "propietario" ? cost : undefined;
+}
+
+export function saleAdviceGaps(input: { itemType?: string; condition?: string }): string[] {
+  const gaps: string[] = [];
+  if (!unpublishedItemType(input.itemType)) gaps.push(SALE_ADVICE_MESSAGES.needType);
+  if (!conditionBucket(input.condition)) gaps.push(SALE_ADVICE_MESSAGES.needCondition);
+  return gaps;
 }
 
 export function chooseGarmentCost(input: { individual?: unknown; lotAverage?: unknown }): {
@@ -192,8 +201,9 @@ export function adviseSalePrice(input: {
     recommendedGtq: null,
     profitGtq: null,
   };
-  if (!unpublishedItemType(input.itemType) || !conditionBucket(input.condition)) {
-    return { ...base, status: "waiting", notice: SALE_ADVICE_MESSAGES.needDetails };
+  const gaps = saleAdviceGaps(input);
+  if (gaps.length > 0) {
+    return { ...base, status: "waiting", notice: gaps.join(" ") };
   }
   if (!chosen.costGtq) return { ...base, status: "need-cost", notice: SALE_ADVICE_MESSAGES.needCost };
   if (!input.settings || !share) return { ...base, status: "need-settings", notice: SALE_ADVICE_MESSAGES.needSettings };
@@ -249,7 +259,7 @@ export function presentSaleAdvice(advice: SaleAdvice, role: "propietario" | "enc
 function staffSaleNotice(advice: SaleAdvice): string {
   if (advice.status === "need-settings") return SALE_ADVICE_MESSAGES.staffNeedSettings;
   if (advice.status === "need-cost") return SALE_ADVICE_MESSAGES.staffNeedCost;
-  if (advice.status === "waiting") return SALE_ADVICE_MESSAGES.needDetails;
+  if (advice.status === "waiting") return advice.notice || SALE_ADVICE_MESSAGES.needDetails;
   if (advice.status === "no-reference") return SALE_ADVICE_MESSAGES.noReference;
   if (advice.status === "review") return SALE_ADVICE_MESSAGES.review;
   return "";
