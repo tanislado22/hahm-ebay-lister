@@ -10,10 +10,7 @@ import {
   monthlyExpenseShare,
   preparePricingSettings,
   presentSaleAdvice,
-  recordedSalaryGtq,
-  salaryShareForBatch,
   saleAdviceGaps,
-  saleAdviceSalaryGaps,
   priceIsBelowMinimum,
   recommendListedPrice,
   supportPhotoSuggestions,
@@ -40,7 +37,7 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
   it("reparte los gastos mensuales y redondea el mínimo hacia arriba", () => {
     expect(settings.ok).toBe(true);
     if (!settings.ok) return;
-    expect(monthlyExpenseShare(settings.settings)).toBe("13.00");
+    expect(monthlyExpenseShare(settings.settings)).toBe("10.00");
     expect(minimumSaleQuetzales("32.79", "13.00", "5.00")).toBe(51);
     expect(estimatedProfitGtq(60, "32.79", "13.00")).toBe("14.21");
   });
@@ -78,8 +75,6 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
       condition: "GOOD",
       individualCost: "",
       lotAverage: "32.79",
-      monthlySalaryGtq: "1300.00",
-      batchCount: 100,
       settings: settings.settings,
       guides,
     });
@@ -87,13 +82,13 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
       status: "ready",
       costSource: "lot",
       costGtq: "32.79",
-      expenseShareGtq: "13.00",
-      minimumGtq: 51,
+      expenseShareGtq: "10.00",
+      minimumGtq: 48,
       recommendedGtq: 60,
-      profitGtq: "14.21",
+      profitGtq: "17.21",
     });
-    expect(priceIsBelowMinimum("50", advice.minimumGtq)).toBe(true);
-    expect(priceIsBelowMinimum("51", advice.minimumGtq)).toBe(false);
+    expect(priceIsBelowMinimum("47", advice.minimumGtq)).toBe(true);
+    expect(priceIsBelowMinimum("48", advice.minimumGtq)).toBe(false);
   });
 
   it("avisa si no hay referencia o si el rango completo queda debajo del mínimo", () => {
@@ -103,20 +98,19 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
       itemType: "pantalon",
       condition: "GOOD",
       lotAverage: "32.79",
-      monthlySalaryGtq: "1300.00",
-      batchCount: 100,
       settings: settings.settings,
     };
-    expect(adviseSalePrice({ ...shared, guides: [] }).status).toBe("no-reference");
-    expect(adviseSalePrice({ ...shared, guides: [] }).notice).toBe("Sin referencia de precio");
+    const withoutGuide = adviseSalePrice({ ...shared, guides: [] });
+    expect(withoutGuide.status).toBe("ready");
+    expect(withoutGuide.minimumGtq).toBe(48);
+    expect(withoutGuide.recommendedGtq).toBe(48);
     const low = [
       guide({ scope: "general", garment: "pantalon", condition: "usado", priceGtq: 45, lowGtq: 40, highGtq: 50 }),
     ];
     const review = adviseSalePrice({ ...shared, guides: low });
-    expect(review.status).toBe("review");
-    expect(review.notice).toBe("Revisar con el dueño");
-    expect(review.recommendedGtq).toBeNull();
-    expect(review.minimumGtq).toBe(51);
+    expect(review.status).toBe("ready");
+    expect(review.recommendedGtq).toBe(48);
+    expect(review.minimumGtq).toBe(48);
   });
 
   it("suma el ajuste de marca al rango de la tabla", () => {
@@ -145,7 +139,7 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
     });
     expect(configured.ok).toBe(true);
     if (!configured.ok) return;
-    expect(monthlyExpenseShare(configured.settings)).toBe("5.00");
+    expect(monthlyExpenseShare({ ...configured.settings, monthlySalaryGtq: "2000.00" })).toBe("5.00");
     expect(minimumSaleQuetzales("6.14", "5.00", "8.00")).toBe(20);
     const guides = [
       guide({ scope: "general", garment: "pantalon", condition: "usado", priceGtq: 30, lowGtq: 30, highGtq: 30 }),
@@ -154,16 +148,14 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
       itemType: "pantalon",
       condition: "GOOD",
       lotAverage: "6.14",
-      monthlySalaryGtq: "2000.00",
-      batchCount: 500,
-      settings: configured.settings,
+      settings: { ...configured.settings, monthlySalaryGtq: "2000.00" },
       guides,
     });
-    expect(advice.expenseShareGtq).toBe("4.00");
-    expect(advice.minimumGtq).toBe(19);
+    expect(advice.expenseShareGtq).toBe("5.00");
+    expect(advice.minimumGtq).toBe(20);
     expect(advice.recommendedGtq).toBe(30);
     const staff = presentSaleAdvice(advice, "encargado");
-    expect(staff).toEqual({ status: "ready", minimumGtq: 19, recommendedGtq: 30, notice: "" });
+    expect(staff).toEqual({ status: "ready", minimumGtq: 20, recommendedGtq: 30, notice: "" });
     expect(JSON.stringify(staff)).not.toContain("6.14");
     expect(JSON.stringify(staff)).not.toContain("cost");
     const owner = presentSaleAdvice(advice, "propietario");
@@ -185,71 +177,60 @@ describe("precio sugerido de Agregar artículo sin foto", () => {
       itemType: "playera",
       condition: "GOOD",
       lotAverage: "6.14",
-      monthlySalaryGtq: "1300.00",
-      batchCount: 100,
       settings: settings.settings,
       guides: [guide({ scope: "general", garment: "camiseta", condition: "usado", priceGtq: 45, lowGtq: 45, highGtq: 45 })],
     });
     expect(advice.recommendedGtq).toBe(45);
     const staff = presentSaleAdvice(advice, "encargado");
-    expect(staff).toEqual({ status: "ready", minimumGtq: 25, recommendedGtq: 45, notice: "" });
+    expect(staff).toEqual({ status: "ready", minimumGtq: 22, recommendedGtq: 45, notice: "" });
     expect(JSON.stringify(staff)).not.toContain("6.14");
     expect(JSON.stringify(staff)).not.toContain("cost");
   });
 
-  it("reparte el sueldo del mes entre el conteo fijo de la tanda y aplica la ganancia", () => {
-    expect(recordedSalaryGtq([
-      { category: "transporte", amountGtq: "50.00" },
-      { category: "sueldo", amountGtq: "2000.00" },
-    ])).toBe("2000.00");
-    expect(recordedSalaryGtq([])).toBeNull();
-    expect(salaryShareForBatch("2000.00", 500)).toBe("4.00");
-    expect(salaryShareForBatch("2000.00", 499)).toBe("4.01");
+  it("suma Q5 del sueldo configurado y usa la regla general de camiseta para una playera", () => {
     const configured = preparePricingSettings({
-      monthlySalaryGtq: "0",
+      monthlySalaryGtq: "2000",
       otherMonthlyExpensesGtq: "2000",
       expectedMonthlySales: "400",
       minimumProfitGtq: "8",
     });
     expect(configured.ok).toBe(true);
     if (!configured.ok) return;
+    expect(monthlyExpenseShare(configured.settings)).toBe("5.00");
     const advice = adviseSalePrice({
       itemType: "playera",
+      brand: "Gildan",
       condition: "GOOD",
-      individualCost: "8.00",
-      monthlySalaryGtq: "2000.00",
-      batchCount: 500,
+      lotAverage: "8.00",
       settings: configured.settings,
       guides: [guide({ scope: "general", garment: "camiseta", condition: "usado", priceGtq: 45, lowGtq: 45, highGtq: 45 })],
     });
-    expect(advice.expenseShareGtq).toBe("4.00");
-    expect(advice.costGtq).toBe("8.00");
-    expect(minimumSaleQuetzales("8.00", "4.00", "8.00")).toBe(20);
-    expect(advice.minimumGtq).toBe(20);
+    expect(advice.expenseShareGtq).toBe("5.00");
+    expect(advice.minimumGtq).toBe(21);
     expect(advice.recommendedGtq).toBe(45);
-    const staff = presentSaleAdvice(advice, "encargado");
-    expect(staff).toEqual({ status: "ready", minimumGtq: 20, recommendedGtq: 45, notice: "" });
-    expect(JSON.stringify(staff)).not.toContain("2000");
-    expect(JSON.stringify(staff)).not.toContain("8.00");
-    expect(JSON.stringify(staff)).not.toContain("4.00");
-    expect(JSON.stringify(staff)).not.toContain("cost");
-    const missing = adviseSalePrice({
+    const withoutGuide = adviseSalePrice({
       itemType: "playera",
       condition: "GOOD",
-      individualCost: "8.00",
-      monthlySalaryGtq: null,
-      batchCount: null,
+      lotAverage: "8.00",
       settings: configured.settings,
+      guides: [],
     });
-    expect(missing.notice).toBe("Falta el sueldo de este mes en Gastos, en Sueldo del empleado. Falta el conteo de la tanda.");
-    expect(saleAdviceSalaryGaps({ monthlySalaryGtq: "2000.00", batchCount: null })).toEqual([
-      "Falta el conteo de la tanda.",
-    ]);
-    const staffMissing = presentSaleAdvice(missing, "encargado");
-    expect(staffMissing.notice).toBe("El dueño todavía no configuró los precios.");
-    expect(JSON.stringify(staffMissing)).not.toContain("2000");
-    expect(JSON.stringify(staffMissing)).not.toContain("Sueldo");
-    expect(JSON.stringify(staffMissing)).not.toContain("cost");
+    expect(withoutGuide.recommendedGtq).toBe(21);
+    expect(withoutGuide.minimumGtq).toBe(21);
+    const staff = presentSaleAdvice(advice, "encargado");
+    expect(staff).toEqual({ status: "ready", minimumGtq: 21, recommendedGtq: 45, notice: "" });
+    expect(JSON.stringify(staff)).not.toContain("2000");
+    expect(JSON.stringify(staff)).not.toContain("5.00");
+    expect(JSON.stringify(staff)).not.toContain("8.00");
+    expect(JSON.stringify(staff)).not.toContain("cost");
+    expect(JSON.stringify(staff)).not.toContain("salary");
+    const owner = presentSaleAdvice(advice, "propietario");
+    expect(owner.salaryGtq).toBe("2000.00");
+    expect(owner.estimatedMonthlySales).toBe(400);
+    const missing = adviseSalePrice({ itemType: "playera", condition: "GOOD", lotAverage: "8.00", settings: null });
+    expect(missing.status).toBe("need-settings");
+    expect(missing.notice).toBe("Configura el sueldo mensual del encargado y las prendas estimadas al mes en Configurar precios.");
+    expect(presentSaleAdvice(missing, "encargado").notice).toBe("El dueño todavía no configuró los precios.");
   });
 
   it("deja escribir la marca y la talla cuando la etiqueta no se lee", () => {

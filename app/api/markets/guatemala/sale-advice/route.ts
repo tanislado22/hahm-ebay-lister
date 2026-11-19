@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listGuatemalaExpenses } from "@/lib/markets/guatemala-expenses-store";
 import { authorizeGuatemalaRequest } from "@/lib/markets/guatemala-guard";
 import { listGuatemalaPurchaseLots } from "@/lib/markets/guatemala-lots-store";
 import { listGuatemalaPriceGuides } from "@/lib/markets/guatemala-price-guides-store";
 import { readPricingSettings } from "@/lib/markets/guatemala-pricing-settings";
-import { guatemalaSalesRange } from "@/lib/markets/guatemala-sales-report";
 import {
   adviseSalePrice,
   garmentCostInputForActor,
   presentSaleAdvice,
-  recordedSalaryGtq,
 } from "@/lib/markets/guatemala-sale-advice";
 
 export const dynamic = "force-dynamic";
@@ -26,14 +23,10 @@ export async function POST(request: NextRequest) {
   if (!access.ok) return access.response;
   try {
     const role = access.actor.role === "propietario" ? "propietario" : "encargado";
-    const month = guatemalaSalesRange({ period: "mes" });
-    const [settings, guides, lots, expenses] = await Promise.all([
+    const [settings, guides, lots] = await Promise.all([
       readPricingSettings(access.clientId),
       listGuatemalaPriceGuides(access.clientId),
       listGuatemalaPurchaseLots(access.clientId),
-      month.ok
-        ? listGuatemalaExpenses({ clientId: access.clientId, from: month.range.from, to: month.range.to })
-        : Promise.resolve([]),
     ]);
     const lotId = typeof body.lotId === "string" ? body.lotId : "";
     const lot = lots.ok ? lots.lots.find((entry) => entry.id === lotId && entry.status === "activo") : undefined;
@@ -43,8 +36,6 @@ export async function POST(request: NextRequest) {
       condition: typeof body.condition === "string" ? body.condition : "",
       individualCost: garmentCostInputForActor(role, body.individualCost),
       lotAverage: lot?.averageGtq ?? null,
-      monthlySalaryGtq: recordedSalaryGtq(expenses),
-      batchCount: lot?.sellableCount ?? null,
       settings,
       guides,
     });

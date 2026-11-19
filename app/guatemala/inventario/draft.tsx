@@ -709,12 +709,17 @@ function SaleAdvicePanel({
       {showCosts && advice.costSource === "lot" && advice.costGtq ? (
         <p>Los gastos del lote ya están en ese costo y no se suman otra vez.</p>
       ) : null}
-      {showCosts && advice.expenseShareGtq ? <p>Parte del sueldo por prenda: {quetzalLabel(advice.expenseShareGtq)}</p> : null}
+      {showCosts && advice.salaryGtq && advice.estimatedMonthlySales ? (
+        <p>
+          Sueldo {quetzalLabel(advice.salaryGtq)} ÷ {advice.estimatedMonthlySales} prendas
+          {advice.expenseShareGtq ? ` = ${quetzalLabel(advice.expenseShareGtq)}` : ""}.
+        </p>
+      ) : null}
       {advice.status === "ready" && advice.recommendedGtq != null ? (
         <p>Precio sugerido {quetzalLabel(advice.recommendedGtq)}</p>
       ) : null}
       {advice.notice ? <p>{advice.notice}</p> : null}
-      {advice.minimumGtq != null ? <p>No vender por debajo de {quetzalLabel(advice.minimumGtq)}</p> : null}
+      {advice.minimumGtq != null ? <p>Precio mínimo de venta {quetzalLabel(advice.minimumGtq)}</p> : null}
       {showCosts && advice.status === "ready" && advice.recommendedGtq != null && advice.profitGtq ? (
         <p>
           Ganancia estimada a {quetzalLabel(advice.recommendedGtq)}: {quetzalLabel(advice.profitGtq)}

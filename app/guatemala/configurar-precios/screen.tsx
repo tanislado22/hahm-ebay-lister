@@ -83,7 +83,7 @@ export function PricingSettingsScreen() {
     setSaved(form);
     setNotice(
       body.expenseShareGtq
-        ? `Cada prenda carga Q${body.expenseShareGtq} de gastos de la tienda. Los gastos que ya están en el costo del lote no se suman otra vez.`
+        ? `Cada prenda suma Q${body.expenseShareGtq} del sueldo del encargado. El pago real se registra en Gastos y no se suma otra vez.`
         : "Configuración guardada."
     );
   }
@@ -93,15 +93,14 @@ export function PricingSettingsScreen() {
       <ReturnHomeBar role="propietario" />
       <h1>Configurar precios</h1>
       <p>
-        Estos datos los usa el encargado al agregar un artículo sin foto. El sueldo y los demás gastos del mes se
-        dividen entre las prendas que esperas vender. No incluyas la compra ni los gastos que ya forman el costo del
-        lote: esos se cuentan una sola vez, dentro de ese costo. La parte de los gastos se suma al costo y a la
-        ganancia mínima, y el resultado se redondea hacia arriba al quetzal entero.
+        El sueldo mensual del encargado se divide entre las prendas que estimas vender. Esa parte se suma al costo
+        de la prenda y a la ganancia mínima. El pago real del sueldo se anota una sola vez en Gastos y no entra otra
+        vez en este cálculo. Los gastos del lote ya están dentro del costo de la prenda.
       </p>
       {loading ? <p>Cargando…</p> : null}
       <form className="gt-expense-form" onSubmit={(event) => void save(event)}>
         <label>
-          Sueldo mensual
+          Sueldo mensual del encargado
           <input
             inputMode="decimal"
             value={form.monthlySalaryGtq}
@@ -119,7 +118,7 @@ export function PricingSettingsScreen() {
           />
         </label>
         <label>
-          Prendas que esperas vender al mes
+          Prendas estimadas al mes
           <input
             inputMode="numeric"
             min={1}

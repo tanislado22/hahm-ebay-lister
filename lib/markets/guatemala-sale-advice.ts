@@ -5,7 +5,6 @@ import {
   garmentKind,
   type StorePriceGuide,
 } from "@/lib/markets/guatemala-price-match";
-import { sumExpenseAmounts } from "@/lib/markets/guatemala-expenses";
 import { GUATEMALA_CONDITION_CHOICES, unpublishedItemType } from "@/lib/markets/guatemala-inventory";
 
 export const SALE_ADVICE_MESSAGES = {
@@ -16,8 +15,7 @@ export const SALE_ADVICE_MESSAGES = {
   needType: "Elige el tipo de artículo.",
   needCondition: "Confirma el estado de la prenda.",
   staffNeedSettings: "El dueño todavía no configuró los precios.",
-  needSalary: "Falta el sueldo de este mes en Gastos, en Sueldo del empleado.",
-  needBatchCount: "Falta el conteo de la tanda.",
+  needOwnerPricing: "Configura el sueldo mensual del encargado y las prendas estimadas al mes en Configurar precios.",
   noReference: "Sin referencia de precio",
   review: "Revisar con el dueño",
   labelUnread: "La etiqueta no se leyó. Escribe la marca y la talla a mano.",
@@ -42,6 +40,8 @@ export interface SaleAdvice {
   costSource: GarmentCostSource;
   costGtq: string | null;
   expenseShareGtq: string | null;
+  salaryGtq?: string | null;
+  estimatedMonthlySales?: number | null;
   minimumGtq: number | null;
   recommendedGtq: number | null;
   profitGtq: string | null;
@@ -92,48 +92,16 @@ export function preparePricingSettings(input: {
   };
 }
 
-// The lot average already contains the lot's own expenses. This share is only the
-// store overhead, so those expenses are not added a second time.
+// The configured salary is only for the price. The real payment is recorded once
+// in Gastos and is not added again. Lot expenses already sit inside the garment cost.
 export function monthlyExpenseShare(settings: PricingSettingsInput): string | null {
   const salary = cents(settings.monthlySalaryGtq);
-  const other = cents(settings.otherMonthlyExpensesGtq);
-  if (salary == null || other == null || settings.expectedMonthlySales <= 0) return null;
-  const share = Math.round((salary + other) / settings.expectedMonthlySales);
-  return formatCents(share);
+  if (salary == null || settings.expectedMonthlySales <= 0) return null;
+  return formatCents(Math.round(salary / settings.expectedMonthlySales));
 }
 
 export function garmentCostInputForActor(role: "propietario" | "encargado", cost: unknown): unknown {
   return role === "propietario" ? cost : undefined;
-}
-
-// The month's salary is the Gastos category "sueldo". It is recorded once there
-// and is not typed again into the price settings.
-export function recordedSalaryGtq(expenses: readonly { category: string; amountGtq: string }[]): string | null {
-  const salary = expenses.filter((expense) => expense.category === "sueldo");
-  if (salary.length === 0) return null;
-  const total = sumExpenseAmounts(salary);
-  return moneyText(total);
-}
-
-// Divide by the tanda's fixed count, never by the pieces still unsold.
-export function salaryShareForBatch(salaryGtq: string | null | undefined, batchCount: number | null | undefined): string | null {
-  const salary = salaryGtq ? moneyText(salaryGtq) : null;
-  if (!salary || batchCount == null || !Number.isInteger(batchCount) || batchCount < 1) return null;
-  const amount = cents(salary);
-  if (amount == null || amount <= 0) return null;
-  return formatCents(Math.round(amount / batchCount));
-}
-
-export function saleAdviceSalaryGaps(input: {
-  monthlySalaryGtq?: string | null;
-  batchCount?: number | null;
-}): string[] {
-  const gaps: string[] = [];
-  if (!input.monthlySalaryGtq || !moneyText(input.monthlySalaryGtq)) gaps.push(SALE_ADVICE_MESSAGES.needSalary);
-  if (input.batchCount == null || !Number.isInteger(input.batchCount) || input.batchCount < 1) {
-    gaps.push(SALE_ADVICE_MESSAGES.needBatchCount);
-  }
-  return gaps;
 }
 
 export function saleAdviceGaps(input: { itemType?: string; condition?: string }): string[] {
@@ -163,6 +131,29 @@ export function minimumSaleQuetzales(costGtq: string, expenseShareGtq: string, m
   return Math.ceil(total / 100);
 }
 
+function priceGuideKeys(itemType: string | undefined, kindKey: string): string[] {
+  if (itemType?.trim().toLowerCase() === "playera") return ["playera", "camiseta"];
+  return [kindKey];
+}
+
+function guideForGarment(
+  guides: readonly StorePriceGuide[],
+  scope: StorePriceGuide["scope"],
+  keys: readonly string[],
+  condition: string,
+  brand?: string | null
+): StorePriceGuide | null {
+  for (const key of keys) {
+    const found = guides.find((guide) => {
+      if (guide.scope !== scope || guide.garment !== key || guide.condition !== condition) return false;
+      if (scope === "brand") return brandsMatch(brand ?? null, brandKey(guide.brand));
+      return true;
+    });
+    if (found) return found;
+  }
+  return null;
+}
+
 export function listedPriceRange(
   guides: readonly StorePriceGuide[],
   query: { itemType?: string; brand?: string; condition?: string }
@@ -170,9 +161,8 @@ export function listedPriceRange(
   const kind = garmentKind(query.itemType);
   const condition = conditionBucket(query.condition);
   if (!kind || !condition) return null;
-  const general = guides.find(
-    (guide) => guide.scope === "general" && guide.garment === kind.key && guide.condition === condition
-  );
+  const keys = priceGuideKeys(query.itemType, kind.key);
+  const general = guideForGarment(guides, "general", keys, condition);
   if (!general) return null;
   let low = numberOrNull(general.lowGtq);
   let high = numberOrNull(general.highGtq);
@@ -182,15 +172,7 @@ export function listedPriceRange(
     high = general.priceGtq;
   }
   const wanted = brandKey(query.brand);
-  const adjustment = wanted
-    ? guides.find(
-        (guide) =>
-          guide.scope === "brand" &&
-          guide.garment === kind.key &&
-          guide.condition === condition &&
-          brandsMatch(wanted, brandKey(guide.brand))
-      )
-    : null;
+  const adjustment = wanted ? guideForGarment(guides, "brand", keys, condition, wanted) : null;
   const delta = adjustment?.adjustmentGtq ?? 0;
   low = roundMoney(low + delta);
   high = roundMoney(high + delta);
@@ -221,13 +203,11 @@ export function adviseSalePrice(input: {
   condition?: string;
   individualCost?: unknown;
   lotAverage?: unknown;
-  monthlySalaryGtq?: string | null;
-  batchCount?: number | null;
   settings?: PricingSettingsInput | null;
   guides?: readonly StorePriceGuide[];
 }): SaleAdvice {
   const chosen = chooseGarmentCost({ individual: input.individualCost, lotAverage: input.lotAverage });
-  const share = salaryShareForBatch(input.monthlySalaryGtq, input.batchCount);
+  const share = input.settings ? monthlyExpenseShare(input.settings) : null;
   const base = {
     costSource: chosen.source,
     costGtq: chosen.costGtq,
@@ -241,25 +221,20 @@ export function adviseSalePrice(input: {
     return { ...base, status: "waiting", notice: gaps.join(" ") };
   }
   if (!chosen.costGtq) return { ...base, status: "need-cost", notice: SALE_ADVICE_MESSAGES.needCost };
-  const salaryGaps = saleAdviceSalaryGaps(input);
-  if (salaryGaps.length > 0) return { ...base, status: "need-settings", notice: salaryGaps.join(" ") };
-  if (!input.settings || !share) return { ...base, status: "need-settings", notice: SALE_ADVICE_MESSAGES.needSettings };
+  if (!input.settings || !share) return { ...base, status: "need-settings", notice: SALE_ADVICE_MESSAGES.needOwnerPricing };
   const minimum = minimumSaleQuetzales(chosen.costGtq, share, input.settings.minimumProfitGtq);
-  if (minimum == null) return { ...base, status: "need-settings", notice: SALE_ADVICE_MESSAGES.needSettings };
+  if (minimum == null) return { ...base, status: "need-settings", notice: SALE_ADVICE_MESSAGES.needOwnerPricing };
   const range = listedPriceRange(input.guides ?? [], input);
-  if (!range) {
-    return { ...base, status: "no-reference", minimumGtq: minimum, notice: SALE_ADVICE_MESSAGES.noReference };
-  }
-  const recommended = recommendListedPrice({ ...range, minimum });
-  if (recommended == null) {
-    return { ...base, status: "review", minimumGtq: minimum, notice: SALE_ADVICE_MESSAGES.review };
-  }
+  const fromTable = range ? recommendListedPrice({ ...range, minimum }) : null;
+  const recommended = fromTable ?? minimum;
   return {
     ...base,
     status: "ready",
     minimumGtq: minimum,
     recommendedGtq: recommended,
     profitGtq: estimatedProfitGtq(recommended, chosen.costGtq, share),
+    salaryGtq: input.settings.monthlySalaryGtq,
+    estimatedMonthlySales: input.settings.expectedMonthlySales,
     notice: "",
   };
 }
@@ -272,6 +247,8 @@ export interface QuotedSalePrice {
   costGtq?: string | null;
   costSource?: GarmentCostSource;
   expenseShareGtq?: string | null;
+  salaryGtq?: string | null;
+  estimatedMonthlySales?: number | null;
   profitGtq?: string | null;
 }
 
@@ -289,6 +266,8 @@ export function presentSaleAdvice(advice: SaleAdvice, role: "propietario" | "enc
     costGtq: advice.costGtq,
     costSource: advice.costSource,
     expenseShareGtq: advice.expenseShareGtq,
+    salaryGtq: advice.salaryGtq,
+    estimatedMonthlySales: advice.estimatedMonthlySales,
     profitGtq: advice.profitGtq,
   };
 }
