@@ -32,7 +32,7 @@ export default async function StaffLayout({ children }: { children: React.ReactN
         <StaffReturnHome />
         <nav className="gt-staff-nav" aria-label="Encargado">
           <a className="btn btn-primary" href="/guatemala/panel/inventario?accion=escanear">
-            Escanear para vender
+            Escanear para cobrar
           </a>
           <a className="btn btn-primary" href="/guatemala/panel/publicar">
             Agregar artículo con foto

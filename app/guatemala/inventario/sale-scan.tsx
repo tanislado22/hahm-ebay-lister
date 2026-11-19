@@ -2,7 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Html5Qrcode } from "html5-qrcode";
-import { cameraFailureMessage, cameraMayRetry, takeGarmentScan, type GarmentScanMemory } from "@/lib/markets/guatemala-qr";
+import {
+  QR_MESSAGES,
+  cameraFailureMessage,
+  cameraMayRetry,
+  fichaForCharge,
+  garmentQrText,
+  readScannedLabel,
+  scanLotLabel,
+  takeGarmentScan,
+  type GarmentScanMemory,
+} from "@/lib/markets/guatemala-qr";
 
 const scanConfig = {
   fps: 8,
@@ -151,12 +161,136 @@ export function SaleGarmentScanner({
         </p>
       ) : null}
       <div id="gt-sale-qr-reader" className={active ? "gt-qr-reader is-live" : "gt-qr-reader"} />
-      {active && !cameraError ? <p>Apunta la cámara al QR de la prenda. Escanear no guarda la venta.</p> : null}
+      {active && !cameraError ? <p>Apunta la cámara al QR de la prenda. Escanear abre la ficha y no guarda la venta.</p> : null}
       <div className="gt-inventory-actions">
         <button type="button" className="btn btn-ghost" onClick={onClose}>
           Cerrar cámara
         </button>
       </div>
     </div>
+  );
+}
+
+type ChargeRequest = (path: string, body?: unknown) => Promise<Response>;
+
+type ChargeGarment = {
+  id: string;
+  sku: string;
+  title: string;
+  status: string;
+  lotNumber: number | null;
+  lotName: string | null;
+};
+
+export function ChargeScanPanel({
+  clientId,
+  request,
+  onOpen,
+}: {
+  clientId: string;
+  request: ChargeRequest;
+  onOpen: (itemId: string) => void;
+}) {
+  const lookupRef = useRef(false);
+  const [cameraOn, setCameraOn] = useState(true);
+  const [notice, setNotice] = useState("");
+  const [choices, setChoices] = useState<ChargeGarment[]>([]);
+
+  function openGarment(garment: ChargeGarment) {
+    const destination = fichaForCharge(garment);
+    if (!destination.open) {
+      setNotice(destination.notice);
+      return;
+    }
+    setNotice("");
+    setChoices([]);
+    setCameraOn(false);
+    onOpen(destination.itemId);
+  }
+
+  function onScannedText(text: string): boolean {
+    if (lookupRef.current) return false;
+    lookupRef.current = true;
+    void lookup(text).finally(() => {
+      lookupRef.current = false;
+    });
+    return true;
+  }
+
+  async function lookup(text: string) {
+    const read = readScannedLabel(text);
+    if (!read.ok) {
+      setNotice(read.error);
+      return;
+    }
+    const params = new URLSearchParams({ clientId });
+    if (read.kind === "code") params.set("codigo", garmentQrText(read.itemId));
+    else params.set("sku", read.sku);
+    try {
+      const response = await request(`/api/markets/guatemala/inventory/qr?${params.toString()}`);
+      const body = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        choice?: "one" | "many";
+        garment?: ChargeGarment;
+        garments?: ChargeGarment[];
+      };
+      if (!response.ok || !body.ok) {
+        setNotice(body.error || (read.kind === "code" ? QR_MESSAGES.unknownCode : QR_MESSAGES.unknownSku));
+        return;
+      }
+      const found = body.choice === "many" ? body.garments ?? [] : body.garment ? [body.garment] : [];
+      if (found.length > 1) {
+        setChoices(found);
+        setNotice("");
+        setCameraOn(false);
+        return;
+      }
+      const garment = found[0];
+      if (!garment) {
+        setNotice(read.kind === "code" ? QR_MESSAGES.unknownCode : QR_MESSAGES.unknownSku);
+        return;
+      }
+      openGarment(garment);
+    } catch {
+      setNotice("No se pudo buscar la prenda.");
+    }
+  }
+
+  return (
+    <section className="panel" id="escanear-cobro">
+      <h2>Escanear para cobrar</h2>
+      <p>El QR busca la prenda por su SKU y abre la ficha. La venta se guarda al confirmar el cobro.</p>
+      {cameraOn ? (
+        <SaleGarmentScanner active onText={onScannedText} onClose={() => setCameraOn(false)} />
+      ) : (
+        <div className="gt-inventory-actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              setNotice("");
+              setCameraOn(true);
+            }}
+          >
+            Escanear para cobrar
+          </button>
+        </div>
+      )}
+      {notice ? (
+        <p className="note note-error" role="alert">
+          {notice}
+        </p>
+      ) : null}
+      {choices.length > 1 ? (
+        <div className="gt-scan-choices">
+          {choices.map((choice) => (
+            <button key={choice.id} type="button" className="btn btn-ghost gt-scan-choice" onClick={() => openGarment(choice)}>
+              {choice.title || "Prenda sin título"} · SKU {choice.sku} · {scanLotLabel(choice.lotNumber, choice.lotName)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }

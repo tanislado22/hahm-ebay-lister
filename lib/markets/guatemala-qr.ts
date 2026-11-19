@@ -57,7 +57,7 @@ export const QR_MESSAGES = {
 export const PRICE_QR_MESSAGES = {
   notGarment: "Esta etiqueta es un precio compartido, no una prenda. Úsala en Registrar venta → Venta sin SKU.",
   notPrice: "Ese QR no es una etiqueta de precio. Usa VSAP:10 o Q10, o escribe las piezas y el total.",
-  garmentOnPrice: "Este QR identifica una prenda del inventario. Usa Escanear para vender.",
+  garmentOnPrice: "Este QR identifica una prenda del inventario. Usa Escanear para cobrar.",
   cameraDenied:
     "El navegador no tiene permiso para usar la cámara. Permite la cámara para este sitio y pulsa Escanear QR de precio de nuevo. En iPhone: Ajustes, Safari, Cámara, Permitir. En Android: el candado de la barra de direcciones, Permisos, Cámara, Permitir. También puedes escribir las piezas y el total.",
   cameraMissing: "Este celular no tiene una cámara que se pueda usar. Escribe las piezas y el total.",
@@ -215,6 +215,16 @@ export function takeGarmentScan(
   const text = raw.trim();
   if (!text || (memory && memory.text === text)) return { memory: memory ?? { text }, text: null };
   return { memory: { text }, text };
+}
+
+/** An available garment opens its ficha. A missing or unsellable code stays on the camera. */
+export function fichaForCharge(garment: { id: string; status: string } | null):
+  | { open: true; itemId: string }
+  | { open: false; notice: string } {
+  if (!garment) return { open: false, notice: QR_MESSAGES.unknownCode };
+  const decision = scanSaleDecision(garment.status);
+  if (!decision.canSell) return { open: false, notice: decision.message };
+  return { open: true, itemId: garment.id };
 }
 
 export function scanSaleDecision(status: string): { canSell: true } | { canSell: false; message: string } {

@@ -25,6 +25,7 @@ import { useOnlineStatus } from "../pwa/shell";
 import { QuickAddForm, UnpublishedEditor } from "./draft";
 import { PhotoSearchPanel } from "./photo-search";
 import { QuantitySalePanel, SkuLessSaleForm } from "./quantity";
+import { ChargeScanPanel } from "./sale-scan";
 import "./inventory.css";
 import { ReturnHomeBar, useUnsavedChanges } from "../return-home";
 import { PurgePanel } from "./purge";
@@ -112,6 +113,7 @@ export function InventoryScreen({
   const clientId = lockedClientId || params.get("clientId") || "";
   const itemId = params.get("item") ?? "";
   const launch = inventoryLaunch(params.get("accion"));
+  const openCharge = params.get("cobro") === "1";
   const filter = inventoryListFilter(params.get("estado"));
   const lotFilter = params.get("lote") || "";
   function storeRequest(path: string, body?: unknown) {
@@ -157,6 +159,7 @@ export function InventoryScreen({
   const [saleSession, setSaleSession] = useState(0);
   const [skuLessOpen, setSkuLessOpen] = useState(false);
   const [listVersion, setListVersion] = useState(0);
+  const chargeOpened = useRef("");
 
   useEffect(() => {
     if (itemId || !launch) return;
@@ -165,6 +168,13 @@ export function InventoryScreen({
       setSkuLessOpen(false);
       setQuantitySale(null);
       setQuickAddOpen(true);
+      return;
+    }
+    if (launch === "escanear") {
+      setQuickAddOpen(false);
+      setPhotoSearchOpen(false);
+      setSkuLessOpen(false);
+      setQuantitySale(null);
       return;
     }
     setQuickAddOpen(false);
@@ -242,6 +252,22 @@ export function InventoryScreen({
     setCostError("");
     setCostNotice("");
   }, [itemId]);
+
+  useEffect(() => {
+    if (!openCharge || !detail || detail.id !== itemId || detail.status !== "disponible") return;
+    if (chargeOpened.current === detail.id) return;
+    chargeOpened.current = detail.id;
+    setSaleError("");
+    setPaymentMethod("efectivo");
+    setCashDraft("");
+    setSaleStep("form");
+  }, [openCharge, detail, itemId]);
+
+  useEffect(() => {
+    if (saleStep !== "form" || !openCharge) return;
+    const timer = window.setTimeout(() => document.getElementById("cobro-venta")?.scrollIntoView({ block: "start" }), 50);
+    return () => window.clearTimeout(timer);
+  }, [saleStep, openCharge, itemId]);
 
   useEffect(() => {
     setCostDraft(detail?.costGtq ?? "");
@@ -572,12 +598,23 @@ export function InventoryScreen({
           clientId={clientId}
           request={storeRequest}
           initialItems={quantitySale}
-          startCamera={launch === "escanear"}
           onClose={() => setQuantitySale(null)}
           onSaved={() => setListVersion((current) => current + 1)}
           onOpenSkuLess={() => {
             setQuantitySale(null);
             setSkuLessOpen(true);
+          }}
+        />
+      ) : null}
+
+      {launch === "escanear" && !itemId ? (
+        <ChargeScanPanel
+          clientId={clientId}
+          request={storeRequest}
+          onOpen={(id) => {
+            const search = new URLSearchParams({ item: id, cobro: "1" });
+            if (!staffMode && clientId) search.set("clientId", clientId);
+            router.push(`${basePath}?${search.toString()}`);
           }}
         />
       ) : null}
@@ -834,6 +871,7 @@ export function InventoryScreen({
               ) : null}
               {detail.status === "disponible" && saleStep === "form" ? (
                 <form
+                  id="cobro-venta"
                   className="gt-sale-box"
                   onSubmit={(event) => {
                     event.preventDefault();

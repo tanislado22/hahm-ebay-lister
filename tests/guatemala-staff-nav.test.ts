@@ -6,7 +6,7 @@ describe("accesos de la pantalla principal de Tienda Guatemala", () => {
   it("ordena escanear, con foto, sin foto, venta e inventario", () => {
     const layout = readFileSync("app/guatemala/panel/layout.tsx", "utf8");
     const labels = [
-      "Escanear para vender",
+      "Escanear para cobrar",
       "Agregar artículo con foto",
       "Agregar artículo sin foto",
       "Registrar venta",
