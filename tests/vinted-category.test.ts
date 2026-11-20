@@ -38,6 +38,16 @@ describe("vinted category map", () => {
     expect(formatVintedCategoryPath(match?.path || [])).toBe("Men › Shoes › Sneakers");
   });
 
+  test("a women's long-sleeve top ends on the Shirts leaf", () => {
+    expect(
+      resolveVintedCategory({
+        title: "Charlotte Russe Mauve Cold Shoulder Ribbed Long Sleeve Top",
+        itemType: "Cold Shoulder Ribbed Knit Long Sleeve Top",
+        bucket: "womens_top",
+      })?.path
+    ).toEqual(["Women", "Clothing", "Tops & T-shirts", "Shirts"]);
+  });
+
   test("keeps a saved Vinted category path", () => {
     expect(
       resolveVintedCategory({

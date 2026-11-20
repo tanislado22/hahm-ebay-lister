@@ -566,6 +566,56 @@ function fillField(label, aliases, value, log) {
   log.push(value ? `${label}: filled.` : `${label}: cleared.`);
 }
 
+function categorySteps(value) {
+  const raw = clean(value);
+  if (!raw) return [];
+  if (/[›>/]/.test(raw)) return raw.split(/\s*(?:›|>|\/)\s*/).map(clean).filter(Boolean);
+  const known = {
+    womens_top: ["Women", "Clothing", "Tops & T-shirts", "Shirts"],
+  };
+  return known[raw.toLowerCase()] || [];
+}
+
+async function selectCategory(value, log) {
+  const steps = categorySteps(value);
+  if (steps.length < 2) {
+    fillField("Category", ["category"], value, log);
+    return;
+  }
+  const trigger = findTrigger(["category", "select a category"]);
+  if (!trigger) {
+    log.push("Category: menu was not found. Select it yourself.");
+    return;
+  }
+  trigger.click();
+  await sleep(300);
+  for (const step of steps) {
+    await waitForOptions(8000);
+    const match = matchOption([step]);
+    if (!match) {
+      closeSurface();
+      log.push(`Category: ${step} was not in Vinted's list. Select it yourself.`);
+      return;
+    }
+    match.el.click();
+    await sleep(500);
+  }
+  if (activeSurface()) closeSurface();
+  await sleep(300);
+  log.push(`Category: selected ${steps[steps.length - 1]}.`);
+}
+
+async function waitForMenuTriggers(groups, timeout) {
+  const deadline = Date.now() + timeout;
+  const missing = () => groups.filter((aliases) => !findTrigger(aliases));
+  let pending = missing();
+  while (pending.length > 0 && Date.now() < deadline) {
+    await sleep(200);
+    pending = missing();
+  }
+  return pending.length === 0;
+}
+
 async function fillReadyItem(log) {
   const item = await loadMessage({ type: "load-ready" });
   log.push(`SKU ${item.sku}`);
@@ -578,7 +628,12 @@ async function fillReadyItem(log) {
     log
   );
   fillField("Price", ["price"], item.price, log);
-  fillField("Category", ["category"], item.category, log);
+  await selectCategory(item.category, log);
+  // Brand, size, condition, and color are mounted after Vinted finishes loading the category.
+  await waitForMenuTriggers(
+    [["brand"], ["size"], ["condition"], ["color", "colour", "colors", "colours"]],
+    12000
+  );
   await selectMenu("Brand", ["brand"], item.brand, [item.brand], log, { search: true });
   await selectMenu("Size", ["size"], item.size, sizeCandidates(item.size), log, { timeout: 8000 });
   await selectMenu("Condition", ["condition"], item.condition, conditionCandidates(item.condition), log);

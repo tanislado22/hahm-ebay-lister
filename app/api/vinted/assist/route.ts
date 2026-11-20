@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import { workspaceKey } from "@/lib/inventory/workspace";
-import { downloadEbayPhoto, hasSavedPhoto, materializeSavedPhotos } from "@/lib/vinted/saved-photo";
+import { formatVintedCategoryPath, resolveVintedCategory } from "@/lib/vinted/category-map";
+import { downloadEbayPhoto, materializeSavedPhotos, photosForAssist } from "@/lib/vinted/saved-photo";
 import { getLatestReadySnapshot, getVintedReadySnapshot, savedPhotosForSku } from "@/lib/vinted/snapshot-store";
 
 export const dynamic = "force-dynamic";
@@ -49,10 +50,7 @@ export async function GET(req: NextRequest) {
       return assistJson({ ok: false, error: `No Ready item with SKU ${requestedSku}.` }, 404);
     }
 
-    const stored = snapshot.photos.some((photo) => photo.data)
-      ? snapshot.photos
-      : await savedPhotosForSku(snapshot.sku);
-    const usable = stored.filter((photo) => hasSavedPhoto(photo));
+    const usable = photosForAssist(snapshot.photos, await savedPhotosForSku(snapshot.sku));
     const photoParam = req.nextUrl.searchParams.get("photo");
     if (photoParam !== null) {
       const index = Number(photoParam);
@@ -74,6 +72,13 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    const categoryMatch = resolveVintedCategory({
+      title: snapshot.title,
+      brand: snapshot.brand,
+      itemType: snapshot.itemType,
+      bucket: snapshot.category,
+      savedCategory: /[›>/]/.test(snapshot.category) ? snapshot.category : "",
+    });
     return assistJson({
       ok: true,
       sku: snapshot.sku,
@@ -81,7 +86,7 @@ export async function GET(req: NextRequest) {
       description: snapshot.description,
       price: snapshot.price,
       brand: snapshot.brand,
-      category: snapshot.category,
+      category: categoryMatch ? formatVintedCategoryPath(categoryMatch.path) : snapshot.category,
       itemType: snapshot.itemType,
       size: snapshot.size,
       color: snapshot.color,

@@ -14,7 +14,8 @@ export const DEFAULT_VINTED_CATEGORY_RULES: VintedCategoryRule[] = [
   { itemType: "Men's Sneakers", path: ["Men", "Shoes", "Sneakers"] },
   { itemType: "Women's Sneakers", path: ["Women", "Shoes", "Sneakers"] },
   { itemType: "Men's T-shirts", path: ["Men", "Clothing", "T-shirts"] },
-  { itemType: "Women's T-shirts", path: ["Women", "Clothing", "Tops & t-shirts"] },
+  { itemType: "Women's T-shirts", path: ["Women", "Clothing", "Tops & T-shirts", "T-shirts"] },
+  { itemType: "Women's Tops", path: ["Women", "Clothing", "Tops & T-shirts", "Shirts"] },
 ];
 
 export interface CategorySource {
@@ -94,6 +95,7 @@ function builtinMatch(text: string): VintedCategoryMatch | null {
   const blouse = /blouse/.test(text);
   const sneakers = /sneaker|jordan|dunk|air force|air max|trainer|running shoe|\bshoes?\b/.test(text);
   const tee = /t shirt|tshirt|\btee\b/.test(text);
+  const top = /\btops?\b/.test(text);
 
   const pick = (itemType: string): VintedCategoryMatch | null => {
     const rule = ruleByType(DEFAULT_VINTED_CATEGORY_RULES, itemType);
@@ -109,6 +111,7 @@ function builtinMatch(text: string): VintedCategoryMatch | null {
   if ((men || /nike/.test(text)) && sneakers && !women) return pick("Men's Sneakers");
   if (women && tee) return pick("Women's T-shirts");
   if (men && tee) return pick("Men's T-shirts");
+  if (women && top) return pick("Women's Tops");
   return null;
 }
 

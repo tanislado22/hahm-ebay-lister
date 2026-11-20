@@ -45,6 +45,17 @@ export function savedPhotosInOrder<T extends SavedPhotoRef>(photos: readonly T[]
   return photos.filter((photo) => hasSavedPhoto(photo));
 }
 
+export function photosForAssist<T extends SavedPhotoRef>(
+  snapshotPhotos: readonly T[],
+  jobPhotos: readonly T[]
+): T[] {
+  const snapshot = savedPhotosInOrder(snapshotPhotos);
+  const job = savedPhotosInOrder(jobPhotos);
+  if (job.length === 0) return snapshot;
+  if (snapshot.length === 0) return job;
+  return payloadLength(job) > payloadLength(snapshot) ? job : snapshot;
+}
+
 export async function materializeSavedPhotos(
   photos: readonly SavedPhotoRef[],
   download: (url: string) => Promise<ReadyPhotoBytes | null>
@@ -82,8 +93,15 @@ export async function downloadEbayPhoto(url: string): Promise<ReadyPhotoBytes | 
   return { mediaType, data: bytes.toString("base64") };
 }
 
+function payloadLength(photos: readonly SavedPhotoRef[]): number {
+  return photos.reduce((total, photo) => total + (savedPhotoBytes(photo)?.data.length ?? 0), 0);
+}
+
 function isAddress(value: string): boolean {
-  return value.startsWith("http://") || value.startsWith("https://") || value.startsWith("/");
+  if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("blob:")) return true;
+  // JPEG base64 starts with "/9j/". Any other leading slash is a stored file path.
+  if (!value.startsWith("/")) return false;
+  return !(value.startsWith("/9j/") && completeBase64(value));
 }
 
 function decodeImagePayload(value: string | undefined, mediaType?: string): ReadyPhotoBytes | null {
