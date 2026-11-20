@@ -8,6 +8,7 @@ import {
   photosForArticle,
   saveQueueListingUrl,
   vintedQueueHref,
+  workspaceVintedQueueHref,
 } from "@/lib/vinted/queue-link";
 
 const alpha = "job-alpha";
@@ -28,6 +29,33 @@ describe("Open Vinted queue abre el artículo en otra pestaña", () => {
     expect(button).toContain("vintedQueueHref(group.id)");
     expect(button).toContain('target="_blank"');
     expect(button).not.toContain('href="/vinted"');
+  });
+
+  it("el botón Vinted queue del área de trabajo abre el artículo recién preparado en otra pestaña", () => {
+    const prepared = { scope: beta, queue: true };
+    expect(workspaceVintedQueueHref(prepared)).toBe("/vinted?article=job-beta");
+    expect(workspaceVintedQueueHref({ scope: " job-beta ", queue: true })).toBe("/vinted?article=job-beta");
+    expect(workspaceVintedQueueHref({ scope: "all", queue: true })).toBe("/vinted");
+    expect(workspaceVintedQueueHref({ scope: beta, queue: false })).toBe("/vinted");
+    expect(workspaceVintedQueueHref(null)).toBe("/vinted");
+
+    const listings = [ready("3146", "Wool coat"), ready("NIKE-1", "Nike Pro")];
+    const jobs = [
+      { articleId: beta, sku: "3146" },
+      { articleId: alpha, sku: "NIKE-1" },
+    ];
+    const opened = openQueueArticle(orderQueue(assignArticleIds(listings, jobs), "NIKE-1"), beta);
+    expect(opened.found).toBe(true);
+    expect(opened.queue[opened.index]?.sku).toBe("3146");
+    expect(opened.queue[opened.index]?.title).toBe("Wool coat");
+
+    const view = readFileSync("app/ListingsView.tsx", "utf8");
+    const marker = "workspaceVintedQueueHref(vintedNotice)";
+    const buttonStart = view.lastIndexOf(marker);
+    const button = view.slice(buttonStart, buttonStart + 220);
+    expect(button).toContain('target="_blank"');
+    expect(button).toContain('rel="noopener noreferrer"');
+    expect(view).not.toContain('href="/vinted"');
   });
 
   it("después de preparar, abre esa ficha y no agrega otra copia", () => {

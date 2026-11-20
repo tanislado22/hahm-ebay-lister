@@ -21,6 +21,7 @@ import {
   selectedGarmentsLabel,
   toggleWorkspaceGarment,
 } from "@/lib/usa-lots/workspace-selection";
+import { workspaceVintedQueueHref } from "@/lib/vinted/queue-link";
 
 async function uploadPhotosToEbay(sku: string, photos: Photo[]) {
 
@@ -267,10 +268,22 @@ export function ListingsView({
         {vintedNotice?.scope === "all" ? (
           <p className={vintedNotice.error ? "note note-error" : "note"} role={vintedNotice.error ? "alert" : "status"}>
             {vintedNotice.text}
-            {vintedNotice.queue ? <> {" "}<a href="/vinted">Vinted queue</a></> : null}
+            {vintedNotice.queue ? (
+              <>
+                {" "}
+                <a href={workspaceVintedQueueHref(vintedNotice)} target="_blank" rel="noopener noreferrer">
+                  Vinted queue
+                </a>
+              </>
+            ) : null}
           </p>
         ) : null}
-        <a className="btn btn-ghost" href="/vinted">
+        <a
+          className="btn btn-ghost"
+          href={workspaceVintedQueueHref(vintedNotice)}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           Vinted queue
         </a>
         <a className="btn btn-ghost" href="/vinted/inventory">

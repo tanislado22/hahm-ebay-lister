@@ -2,6 +2,14 @@ export function vintedQueueHref(articleId: string): string {
   return `/vinted?article=${encodeURIComponent(articleId.trim())}`;
 }
 
+export function workspaceVintedQueueHref(
+  notice: { scope?: string; queue?: boolean } | null | undefined
+): string {
+  const scope = notice?.queue ? (notice.scope || "").trim() : "";
+  if (!scope || scope === "all") return "/vinted";
+  return vintedQueueHref(scope);
+}
+
 export function articleIdFromSearch(search: string): string {
   const query = search.startsWith("?") ? search.slice(1) : search;
   return (new URLSearchParams(query).get("article") || "").trim();
