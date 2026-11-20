@@ -1,5 +1,6 @@
 import { ensureInventoryTables, getSql } from "@/lib/db";
 import type { ReadyPhoto, ReadySnapshot } from "@/lib/vinted/snapshot";
+import { hasSavedPhoto, type SavedPhotoRef } from "@/lib/vinted/saved-photo";
 
 interface SnapshotRow {
   sku?: string;
@@ -18,7 +19,7 @@ interface SnapshotRow {
 
 function photosFrom(value: ReadyPhoto[] | string | undefined): ReadyPhoto[] {
   const parsed = typeof value === "string" ? JSON.parse(value) : value;
-  return Array.isArray(parsed) ? parsed.filter((photo) => Boolean(photo?.data)) : [];
+  return Array.isArray(parsed) ? parsed.filter((photo) => hasSavedPhoto(photo)) : [];
 }
 
 export async function replaceVintedReadySnapshot(
@@ -120,8 +121,30 @@ export async function photosForGroupId(groupId: string): Promise<ReadyPhoto[]> {
     LIMIT 1
   `;
   if (rows.length === 0) return [];
-  const raw = (rows[0] as { data?: unknown }).data;
+  return photosInJob((rows[0] as { data?: unknown }).data);
+}
+
+export async function savedPhotosForSku(sku: string): Promise<SavedPhotoRef[]> {
+  const wanted = sku.trim();
+  if (!wanted) return [];
+  const sql = getSql();
+  await ensureInventoryTables();
+  const jobs = await sql`
+    SELECT data
+    FROM jobs
+    WHERE data->'group'->>'sku' = ${wanted}
+    ORDER BY updated_at DESC
+    LIMIT 8
+  `;
+  for (const row of jobs) {
+    const photos = photosInJob((row as { data?: unknown }).data);
+    if (photos.length > 0) return photos;
+  }
+  return [];
+}
+
+function photosInJob(raw: unknown): SavedPhotoRef[] {
   const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-  const photos = (data as { photos?: ReadyPhoto[] } | null)?.photos;
-  return Array.isArray(photos) ? photos.filter((photo) => Boolean(photo?.data)) : [];
+  const photos = (data as { photos?: SavedPhotoRef[] } | null)?.photos;
+  return Array.isArray(photos) ? photos.filter((photo) => hasSavedPhoto(photo)) : [];
 }

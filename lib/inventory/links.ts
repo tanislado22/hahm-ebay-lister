@@ -282,6 +282,25 @@ export async function markVintedPublished(input: {
   return rows.length > 0;
 }
 
+export async function getListingBySku(
+  workspaceKey: string,
+  sku: string
+): Promise<PlatformListing | null> {
+  const sql = getSql();
+  await ensureInventoryTables();
+  const wanted = sku.trim();
+  if (!wanted) return null;
+  const rows = await sql`
+    SELECT *
+    FROM platform_listings
+    WHERE workspace_key = ${workspaceKey}
+      AND sku = ${wanted}
+    LIMIT 1
+  `;
+  if (rows.length === 0) return null;
+  return mapListing(rows[0] as Record<string, unknown>);
+}
+
 export async function saveVintedDraft(input: {
   workspaceKey: string;
   sku: string;

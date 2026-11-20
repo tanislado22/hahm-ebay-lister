@@ -1,6 +1,6 @@
 import { skuForVintedPrepare } from "@/lib/sku";
 import type { ListingResult } from "@/lib/types";
-import { prepareVintedFields } from "@/lib/vinted/prepare";
+import { prepareVintedFields, type VintedPrepared } from "@/lib/vinted/prepare";
 
 export interface ReadyPhoto {
   mediaType?: string;
@@ -23,6 +23,12 @@ export interface ReadySnapshot {
 
 const MAX_PHOTOS = 20;
 
+function withPhotos(photos: ReadyPhoto[]): ReadyPhoto[] {
+  return photos
+    .filter((photo) => Boolean(photo?.data && String(photo.data).trim()))
+    .slice(0, MAX_PHOTOS);
+}
+
 export function buildReadySnapshot(input: {
   sku: string;
   listing: ListingResult;
@@ -42,7 +48,29 @@ export function buildReadySnapshot(input: {
     size: fields.size,
     color: fields.color,
     condition: fields.condition,
-    photos: input.photos.filter((photo) => Boolean(photo?.data)).slice(0, MAX_PHOTOS),
+    photos: withPhotos(input.photos),
+  };
+}
+
+export function buildReadySnapshotFromPrepared(input: {
+  prepared: VintedPrepared;
+  photos: ReadyPhoto[];
+  itemType?: string;
+}): ReadySnapshot {
+  const sku = skuForVintedPrepare(input.prepared.sku);
+  if (!sku) throw new Error("The selected item needs a SKU.");
+  return {
+    sku,
+    title: (input.prepared.title ?? "").trim(),
+    description: (input.prepared.description ?? "").trim(),
+    price: (input.prepared.price ?? "").trim(),
+    brand: (input.prepared.brand ?? "").trim(),
+    category: (input.prepared.vintedCategory || input.prepared.category || "").trim(),
+    itemType: (input.itemType ?? "").trim(),
+    size: (input.prepared.size ?? "").trim(),
+    color: (input.prepared.color ?? "").trim(),
+    condition: (input.prepared.condition ?? "").trim(),
+    photos: withPhotos(input.photos),
   };
 }
 

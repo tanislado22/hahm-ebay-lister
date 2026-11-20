@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type { ListingResult } from "@/lib/types";
 import { photosForPreparedSku } from "@/lib/vinted/prepare";
-import { buildReadySnapshot, replaceReadyItem, type ReadySnapshot } from "@/lib/vinted/snapshot";
+import {
+  buildReadySnapshot,
+  buildReadySnapshotFromPrepared,
+  replaceReadyItem,
+  type ReadySnapshot,
+} from "@/lib/vinted/snapshot";
 
 function listing(partial: Partial<ListingResult> & { title: string; description: string }): ListingResult {
   return partial as ListingResult;
@@ -70,5 +75,30 @@ describe("one Ready item replaces the previous item", () => {
     expect(current.color).toBe("Red");
     expect(current.photos.map((photo) => photo.data)).toEqual(["photo-scarf"]);
     expect(JSON.stringify(current)).not.toMatch(/Diesel|2830|photo-diesel/);
+  });
+
+  test("queue activate rebuilds the ready item from prepared fields and photos", () => {
+    const snapshot = buildReadySnapshotFromPrepared({
+      prepared: {
+        sku: "3146",
+        title: "Ready jacket",
+        description: "Blue jacket\nSKU: 3146",
+        brand: "Diesel",
+        category: "Women",
+        vintedCategory: "Women / Outerwear",
+        size: "M",
+        color: "Blue",
+        condition: "Good",
+        price: "28.00",
+      },
+      photos: [
+        { mediaType: "image/jpeg", data: "photo-a" },
+        { mediaType: "image/jpeg", data: "photo-b" },
+        { mediaType: "image/jpeg", data: "photo-c" },
+      ],
+    });
+    expect(snapshot.sku).toBe("3146");
+    expect(snapshot.category).toBe("Women / Outerwear");
+    expect(snapshot.photos.map((photo) => photo.data)).toEqual(["photo-a", "photo-b", "photo-c"]);
   });
 });

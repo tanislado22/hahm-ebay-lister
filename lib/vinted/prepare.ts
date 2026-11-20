@@ -1,5 +1,6 @@
 import type { ListingResult } from "@/lib/types";
 import { formatVintedCategoryPath, resolveVintedCategory } from "@/lib/vinted/category-map";
+import { hasSavedPhoto, type SavedPhotoRef } from "@/lib/vinted/saved-photo";
 
 export interface VintedPrepared {
   sku: string;
@@ -36,7 +37,7 @@ function priceText(value: ListingResult["suggested_price"]): string {
   return n.toFixed(2);
 }
 
-export function photosForPreparedSku<T extends { data?: string }>(
+export function photosForPreparedSku<T extends SavedPhotoRef>(
   jobs: { sku: string; photos: T[] }[],
   sku: string
 ): T[] {
@@ -44,7 +45,7 @@ export function photosForPreparedSku<T extends { data?: string }>(
   if (!wanted) return [];
   for (const job of jobs) {
     if (job.sku.trim() !== wanted) continue;
-    const photos = job.photos.filter((photo) => Boolean(photo?.data));
+    const photos = job.photos.filter((photo) => hasSavedPhoto(photo));
     if (photos.length > 0) return photos;
   }
   return [];
