@@ -1455,9 +1455,12 @@ const draftAll = async () => {
     try {
       const clientId = workMode === "client" ? selectedClientId : null;
       for (const group of selected) {
+        const storedPhotos = new Map(photos.map((photo) => [photo.id, photo]));
         const groupPhotos = group.photoIds
-          .map((id) => photos.find((photo) => photo.id === id))
-          .filter((photo): photo is Photo => Boolean(photo?.data));
+          .map((id) => storedPhotos.get(id))
+          .filter((photo): photo is Photo =>
+            Boolean(photo && (photo.data.trim() || photo.previewUrl.trim()))
+          );
         const saved = await fetch("/api/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

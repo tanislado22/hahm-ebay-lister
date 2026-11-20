@@ -212,6 +212,32 @@ export function VintedQueue() {
     }
   };
 
+  const openForVinted = async () => {
+    if (!current || !workspace) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await apiPost("/api/vinted/activate", {
+        workMode: workspace.workMode,
+        clientId: workspace.clientId,
+        sku: current.sku,
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string; photoCount?: number };
+      if (!res.ok || !data.ok) throw new Error(data.error || "Could not open this item for Vinted.");
+      try {
+        const clientKey = workspace.workMode === "client" ? workspace.clientId || "" : "";
+        window.localStorage.setItem(`vintedCurrentSku:${workspace.workMode}:${clientKey}`, current.sku);
+      } catch {
+        /* storage unavailable */
+      }
+      window.open(VINTED_NEW_ITEM, "_blank", "noopener,noreferrer");
+    } catch (openError) {
+      setError((openError as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const markPublished = async () => {
     if (!current || !workspace) return;
     setBusy(true);
@@ -333,9 +359,14 @@ export function VintedQueue() {
             <button type="button" className="btn btn-ghost" onClick={() => void saveReady()} disabled={busy || current.vintedStatus === "published"}>
               Save fields
             </button>
-            <a className="btn btn-primary" href={VINTED_NEW_ITEM} target="_blank" rel="noopener noreferrer">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void openForVinted()}
+              disabled={busy}
+            >
               Prepare/Open for Vinted
-            </a>
+            </button>
             <label>
               Vinted listing URL
               <input

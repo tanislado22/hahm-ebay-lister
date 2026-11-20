@@ -23,11 +23,21 @@ describe("Prepare for Vinted uses the selected item SKU", () => {
     const photos = photosForPreparedSku(
       [
         { sku: "-A", photos: [{ data: "nike-photo" }] },
-        { sku: "2830", photos: [{ data: "diesel-photo" }, { data: "" }] },
+        {
+          sku: "2830",
+          photos: [
+            { data: "diesel-photo" },
+            { data: "" },
+            { data: "", previewUrl: "data:image/jpeg;base64,aaaaaaaa" },
+          ],
+        },
       ],
       latestSku
     );
-    expect(photos.map((photo) => photo.data)).toEqual(["diesel-photo"]);
+    expect(photos.map((photo) => photo.data || photo.previewUrl)).toEqual([
+      "diesel-photo",
+      "data:image/jpeg;base64,aaaaaaaa",
+    ]);
   });
 
   test("does not turn a blank SKU into -A", () => {

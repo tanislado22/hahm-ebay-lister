@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { guardApiRequest } from "@/lib/api-guard";
 import { workspaceKey } from "@/lib/inventory/workspace";
-import { getLatestReadySnapshot, getVintedReadySnapshot } from "@/lib/vinted/snapshot-store";
+import { selectAssistPhotoRefs } from "@/lib/vinted/assist-photos";
+import { downloadEbayPhoto, hasSavedPhoto, materializeSavedPhotos } from "@/lib/vinted/saved-photo";
+import { getLatestReadySnapshot, getVintedReadySnapshot, savedPhotosForSku } from "@/lib/vinted/snapshot-store";
 
 export const dynamic = "force-dynamic";
 
@@ -48,10 +50,16 @@ export async function GET(req: NextRequest) {
       return assistJson({ ok: false, error: `No Ready item with SKU ${requestedSku}.` }, 404);
     }
 
+    const fallback = snapshot.photos.some((photo) => hasSavedPhoto(photo))
+      ? []
+      : await savedPhotosForSku(snapshot.sku);
+    const usable = selectAssistPhotoRefs(snapshot.photos, fallback);
+
     const photoParam = req.nextUrl.searchParams.get("photo");
     if (photoParam !== null) {
       const index = Number(photoParam);
-      const photo = snapshot.photos[index];
+      const selected = usable[index];
+      const [photo] = selected ? await materializeSavedPhotos([selected], downloadEbayPhoto) : [];
       if (!Number.isInteger(index) || index < 0 || !photo?.data) {
         return assistJson({ ok: false, error: "That photo is not on this item." }, 404);
       }
@@ -80,7 +88,7 @@ export async function GET(req: NextRequest) {
       size: snapshot.size,
       color: snapshot.color,
       condition: snapshot.condition,
-      photoCount: snapshot.photos.length,
+      photoCount: usable.length,
       updatedAt: snapshot.updatedAt,
     });
   } catch (error) {
